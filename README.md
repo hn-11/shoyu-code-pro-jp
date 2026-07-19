@@ -3,10 +3,10 @@
 [Source Han Code JP](https://github.com/adobe-fonts/source-han-code-jp) に
 プログラミング合字（リガチャ）を注入したフォント。
 
-**通常の字形・メトリクスには一切手を加えない。** 合字グリフはフォント自身の
-既存グリフ（`≠ ≤ ≥ ← → ≡ ≢` および `:` `=`）を 2〜3 セル幅に配置し直した
-合成であり、輪郭の描き起こしは行っていないため、ストロークの太さ・スタイルは
-本体と完全に一致する。半角:全角 = 2:3 のメトリクスもそのまま。
+**通常の字形・メトリクスには一切手を加えない。** 英数字・和文は
+Source Han Code JP（欧文 = Source Code Pro の等方拡大）のままで、
+合字グリフだけを Monaspace から線の太さを揃えて移植する。
+半角:全角 = 2:3 のメトリクスもそのまま（Console / 35 変種は下記参照）。
 
 ## 合字一覧
 
@@ -31,7 +31,7 @@ GSUB は `calt` / `liga` 両登録。VS Code は `"editor.fontLigatures": true` 
 | Shoyu Code Pro JP Console | 500:1000 (1:2) | ターミナル（セルグリッド互換） |
 | Shoyu Code Pro JP 35 | 600:1000 (3:5) | Source Code Pro 原寸（本家プロポーション） |
 
-Term は半角グリフを 500/667 に等方縮小したもので、Adobe が Source Code Pro
+Console は半角グリフを 500/667 に等方縮小したもので、Adobe が Source Code Pro
 (600) から SHCJ (667) を作った手順のちょうど逆方向。全出力に Nerd Fonts
 パッチ済み変種（`*NerdFont*`）も生成する。CID-keyed CFF のままでは
 font-patcher がグリフを Unicode で引けないため、パッチ前に FontForge の
