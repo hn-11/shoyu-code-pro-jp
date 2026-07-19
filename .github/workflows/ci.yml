@@ -40,7 +40,7 @@ jobs:
             "https://github.com/adobe-fonts/source-code-pro/releases/download/${SCP_TAG}/${SCP_VF_ZIP}"
           unzip -qo /tmp/scp.zip -d upstreams/scp
           fetch /tmp/mona.zip \
-            "https://github.com/githubnext/monaspace/releases/download/${MONA_TAG}/monaspace-variable-${MONA_TAG#v}.zip"
+            "https://github.com/githubnext/monaspace/releases/download/${MONA_TAG}/monaspace-variable-${MONA_TAG}.zip"
           unzip -qo /tmp/mona.zip -d upstreams/mona
       - name: Export upstream paths
         run: |
