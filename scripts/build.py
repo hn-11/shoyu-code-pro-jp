@@ -326,15 +326,23 @@ def add_gsub(font, added, alts):
         grp = LIGATURES[seq]["group"]
         groups.setdefault(grp, {})[tuple(cmap[ord(c)] for c in seq)] = g
 
+    # calt/liga use ONE combined lookup: LigatureSubst is longest-match only
+    # within a single subtable — sequential per-group lookups would let
+    # ss01's '>=' eat the tail of '>>=' before ss02 ever sees it.
+    combined = {}
+    for m in groups.values():
+        combined.update(m)
+    combined_lookup = _new_lookup(
+        gsub, otl.buildLigatureSubstSubtable(combined))
+
     group_lookups = {}
     for grp in sorted(groups):
         group_lookups[grp] = _new_lookup(
             gsub, otl.buildLigatureSubstSubtable(groups[grp]))
 
-    all_lookups = [group_lookups[g] for g in sorted(group_lookups)]
     feature_indices = []
     for tag in ("calt", "liga"):
-        feature_indices.append(_new_feature(gsub, tag, all_lookups))
+        feature_indices.append(_new_feature(gsub, tag, [combined_lookup]))
     for grp in sorted(group_lookups):
         feature_indices.append(_new_feature(gsub, grp, [group_lookups[grp]]))
     if alts:
