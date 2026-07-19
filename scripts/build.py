@@ -148,6 +148,7 @@ def append_glyph(font, td, name, cs, fd_index, width, lsb=0):
     font.setGlyphOrder(order)
     if hasattr(font, "_reverseGlyphOrderDict"):
         del font._reverseGlyphOrderDict
+    font["maxp"].numGlyphs = len(order)
 
 
 def graft_halfwidth(base, scp, ref):
@@ -187,7 +188,6 @@ def graft_halfwidth(base, scp, ref):
                      fd_index, CELL, lsb)
         new_map[cp] = name
 
-    base["maxp"].numGlyphs = len(base.getGlyphOrder())
     for table in base["cmap"].tables:
         if table.isUnicode():
             for cp, name in new_map.items():
@@ -275,25 +275,11 @@ def add_glyphs(font, mona):
         for gname, dx in zip(spec["glyphs"], offsets):
             mona_gs[gname].draw(
                 TransformPen(pen, (MONA_K, 0, 0, MONA_K, dx, dy)))
-        cs = pen.getCharString(private=private)
-
         name = f"cid{len(order):05d}"
-        order.append(name)
-        if td.charset is not order:  # same list object for CFF fonts
-            td.charset.append(name)
-        td.FDSelect.gidArray.append(fd_index)
-        i = len(td.CharStrings.charStringsIndex.items)
-        td.CharStrings.charStringsIndex.append(cs)
-        td.CharStrings.charStrings[name] = i
-        font["hmtx"].metrics[name] = (width, 0)
-        if "vmtx" in font:
-            font["vmtx"].metrics[name] = font["vmtx"].metrics[cmap[0x2260]]
+        append_glyph(font, td, name, pen.getCharString(private=private),
+                     fd_index, width)
         added[seq] = name
 
-    font.setGlyphOrder(order)
-    if hasattr(font, "_reverseGlyphOrderDict"):
-        del font._reverseGlyphOrderDict
-    font["maxp"].numGlyphs = len(order)
     return added
 
 

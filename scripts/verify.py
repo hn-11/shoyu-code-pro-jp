@@ -24,7 +24,6 @@ CASES = [
 def main():
     from fontTools.ttLib import TTFont
     tf = TTFont(str(FONT))
-    cell = tf["hmtx"]["cid00066"][0] if "cid00066" in tf["hmtx"].metrics else 667
     a_adv = tf["hmtx"][tf.getBestCmap()[ord("a")]][0]
     cjk_adv = tf["hmtx"][tf.getBestCmap()[0x65E5]][0]
     print(f"half={a_adv} full={cjk_adv} ratio={cjk_adv/a_adv:.3f}")
