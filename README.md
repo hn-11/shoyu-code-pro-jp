@@ -1,12 +1,17 @@
 # Shoyu Code Pro JP
 
-[Source Han Code JP](https://github.com/adobe-fonts/source-han-code-jp) に
-プログラミング合字（リガチャ）を注入したフォント。
+Source Han Code JP の思想を最新の上流で組み直したプログラミングフォント。
+[Source Han Sans](https://github.com/adobe-fonts/source-han-sans)（和文）+
+[Source Code Pro](https://github.com/adobe-fonts/source-code-pro)（欧文、10/9 拡大で 667 幅 —
+Adobe が SHCJ を作った手順の再実行）+
+[Monaspace](https://github.com/githubnext/monaspace)（合字50種）を
+CI で合成し、上流の新リリースにも追従する。
 
-**通常の字形・メトリクスには一切手を加えない。** 英数字・和文は
-Source Han Code JP（欧文 = Source Code Pro の等方拡大）のままで、
-合字グリフだけを Monaspace から線の太さを揃えて移植する。
-半角:全角 = 2:3 のメトリクスもそのまま（Console / 35 変種は下記参照）。
+ウェイトの対応付けは名前ではなく実測 — 各面で `=` のバー厚を測り、
+SCP / Monaspace のバリアブルフォントの wght を二分探索で一致させる。
+基準は [Source Han Code JP](https://github.com/adobe-fonts/source-han-code-jp)
+（ペアリング参照、行間メトリクス、SCP 非収録の半角カナ等のドナー）なので、
+SHCJ ユーザーの見た目の連続性が保たれる。
 
 ## 合字一覧
 
@@ -30,6 +35,10 @@ GSUB は `calt` / `liga` 両登録。VS Code は `"editor.fontLigatures": true` 
 | Shoyu Code Pro JP | 667:1000 (2:3) | エディタ（VS Code 等） |
 | Shoyu Code Pro JP Console | 500:1000 (1:2) | ターミナル（セルグリッド互換） |
 | Shoyu Code Pro JP 35 | 600:1000 (3:5) | Source Code Pro 原寸（本家プロポーション） |
+
+各ファミリー 7ウェイト（ExtraLight / Light / Normal / Regular / Medium /
+Bold / Heavy）× 2スタイル（Upright / Italic — Italic は SCP の本物の
+イタリック、和文は SHCJ と同じく直立のまま）。
 
 Console は半角グリフを 500/667 に等方縮小したもので、Adobe が Source Code Pro
 (600) から SHCJ (667) を作った手順のちょうど逆方向。全出力に Nerd Fonts

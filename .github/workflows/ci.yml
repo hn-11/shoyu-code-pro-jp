@@ -1,14 +1,19 @@
-# Gate for every push/PR: build the Regular faces and run the shaping
-# regression test. The full 14-face build happens in release.yml.
+# Gate for every push/PR: assemble the Regular faces from live upstreams
+# and run the shaping regression test. Full build happens in release.yml.
 name: CI
 on:
   push:
     branches: [main]
   pull_request:
+env:
+  SHS_TAG: 2.005R
+  SCP_TAG: 2.042R-u%2F1.062R-i%2F1.026R-vf
+  SCP_VF_ZIP: VF-source-code-VF-1.026R.zip
+  MONA_TAG: v1.400
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -16,17 +21,33 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install -r requirements.txt
-      - name: Fetch upstream TTC (cached)
+      - name: Fetch upstreams (cached)
         uses: actions/cache@v4
-        id: ttc
+        id: up
         with:
-          path: upstream/SourceHanCodeJP.ttc
-          key: shcj-2.012R
-      - if: steps.ttc.outputs.cache-hit != 'true'
+          path: upstreams
+          key: upstreams-shs2.005-scp1.026-mona1.400-shcj2.012
+      - if: steps.up.outputs.cache-hit != 'true'
         run: |
-          mkdir -p upstream
-          curl -sSfL -o upstream/SourceHanCodeJP.ttc \
+          mkdir -p upstreams
+          curl -sSfL -o upstreams/shcj.ttc \
             https://github.com/adobe-fonts/source-han-code-jp/releases/download/2.012R/SourceHanCodeJP.ttc
+          curl -sSfL -o /tmp/shs.zip \
+            "https://github.com/adobe-fonts/source-han-sans/releases/download/${SHS_TAG}/17_SourceHanSansJP.zip"
+          unzip -qo /tmp/shs.zip -d upstreams/shs
+          curl -sSfL -o /tmp/scp.zip \
+            "https://github.com/adobe-fonts/source-code-pro/releases/download/${SCP_TAG}/${SCP_VF_ZIP}"
+          unzip -qo /tmp/scp.zip -d upstreams/scp
+          curl -sSfL -o /tmp/mona.zip \
+            "https://github.com/githubnext/monaspace/releases/download/${MONA_TAG}/monaspace-variable-${MONA_TAG#v}.zip"
+          unzip -qo /tmp/mona.zip -d upstreams/mona
+      - name: Export upstream paths
+        run: |
+          echo "SHCJ_TTC=upstreams/shcj.ttc" >> "$GITHUB_ENV"
+          echo "SHS_DIR=$(dirname "$(find upstreams/shs -name 'SourceHanSansJP-Regular.otf' | head -1)")" >> "$GITHUB_ENV"
+          echo "SCP_VF_U=$(find upstreams/scp -name 'SourceCodeVF-Upright.otf' | head -1)" >> "$GITHUB_ENV"
+          echo "SCP_VF_I=$(find upstreams/scp -name 'SourceCodeVF-Italic.otf' | head -1)" >> "$GITHUB_ENV"
+          echo "MONA_VF=$(find upstreams/mona -name 'Monaspace Neon Var.ttf' | head -1)" >> "$GITHUB_ENV"
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq fontforge python3-fontforge
       - name: Fetch FontPatcher (cached)
         uses: actions/cache@v4
@@ -39,20 +60,9 @@ jobs:
           curl -sSfL -o /tmp/FontPatcher.zip \
             https://github.com/ryanoasis/nerd-fonts/releases/download/v3.4.0/FontPatcher.zip
           unzip -qo /tmp/FontPatcher.zip -d FontPatcher
-      - name: Fetch Monaspace (cached)
-        uses: actions/cache@v4
-        id: mona
-        with:
-          path: monaspace-vf
-          key: monaspace-v1.400
-      - if: steps.mona.outputs.cache-hit != 'true'
-        run: |
-          curl -sSfL -o /tmp/mona.zip \
-            https://github.com/githubnext/monaspace/releases/download/v1.400/monaspace-variable-v1.400.zip
-          mkdir -p monaspace-vf && unzip -qo /tmp/mona.zip -d monaspace-vf
-      - run: echo "MONA_VF=$(find monaspace-vf -name 'Monaspace Neon Var.ttf' | head -1)" >> "$GITHUB_ENV"
-      - run: python scripts/build.py "JP R"
+      - run: python scripts/build.py "Regular"
       - run: python scripts/verify.py dist/ShoyuCodeProJP-Regular.otf
       - run: python scripts/verify.py dist/ShoyuCodeProJPConsole-Regular.otf
+      - run: python scripts/verify.py dist/ShoyuCodeProJP35-Regular.otf
       - name: Nerd-patch smoke test (one font)
         run: python scripts/nerdpatch.py FontPatcher ShoyuCodeProJPConsole-Regular

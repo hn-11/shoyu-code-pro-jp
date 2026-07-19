@@ -1,14 +1,20 @@
-# Tag push (v*) -> full 14-face build, verify, zip, GitHub release.
+# Tag push (v*) -> full assembly from live upstreams (42 fonts x 3 families),
+# verify, Nerd-patch everything, zip, GitHub release.
 name: Release
 on:
   push:
     tags: ["v*"]
 permissions:
   contents: write
+env:
+  SHS_TAG: 2.005R
+  SCP_TAG: 2.042R-u%2F1.062R-i%2F1.026R-vf
+  SCP_VF_ZIP: VF-source-code-VF-1.026R.zip
+  MONA_TAG: v1.400
 jobs:
   release:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -16,27 +22,40 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install -r requirements.txt
-      - run: |
-          mkdir -p upstream
-          curl -sSfL -o upstream/SourceHanCodeJP.ttc \
+      - name: Fetch upstreams
+        run: |
+          mkdir -p upstreams
+          curl -sSfL -o upstreams/shcj.ttc \
             https://github.com/adobe-fonts/source-han-code-jp/releases/download/2.012R/SourceHanCodeJP.ttc
+          curl -sSfL -o /tmp/shs.zip \
+            "https://github.com/adobe-fonts/source-han-sans/releases/download/${SHS_TAG}/17_SourceHanSansJP.zip"
+          unzip -qo /tmp/shs.zip -d upstreams/shs
+          curl -sSfL -o /tmp/scp.zip \
+            "https://github.com/adobe-fonts/source-code-pro/releases/download/${SCP_TAG}/${SCP_VF_ZIP}"
+          unzip -qo /tmp/scp.zip -d upstreams/scp
+          curl -sSfL -o /tmp/mona.zip \
+            "https://github.com/githubnext/monaspace/releases/download/${MONA_TAG}/monaspace-variable-${MONA_TAG#v}.zip"
+          unzip -qo /tmp/mona.zip -d upstreams/mona
+      - name: Export upstream paths
+        run: |
+          echo "SHCJ_TTC=upstreams/shcj.ttc" >> "$GITHUB_ENV"
+          echo "SHS_DIR=$(dirname "$(find upstreams/shs -name 'SourceHanSansJP-Regular.otf' | head -1)")" >> "$GITHUB_ENV"
+          echo "SCP_VF_U=$(find upstreams/scp -name 'SourceCodeVF-Upright.otf' | head -1)" >> "$GITHUB_ENV"
+          echo "SCP_VF_I=$(find upstreams/scp -name 'SourceCodeVF-Italic.otf' | head -1)" >> "$GITHUB_ENV"
+          echo "MONA_VF=$(find upstreams/mona -name 'Monaspace Neon Var.ttf' | head -1)" >> "$GITHUB_ENV"
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq fontforge python3-fontforge
       - run: |
           curl -sSfL -o /tmp/FontPatcher.zip \
             https://github.com/ryanoasis/nerd-fonts/releases/download/v3.4.0/FontPatcher.zip
           unzip -qo /tmp/FontPatcher.zip -d FontPatcher
-      - run: |
-          curl -sSfL -o /tmp/mona.zip \
-            https://github.com/githubnext/monaspace/releases/download/v1.400/monaspace-variable-v1.400.zip
-          mkdir -p monaspace-vf && unzip -qo /tmp/mona.zip -d monaspace-vf
-      - run: echo "MONA_VF=$(find monaspace-vf -name 'Monaspace Neon Var.ttf' | head -1)" >> "$GITHUB_ENV"
       - run: python scripts/build.py
       - run: python scripts/verify.py dist/ShoyuCodeProJP-Regular.otf
       - run: python scripts/verify.py dist/ShoyuCodeProJPConsole-Regular.otf
+      - run: python scripts/verify.py dist/ShoyuCodeProJP35-Heavy.otf
       - run: python scripts/nerdpatch.py FontPatcher
       - run: |
-          cd dist && zip ShoyuCodeProJP.zip *.otf
-          cd nerd && zip ../ShoyuCodeProJP-NerdFont.zip *.otf
+          cd dist && zip -q ShoyuCodeProJP.zip *.otf
+          cd nerd && zip -q ../ShoyuCodeProJP-NerdFont.zip *.otf
       - uses: softprops/action-gh-release@v2
         with:
           files: |

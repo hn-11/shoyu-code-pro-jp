@@ -1,22 +1,30 @@
 #!/usr/bin/env python3
-"""Inject programming ligatures into Source Han Code JP.
+"""Assemble Shoyu Code Pro JP from live upstreams.
 
-Reads upstream/SourceHanCodeJP.ttc and imports the full Monaspace ligature
-set (data/mona_ligs.json, 50 sequences) as new glyphs, registered under
-GSUB 'calt' + 'liga'. Regular glyphs, metrics and the Japanese are untouched.
+Recipe (Source Han Mono's approach, re-executed against latest releases):
+  - Japanese / full-width layer: Source Han Sans JP (latest, per weight)
+  - Half-width Latin layer:      Source Code Pro VF, scaled 10/9 to 667
+                                 (Adobe's own SHCJ derivation, re-run)
+  - Ligatures (50):              Monaspace VF (data/mona_ligs.json)
+  - Source Han Code JP serves as the PAIRING REFERENCE — each face's '='
+    bar thickness decides the SCP/Monaspace wght instance — and as the
+    donor for half-width glyphs SCP lacks (half-width kana etc.), plus
+    the vertical line metrics, so the rendered result stays continuous
+    with what SHCJ users know.
 
-Stroke matching: for every face, the thickness of the '=' bar is measured
-and the Monaspace variable font is instantiated at whatever wght reproduces
-it after rescaling — so operators match each weight, ExtraLight through
-Heavy. The imported outlines are additionally shifted so both fonts' '='
-share a vertical center.
+All weight pairing is by measurement (binary search on the VF wght axis),
+not by name. Italic faces take SCP Italic VF + upright Japanese, matching
+SHCJ's own behavior.
 
 Families (suffix -> half-width cell):
-  ""     667  upstream 2:3
+  ""        667  2:3 (SHCJ metrics)
   "Console" 500  exact 1:2 for terminal grids
-  "35"   600  Source Code Pro's native proportion
+  "35"      600  Source Code Pro's native proportion
 
-Env: MONA_VF = path to "Monaspace Neon Var.ttf" (required).
+Env (all required):
+  SHS_DIR  = dir with SourceHanSansJP-<Weight>.otf
+  SCP_VF_U = SourceCodeVF-Upright.otf   SCP_VF_I = SourceCodeVF-Italic.otf
+  SHCJ_TTC = upstream/SourceHanCodeJP.ttc (default)   MONA_VF = Monaspace VF
 """
 
 import json
@@ -34,11 +42,24 @@ from fontTools.otlLib import builder as otl
 from fontTools.ttLib.tables import otTables
 
 ROOT = Path(__file__).resolve().parent.parent
-CELL = 667          # half-width advance of the upstream 2:3 metrics
+CELL = 667          # half-width advance of the 2:3 metrics
 MONA_CELL = 1240    # Monaspace advance (upm 2000)
 MONA_K = CELL / MONA_CELL
+SCP_CELL = 600      # Source Code Pro advance (upm 1000)
+SCP_K = CELL / SCP_CELL  # 10/9, Adobe's SHCJ scale factor
 
 VARIANTS = {"": 667, "Console": 500, "35": 600}
+
+# (output weight name, SHCJ reference face, Source Han Sans static file)
+FACES = [
+    ("ExtraLight", "Source Han Code JP EL", "SourceHanSansJP-ExtraLight.otf"),
+    ("Light", "Source Han Code JP L", "SourceHanSansJP-Light.otf"),
+    ("Normal", "Source Han Code JP N", "SourceHanSansJP-Normal.otf"),
+    ("Regular", "Source Han Code JP R", "SourceHanSansJP-Regular.otf"),
+    ("Medium", "Source Han Code JP M", "SourceHanSansJP-Medium.otf"),
+    ("Bold", "Source Han Code JP R Bold", "SourceHanSansJP-Bold.otf"),
+    ("Heavy", "Source Han Code JP H", "SourceHanSansJP-Heavy.otf"),
+]
 
 LIGATURES = json.load(open(ROOT / "data" / "mona_ligs.json"))
 
@@ -60,27 +81,34 @@ def bar_thickness(font, glyph_name):
     return max(ys) - min(ys)
 
 
-class MonaSource:
-    """Per-weight Monaspace instances, matched to a target '=' thickness."""
+class VFSource:
+    """Variable-font instances matched to a target '=' bar thickness.
 
-    def __init__(self, vf_path):
+    Used for both Monaspace (wght/wdth/slnt) and Source Code Pro (wght only)
+    — the axes dict template decides which. Matching is a binary search on
+    wght so the operator/Latin stroke weight equals the reference face's.
+    """
+
+    def __init__(self, vf_path, scale, axes):
         self.vf_path = vf_path
+        self.scale = scale        # em scale applied when the glyphs are used
+        self.axes = axes          # template; wght filled by the search
         self._cache = {}
 
-    def matched(self, target_units, slant=0.0):
-        """Instance whose scaled '=' bar equals target_units (SHCJ space)."""
-        slant = max(-11.0, min(0.0, slant))  # clamp to Monaspace's slnt range
-        key = (round(target_units), round(slant))
+    def matched(self, target_units, slant=None):
+        key = (round(target_units), slant if slant is None else round(slant))
         if key in self._cache:
             return self._cache[key]
-        pre_scale_target = target_units / MONA_K
+        pre_scale_target = target_units / self.scale
         lo, hi = 200.0, 800.0
         inst = None
         for _ in range(9):
             mid = (lo + hi) / 2
             inst = TTFont(self.vf_path)
-            instantiateVariableFont(
-                inst, {"wght": mid, "wdth": 100, "slnt": slant}, inplace=True)
+            axes = dict(self.axes, wght=mid)
+            if slant is not None and "slnt" in axes:
+                axes["slnt"] = max(-11.0, min(0.0, slant))
+            instantiateVariableFont(inst, axes, inplace=True)
             t = bar_thickness(inst, inst.getBestCmap()[ord("=")])
             if t < pre_scale_target:
                 lo = mid
@@ -102,6 +130,113 @@ def pen_width(private, advance):
     default = getattr(private, "defaultWidthX", 0)
     nominal = getattr(private, "nominalWidthX", 0)
     return None if advance == default else advance - nominal
+
+
+def append_glyph(font, td, name, cs, fd_index, width, lsb=0):
+    order = font.getGlyphOrder()
+    order.append(name)
+    if td.charset is not order:  # same list object for CFF fonts
+        td.charset.append(name)
+    td.FDSelect.gidArray.append(fd_index)
+    i = len(td.CharStrings.charStringsIndex.items)
+    td.CharStrings.charStringsIndex.append(cs)
+    td.CharStrings.charStrings[name] = i
+    font["hmtx"].metrics[name] = (width, lsb)
+    if "vmtx" in font:
+        cmap = font.getBestCmap()
+        font["vmtx"].metrics[name] = font["vmtx"].metrics[cmap[0x65E5]]
+    font.setGlyphOrder(order)
+    if hasattr(font, "_reverseGlyphOrderDict"):
+        del font._reverseGlyphOrderDict
+
+
+def graft_halfwidth(base, scp, ref):
+    """Give `base` (Source Han Sans JP) its half-width layer.
+
+    Every codepoint SHCJ maps to a 667-advance glyph is re-pointed to a new
+    glyph: outline from the SCP instance scaled 10/9 when SCP has it,
+    otherwise copied verbatim from the SHCJ reference face (half-width
+    kana and a handful of symbols SCP never had).
+    """
+    ref_cm, ref_hm = ref.getBestCmap(), ref["hmtx"]
+    scp_cm = scp.getBestCmap()
+    scp_gs, ref_gs = scp.getGlyphSet(), ref.getGlyphSet()
+    cff = base["CFF "].cff
+    td = cff[cff.fontNames[0]]
+    bcm = base.getBestCmap()
+    fd_index = td.FDSelect[base.getGlyphID(bcm[ord("A")])]
+    private = td.FDArray[fd_index].Private
+
+    new_map = {}
+    from_scp = from_ref = 0
+    for cp, g in sorted(ref_cm.items()):
+        if ref_hm[g][0] != CELL:
+            continue
+        pen = T2CharStringPen(pen_width(private, CELL), scp_gs)
+        if cp in scp_cm:
+            scp_gs[scp_cm[cp]].draw(
+                TransformPen(pen, (SCP_K, 0, 0, SCP_K, 0, 0)))
+            lsb = round(scp["hmtx"][scp_cm[cp]][1] * SCP_K)
+            from_scp += 1
+        else:
+            ref_gs[g].draw(TransformPen(pen, (1, 0, 0, 1, 0, 0)))
+            lsb = ref_hm[g][1]
+            from_ref += 1
+        name = f"cid{len(base.getGlyphOrder()):05d}"
+        append_glyph(base, td, name, pen.getCharString(private=private),
+                     fd_index, CELL, lsb)
+        new_map[cp] = name
+
+    base["maxp"].numGlyphs = len(base.getGlyphOrder())
+    for table in base["cmap"].tables:
+        if table.isUnicode():
+            for cp, name in new_map.items():
+                if cp in table.cmap:
+                    table.cmap[cp] = name
+    return from_scp, from_ref
+
+
+def copy_line_metrics(base, ref):
+    """Keep SHCJ's vertical rhythm — line height must not change."""
+    for tbl, attrs in (
+        ("hhea", ("ascent", "descent", "lineGap")),
+        ("OS/2", ("sTypoAscender", "sTypoDescender", "sTypoLineGap",
+                  "usWinAscent", "usWinDescent")),
+    ):
+        for a in attrs:
+            setattr(base[tbl], a, getattr(ref[tbl], a))
+
+
+def set_names(font, suffix, weight, italic):
+    """Fresh name table: standard family-per-weight scheme."""
+    base_family = ("Shoyu Code Pro JP " + suffix).strip()
+    ribbi = weight in ("Regular", "Bold")
+    family = base_family if ribbi else f"{base_family} {weight}"
+    sub = (weight if ribbi else "Regular") + (" Italic" if italic else "")
+    sub = sub.replace("Regular Italic", "Italic")
+    psfam = "ShoyuCodeProJP" + suffix
+    ps = f"{psfam}-{weight}{'Italic' if italic else ''}"
+    full = f"{family} {sub}".replace(" Regular", "").strip()
+    name = font["name"]
+    name.names = []
+    for nid, val in ((1, family), (2, sub), (3, f"{ps};shoyu-code-pro-jp"),
+                     (4, full), (6, ps),
+                     (16, base_family),
+                     (17, (weight + (" Italic" if italic else ""))
+                          .replace("Regular Italic", "Italic"))):
+        name.setName(val, nid, 3, 1, 0x409)
+    cff = font["CFF "].cff
+    cff.fontNames[0] = ps
+    td = cff.topDictIndex.items[0]
+    if hasattr(td, "FamilyName"):
+        td.FamilyName = family
+    if hasattr(td, "FullName"):
+        td.FullName = full
+    if italic:
+        font["post"].italicAngle = -12
+        font["head"].macStyle |= 0x2
+        font["OS/2"].fsSelection = (font["OS/2"].fsSelection & ~0x40) | 0x1
+    return ps
 
 
 def add_glyphs(font, mona):
@@ -222,54 +357,45 @@ def rescale(font, cell):
         td.CharStrings.charStringsIndex[td.CharStrings.charStrings[name]] = cs
 
 
-def rename(font, suffix=""):
-    family = ("Shoyu Code Pro JP " + suffix).strip()
-    psfam = "ShoyuCodeProJP" + suffix
-    for rec in font["name"].names:
-        s = rec.toUnicode()
-        s = s.replace("Source Han Code JP", family)
-        s = s.replace("SourceHanCodeJP", psfam)
-        rec.string = s
-    # Use name ID 6 (unique per face) — the CFF-internal fontName is shared
-    # between upright and italic faces in the upstream TTC.
-    ps = font["name"].getDebugName(6)
-    cff = font["CFF "].cff
-    cff.fontNames[0] = ps
-    td = cff.topDictIndex.items[0]
-    for attr in ("FullName", "FamilyName"):
-        if hasattr(td, attr):
-            setattr(td, attr, getattr(td, attr).replace(
-                "Source Han Code JP", family))
-    return ps
-
-
 def main():
     only = sys.argv[1] if len(sys.argv) > 1 else None
-    vf = os.environ.get("MONA_VF")
-    if not vf or not Path(vf).exists():
-        sys.exit("MONA_VF must point to 'Monaspace Neon Var.ttf'")
-    mona_src = MonaSource(vf)
-    src = ROOT / "upstream" / "SourceHanCodeJP.ttc"
+    env = {k: os.environ.get(k) for k in
+           ("SHS_DIR", "SCP_VF_U", "SCP_VF_I", "MONA_VF")}
+    missing = [k for k, v in env.items() if not v or not Path(v).exists()]
+    if missing:
+        sys.exit(f"missing env: {missing}")
+    shcj_ttc = os.environ.get("SHCJ_TTC", ROOT / "upstream" / "SourceHanCodeJP.ttc")
+    mona_src = VFSource(env["MONA_VF"], MONA_K, {"wght": 0, "wdth": 100, "slnt": 0})
+    scp_u = VFSource(env["SCP_VF_U"], SCP_K, {"wght": 0})
+    scp_i = VFSource(env["SCP_VF_I"], SCP_K, {"wght": 0})
+
+    refs = {f["name"].getDebugName(4): f for f in TTCollection(shcj_ttc).fonts}
     out_dir = ROOT / "dist"
     out_dir.mkdir(exist_ok=True)
+
     for suffix, cell in VARIANTS.items():
-        tc = TTCollection(src)  # fresh load per variant
-        for font in tc.fonts:
-            subfamily = font["name"].getDebugName(4)
-            if only and only not in subfamily:
-                continue
-            target = bar_thickness(font, font.getBestCmap()[ord("=")])
-            mona = mona_src.matched(target, font["post"].italicAngle)
-            print(f"processing: {subfamily}{f' [{suffix} {cell}]' if suffix else ''}"
-                  f" (bar {target})")
-            added = add_glyphs(font, mona)
-            add_gsub(font, added)
-            if cell != 667:
-                rescale(font, cell)
-            ps = rename(font, suffix)
-            out = out_dir / f"{ps}.otf"
-            font.save(out)
-            print(f"  -> {out.name} ({len(added)} ligatures)")
+        for weight, ref_name, shs_file in FACES:
+            for italic in (False, True):
+                face_label = f"{weight}{' Italic' if italic else ''}"
+                if only and only not in face_label:
+                    continue
+                ref = refs[ref_name + (" Italic" if italic else "")]
+                target = bar_thickness(ref, ref.getBestCmap()[ord("=")])
+                scp = (scp_i if italic else scp_u).matched(target)
+                base = TTFont(Path(env["SHS_DIR"]) / shs_file)
+                n_scp, n_ref = graft_halfwidth(base, scp, ref)
+                copy_line_metrics(base, ref)
+                mona = mona_src.matched(
+                    target, ref["post"].italicAngle if italic else None)
+                added = add_glyphs(base, mona)
+                add_gsub(base, added)
+                if cell != CELL:
+                    rescale(base, cell)
+                ps = set_names(base, suffix, weight, italic)
+                out = out_dir / f"{ps}.otf"
+                base.save(out)
+                print(f"{face_label}{f' [{suffix}]' if suffix else ''}: "
+                      f"scp={n_scp} shcj={n_ref} ligs={len(added)} -> {out.name}")
 
 
 if __name__ == "__main__":

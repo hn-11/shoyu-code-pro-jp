@@ -1,10 +1,10 @@
-# Monthly: open an issue if adobe-fonts/source-han-code-jp ships a release
-# newer than the pinned 2.012R (upstream has been dormant for years, but
-# a new release would change the base we patch).
-name: Check upstream release
+# Weekly: open an issue when any upstream ships a release newer than the
+# pinned tag. Pins live in ci.yml / release.yml env; update them, verify the
+# build, and cut a new release to track.
+name: Check upstream releases
 on:
   schedule:
-    - cron: "0 6 1 * *"
+    - cron: "0 6 * * 1"
   workflow_dispatch:
 permissions:
   issues: write
@@ -13,15 +13,21 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Compare latest upstream tag with pin
+      - name: Compare latest upstream tags with pins
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          latest=$(gh api repos/adobe-fonts/source-han-code-jp/releases/latest --jq .tag_name)
-          echo "latest upstream: $latest (pinned: 2.012R)"
-          if [ "$latest" != "2.012R" ]; then
-            gh issue create -R "$GITHUB_REPOSITORY" \
-              --title "Upstream release $latest available (pinned 2.012R)" \
-              --body "adobe-fonts/source-han-code-jp released \`$latest\`. Update the pinned version in ci.yml / release.yml / README and rebuild." \
-              || true
-          fi
+          check() { # repo pinned
+            latest=$(gh api "repos/$1/releases/latest" --jq .tag_name)
+            echo "$1: latest=$latest pinned=$2"
+            if [ "$latest" != "$2" ]; then
+              gh issue create -R "$GITHUB_REPOSITORY" \
+                --title "Upstream $1 released $latest (pinned $2)" \
+                --body "Update the pinned tag in ci.yml / release.yml env, verify CI, and cut a release." \
+                || true
+            fi
+          }
+          check adobe-fonts/source-han-sans "2.005R"
+          check adobe-fonts/source-code-pro "2.042R-u/1.062R-i/1.026R-vf"
+          check githubnext/monaspace "v1.400"
+          check adobe-fonts/source-han-code-jp "2.012R"
