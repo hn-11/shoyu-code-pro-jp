@@ -445,6 +445,8 @@ def rescale(font, cell):
         hmtx.metrics[name] = (scale_map[adv], round(lsb * k))
     for name, cs in new_cs.items():  # swap after drawing everything
         td.CharStrings.charStringsIndex[td.CharStrings.charStrings[name]] = cs
+    # the average follows the half-width layer it describes
+    font["OS/2"].xAvgCharWidth = round(font["OS/2"].xAvgCharWidth * k)
 
 
 def main():
