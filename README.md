@@ -31,6 +31,7 @@
 |-----------|-----------|------|
 | Sauce Han Code JP | 667:1000 (2:3) | エディタ（VS Code 等） |
 | Sauce Han Code JP Term | 500:1000 (1:2) | ターミナル（セルグリッド互換） |
+| Sauce Han Code JP 35 | 600:1000 (3:5) | Source Code Pro 原寸（本家プロポーション） |
 
 Term は半角グリフを 500/667 に等方縮小したもので、Adobe が Source Code Pro
 (600) から SHCJ (667) を作った手順のちょうど逆方向。全出力に Nerd Fonts
