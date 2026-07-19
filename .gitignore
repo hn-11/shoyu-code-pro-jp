@@ -1,0 +1,3 @@
+dist/
+upstream/*.ttc
+__pycache__/

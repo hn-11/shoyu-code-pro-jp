@@ -1,0 +1,30 @@
+# Gate for every push/PR: build the Regular faces and run the shaping
+# regression test. The full 14-face build happens in release.yml.
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Fetch upstream TTC (cached)
+        uses: actions/cache@v4
+        id: ttc
+        with:
+          path: upstream/SourceHanCodeJP.ttc
+          key: shcj-2.012R
+      - if: steps.ttc.outputs.cache-hit != 'true'
+        run: |
+          curl -sSfL -o upstream/SourceHanCodeJP.ttc \
+            https://github.com/adobe-fonts/source-han-code-jp/releases/download/2.012R/SourceHanCodeJP.ttc
+      - run: python scripts/build.py "JP R"
+      - run: python scripts/verify.py
