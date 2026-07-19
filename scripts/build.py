@@ -163,37 +163,40 @@ def add_gsub(font, added):
             ls.FeatureCount = len(ls.FeatureIndex)
 
 
-HALF_SCALE = {667: 500, 1334: 1000, 2001: 1500}
+# suffix -> half-width cell. "" keeps upstream 2:3; "Term" is exact 1:2 for
+# terminal grids; "35" restores Source Code Pro's native 600/1000 proportion
+# (the inverse of Adobe's 10/9 scaling, recovering the original outlines).
+VARIANTS = {"": 667, "Term": 500, "35": 600}
 
 
-def scale_to_half(font):
-    """Isotropic 667->500 rescale of half-width glyphs (and ligatures) so the
-    full-width CJK (1000) is exactly two cells: the 1:2 "Term" variant.
-    Same recipe Adobe used in reverse when deriving SHCJ's Latin from
-    Source Code Pro (600 -> 667 at 10/9)."""
+def rescale(font, cell):
+    """Isotropically rescale half-width glyphs (and ligatures) from 667 to
+    `cell`. Same recipe Adobe used when deriving SHCJ's Latin from Source
+    Code Pro (600 -> 667 at 10/9), applied in whatever direction needed."""
+    scale_map = {667: cell, 1334: 2 * cell, 2001: 3 * cell}
     cff = font["CFF "].cff
     td = cff.topDictIndex.items[0]
     gs = font.getGlyphSet()
     hmtx = font["hmtx"]
-    k = 500 / 667
+    k = cell / 667
     new_cs = {}
     for name in font.getGlyphOrder():
         adv, lsb = hmtx.metrics[name]
-        if adv not in HALF_SCALE:
+        if adv not in scale_map:
             continue
         gid = font.getGlyphID(name)
         private = td.FDArray[td.FDSelect[gid]].Private
-        pen = T2CharStringPen(pen_width(private, HALF_SCALE[adv]), gs)
+        pen = T2CharStringPen(pen_width(private, scale_map[adv]), gs)
         gs[name].draw(TransformPen(pen, (k, 0, 0, k, 0, 0)))
         new_cs[name] = pen.getCharString(private=private)
-        hmtx.metrics[name] = (HALF_SCALE[adv], round(lsb * k))
+        hmtx.metrics[name] = (scale_map[adv], round(lsb * k))
     for name, cs in new_cs.items():  # swap after drawing everything
         td.CharStrings.charStringsIndex[td.CharStrings.charStrings[name]] = cs
 
 
-def rename(font, term=False):
-    family = "Sauce Han Code JP Term" if term else "Sauce Han Code JP"
-    psfam = "SauceHanCodeJPTerm" if term else "SauceHanCodeJP"
+def rename(font, suffix=""):
+    family = ("Sauce Han Code JP " + suffix).strip()
+    psfam = "SauceHanCodeJP" + suffix
     for rec in font["name"].names:
         s = rec.toUnicode()
         s = s.replace("Source Han Code JP", family)
@@ -217,18 +220,18 @@ def main():
     src = ROOT / "upstream" / "SourceHanCodeJP.ttc"
     out_dir = ROOT / "dist"
     out_dir.mkdir(exist_ok=True)
-    for term in (False, True):
+    for suffix, cell in VARIANTS.items():
         tc = TTCollection(src)  # fresh load per variant
         for font in tc.fonts:
             subfamily = font["name"].getDebugName(4)
             if only and only not in subfamily:
                 continue
-            print(f"processing: {subfamily}{' [Term 1:2]' if term else ''}")
+            print(f"processing: {subfamily}{f' [{suffix} {cell}]' if suffix else ''}")
             added = add_glyphs(font)
             add_gsub(font, added)
-            if term:
-                scale_to_half(font)
-            ps = rename(font, term)
+            if cell != 667:
+                rescale(font, cell)
+            ps = rename(font, suffix)
             out = out_dir / f"{ps}.otf"
             font.save(out)
             print(f"  -> {out.name} ({len(added)} ligatures)")

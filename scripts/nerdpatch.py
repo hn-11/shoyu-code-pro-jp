@@ -29,20 +29,21 @@ f.generate(sys.argv[2])
 """
 
 
-def fix_term_names(path: Path) -> Path:
-    """Re-insert 'Term' into the patched font's names (and filename)."""
+def fix_suffix_names(path: Path, suffix: str) -> Path:
+    """Re-insert the family suffix (Term/35) that font-patcher drops."""
     font = TTFont(path)
     for rec in font["name"].names:
         s = rec.toUnicode()
-        s = s.replace("SauceHanCodeJP Nerd Font", "SauceHanCodeJP Term Nerd Font")
-        s = s.replace("SauceHanCodeJPNF", "SauceHanCodeJPTermNF")
+        s = s.replace("SauceHanCodeJP Nerd Font",
+                      f"SauceHanCodeJP {suffix} Nerd Font")
+        s = s.replace("SauceHanCodeJPNF", f"SauceHanCodeJP{suffix}NF")
         rec.string = s
     if "CFF " in font:
         cff = font["CFF "].cff
         cff.fontNames[0] = cff.fontNames[0].replace(
-            "SauceHanCodeJPNF", "SauceHanCodeJPTermNF")
+            "SauceHanCodeJPNF", f"SauceHanCodeJP{suffix}NF")
     new_path = path.with_name(path.name.replace(
-        "SauceHanCodeJPNerdFont", "SauceHanCodeJPTermNerdFont"))
+        "SauceHanCodeJPNerdFont", f"SauceHanCodeJP{suffix}NerdFont"))
     font.save(new_path)
     if new_path != path:
         path.unlink()
@@ -59,7 +60,8 @@ def main():
         for src in sorted(DIST.glob("*.otf")):
             if name_filter and name_filter not in src.name:
                 continue
-            is_term = "Term" in src.name
+            m = src.name.replace("SauceHanCodeJP", "", 1).split("-")[0]
+            suffix = m if m in ("Term", "35") else ""
             print(f"patching: {src.name}")
             flat = Path(tmp) / src.name
             subprocess.run(
@@ -73,7 +75,7 @@ def main():
                         if "===>" in l and "'" in l]
             for p in produced:
                 p = ROOT / p if not Path(p).is_absolute() else Path(p)
-                final = fix_term_names(p) if is_term else Path(p)
+                final = fix_suffix_names(p, suffix) if suffix else Path(p)
                 print(f"  -> {final.name}")
 
 
