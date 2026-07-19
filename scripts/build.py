@@ -239,8 +239,9 @@ def set_names(font, suffix, weight, italic):
     return ps
 
 
-def add_glyphs(font, mona):
-    """Append the imported ligature glyphs; return {seq: glyph name}."""
+def add_glyphs(font, mona, alts):
+    """Append the imported ligature glyphs; return {seq: glyph name}.
+    Alternate (.alt) designs are appended too and recorded in `alts`."""
     cff = font["CFF "].cff
     td = cff[cff.fontNames[0]]
     order = font.getGlyphOrder()
@@ -280,32 +281,65 @@ def add_glyphs(font, mona):
                      fd_index, width)
         added[seq] = name
 
+        # alternate design, if Monaspace ships one (cv01 toggles to it)
+        alt_src = spec["glyphs"][0] + ".alt"
+        if len(spec["glyphs"]) == 1 and alt_src in mona_names:
+            pen = T2CharStringPen(pen_width(private, width), font.getGlyphSet())
+            mona_gs[alt_src].draw(TransformPen(
+                pen, (MONA_K, 0, 0, MONA_K, (cells - 1) * MONA_CELL * MONA_K, dy)))
+            alt_name = f"cid{len(order):05d}"
+            append_glyph(font, td, alt_name, pen.getCharString(private=private),
+                         fd_index, width)
+            alts[name] = alt_name
+
     return added
 
 
-def add_gsub(font, added):
-    """Register a ligature-substitution lookup under calt and liga."""
-    cmap = font.getBestCmap()
-    mapping = {tuple(cmap[ord(c)] for c in seq): g for seq, g in added.items()}
-
-    subtable = otl.buildLigatureSubstSubtable(mapping)
+def _new_lookup(gsub, subtable):
     lookup = otl.buildLookup([subtable])
-    gsub = font["GSUB"].table
     gsub.LookupList.Lookup.append(lookup)
     gsub.LookupList.LookupCount += 1
-    lookup_index = gsub.LookupList.LookupCount - 1
+    return gsub.LookupList.LookupCount - 1
 
+
+def _new_feature(gsub, tag, lookup_indices):
+    fr = otTables.FeatureRecord()
+    fr.FeatureTag = tag
+    fr.Feature = otTables.Feature()
+    fr.Feature.FeatureParams = None
+    fr.Feature.LookupListIndex = list(lookup_indices)
+    fr.Feature.LookupCount = len(lookup_indices)
+    gsub.FeatureList.FeatureRecord.append(fr)
+    gsub.FeatureList.FeatureCount += 1
+    return gsub.FeatureList.FeatureCount - 1
+
+
+def add_gsub(font, added, alts):
+    """calt/liga carry every ligature (default on); each Monaspace-style
+    group is additionally exposed as ssNN so users can toggle selectively
+    (calt off + ssNN on). cv01 switches to the .alt operator designs."""
+    cmap = font.getBestCmap()
+    gsub = font["GSUB"].table
+
+    groups = {}
+    for seq, g in added.items():
+        grp = LIGATURES[seq]["group"]
+        groups.setdefault(grp, {})[tuple(cmap[ord(c)] for c in seq)] = g
+
+    group_lookups = {}
+    for grp in sorted(groups):
+        group_lookups[grp] = _new_lookup(
+            gsub, otl.buildLigatureSubstSubtable(groups[grp]))
+
+    all_lookups = [group_lookups[g] for g in sorted(group_lookups)]
     feature_indices = []
     for tag in ("calt", "liga"):
-        fr = otTables.FeatureRecord()
-        fr.FeatureTag = tag
-        fr.Feature = otTables.Feature()
-        fr.Feature.FeatureParams = None
-        fr.Feature.LookupListIndex = [lookup_index]
-        fr.Feature.LookupCount = 1
-        gsub.FeatureList.FeatureRecord.append(fr)
-        gsub.FeatureList.FeatureCount += 1
-        feature_indices.append(gsub.FeatureList.FeatureCount - 1)
+        feature_indices.append(_new_feature(gsub, tag, all_lookups))
+    for grp in sorted(group_lookups):
+        feature_indices.append(_new_feature(gsub, grp, [group_lookups[grp]]))
+    if alts:
+        alt_lookup = _new_lookup(gsub, otl.buildSingleSubstSubtable(alts))
+        feature_indices.append(_new_feature(gsub, "cv01", [alt_lookup]))
 
     for script in gsub.ScriptList.ScriptRecord:
         langsys_list = [script.Script.DefaultLangSys] + [
@@ -373,8 +407,9 @@ def main():
                 copy_line_metrics(base, ref)
                 mona = mona_src.matched(
                     target, ref["post"].italicAngle if italic else None)
-                added = add_glyphs(base, mona)
-                add_gsub(base, added)
+                alts = {}
+                added = add_glyphs(base, mona, alts)
+                add_gsub(base, added, alts)
                 if cell != CELL:
                     rescale(base, cell)
                 ps = set_names(base, suffix, weight, italic)

@@ -31,14 +31,32 @@ def main():
     blob = hb.Blob.from_file_path(str(FONT))
     font = hb.Font(hb.Face(blob))
     failed = False
-    for text, nglyphs in CASES:
+
+    def shape_len(text, feats):
         buf = hb.Buffer()
         buf.add_str(text)
         buf.guess_segment_properties()
-        hb.shape(font, buf, {"calt": True, "liga": True})
-        got = len(buf.glyph_infos)
+        hb.shape(font, buf, feats)
+        return len(buf.glyph_infos)
+
+    for text, nglyphs in CASES:
+        got = shape_len(text, {"calt": True, "liga": True})
         ok = got == nglyphs
         print(f"{'ok  ' if ok else 'FAIL'} {text!r}: {got} glyphs (want {nglyphs})")
+        failed |= not ok
+
+    # feature toggles: ss groups are selective, cv01 swaps the design
+    off = {"calt": False, "liga": False}
+    toggles = [
+        ("a != b", dict(off), 6),
+        ("a != b", dict(off, ss01=True), 5),
+        ("a -> b", dict(off, ss01=True), 6),
+        ("a -> b", dict(off, ss02=True), 5),
+    ]
+    for text, feats, want in toggles:
+        got = shape_len(text, feats)
+        ok = got == want
+        print(f"{'ok  ' if ok else 'FAIL'} {text!r} {sorted(k for k,v in feats.items() if v)}: {got} (want {want})")
         failed |= not ok
     sys.exit(1 if failed else 0)
 
