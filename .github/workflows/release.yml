@@ -53,6 +53,7 @@ jobs:
       - run: python scripts/verify.py dist/ShoyuCodeProJPConsole-Regular.otf
       - run: python scripts/verify.py dist/ShoyuCodeProJP35-Heavy.otf
       - run: python scripts/nerdpatch.py FontPatcher
+      - run: python scripts/makeotc.py
       - run: |
           cd dist && zip -q ShoyuCodeProJP.zip *.otf
           cd nerd && zip -q ../ShoyuCodeProJP-NerdFont.zip *.otf
@@ -61,3 +62,6 @@ jobs:
           files: |
             dist/ShoyuCodeProJP.zip
             dist/ShoyuCodeProJP-NerdFont.zip
+            dist/ShoyuCodeProJP.ttc
+            dist/ShoyuCodeProJPConsole.ttc
+            dist/ShoyuCodeProJP35.ttc
