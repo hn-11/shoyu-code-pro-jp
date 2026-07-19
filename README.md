@@ -1,4 +1,4 @@
-# Sauce Han Code JP
+# Shoyu Code Pro JP
 
 [Source Han Code JP](https://github.com/adobe-fonts/source-han-code-jp) に
 プログラミング合字（リガチャ）を注入したフォント。
@@ -10,28 +10,26 @@
 
 ## 合字一覧
 
-| 入力 | 表示 | セル幅 |
-|------|------|--------|
-| `!=` | ≠ | 2 |
-| `<=` | ≤ | 2 |
-| `>=` | ≥ | 2 |
-| `->` | → | 2 |
-| `<-` | ← | 2 |
-| `===` | ≡ | 3 |
-| `!==` | ≢ | 3 |
+**Monaspace 由来の50種**を収録（[githubnext/monaspace](https://github.com/githubnext/monaspace) v1.400、OFL）。
+主要どころ: `!=` `==` `===` `!==` `<=` `>=` `->` `<-` `=>` `~>` `:=` `::`
+`<<=` `>>=` `=<<` `|>` `<|` `<>` `</>` `//` `///` `...` `&&` `||` `##` ほか。
+全リストは `data/mona_ligs.json` を参照。
 
-`==` は合字化しない（`===` との区別のため）。`:=` も合字化しない —
-合成グリフ（colon 持ち上げ版・ベースライン版とも）を実際に試した結果、
-目に馴染まず除外した。フォント内に ≔ の元グリフが存在しないため。GSUB の `calt` と `liga` の
-両方に登録しているため、VS Code は `"editor.fontLigatures": true` だけで有効になる。
+移植するのは演算子グリフのみで、英数字は SHCJ（= Source Code Pro）のまま。
+線の太さは**面ごとに** SHCJ の `=` のバー厚を実測し、Monaspace VF の wght を
+二分探索で一致させたインスタンスから取り込む。Italic 面には slnt 軸で傾斜も
+追随させ、ベースラインは両フォントの `=` の縦中心を揃える。
+GSUB は `calt` / `liga` 両登録。VS Code は `"editor.fontLigatures": true` で有効になる。
+`:=` と `::` は Monaspace 内でも文脈変異（`colon.case`）で実現されているため、
+同グリフの合成として取り込んでいる（実レンダリングと誤差1ユニット未満で一致）。
 
 ## ファミリー構成
 
 | ファミリー | 半角:全角 | 用途 |
 |-----------|-----------|------|
-| Sauce Han Code JP | 667:1000 (2:3) | エディタ（VS Code 等） |
-| Sauce Han Code JP Term | 500:1000 (1:2) | ターミナル（セルグリッド互換） |
-| Sauce Han Code JP 35 | 600:1000 (3:5) | Source Code Pro 原寸（本家プロポーション） |
+| Shoyu Code Pro JP | 667:1000 (2:3) | エディタ（VS Code 等） |
+| Shoyu Code Pro JP Console | 500:1000 (1:2) | ターミナル（セルグリッド互換） |
+| Shoyu Code Pro JP 35 | 600:1000 (3:5) | Source Code Pro 原寸（本家プロポーション） |
 
 Term は半角グリフを 500/667 に等方縮小したもので、Adobe が Source Code Pro
 (600) から SHCJ (667) を作った手順のちょうど逆方向。全出力に Nerd Fonts
@@ -45,12 +43,12 @@ font-patcher がグリフを Unicode で引けないため、パッチ前に Fon
 
 ```jsonc
 {
-  "editor.fontFamily": "Sauce Han Code JP",
+  "editor.fontFamily": "Shoyu Code Pro JP",
   "editor.fontLigatures": true
 }
 ```
 
-ファミリー名を `Sauce Han Code JP` にリネームしてあるので、
+ファミリー名を `Shoyu Code Pro JP` にリネームしてあるので、
 オリジナルと共存できる。
 
 ## ビルド
@@ -78,4 +76,4 @@ python scripts/build.py "JP R"     # Regular系のみ（動作確認用）
 ## ライセンス
 
 フォント本体は上流と同じ [SIL OFL 1.1](https://github.com/adobe-fonts/source-han-code-jp/blob/master/LICENSE.txt)。
-OFL の Reserved Font Name 規定に基づき、ファミリー名は変更済み。
+OFL の Reserved Font Name 規定に基づき、ファミリー名は変更済み（Source→Shoyu、nerd-fonts の SauceCodePro と同じ流儀の言い換え）。

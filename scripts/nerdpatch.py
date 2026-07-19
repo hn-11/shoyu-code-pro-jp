@@ -29,25 +29,33 @@ f.generate(sys.argv[2])
 """
 
 
-def fix_suffix_names(path: Path, suffix: str) -> Path:
-    """Re-insert the family suffix (Term/35) that font-patcher drops."""
-    font = TTFont(path)
-    for rec in font["name"].names:
+def fix_names(patched: Path, src: Path) -> Path:
+    """Rebuild the patched font's name table from the source font.
+
+    font-patcher can't parse SHCJ's subfamily scheme (EL/L/N/R/M/H + Italic)
+    and collapses every face to "Regular", colliding on disk and at install
+    time. Take the source names verbatim and splice in the NF marker.
+    """
+    font = TTFont(patched)
+    src_font = TTFont(src)
+    font["name"].names = []
+    for rec in src_font["name"].names:
         s = rec.toUnicode()
-        s = s.replace("SauceHanCodeJP Nerd Font",
-                      f"SauceHanCodeJP {suffix} Nerd Font")
-        s = s.replace("SauceHanCodeJPNF", f"SauceHanCodeJP{suffix}NF")
-        rec.string = s
+        s = s.replace("Shoyu Code Pro JP", "Shoyu Code Pro JP NF", 1) \
+             .replace("ShoyuCodeProJP", "ShoyuCodeProJPNF", 1) \
+            if "Shoyu" in s else s
+        font["name"].setName(s, rec.nameID, rec.platformID,
+                             rec.platEncID, rec.langID)
+    ps = src_font["name"].getDebugName(6).replace(
+        "ShoyuCodeProJP", "ShoyuCodeProJPNF", 1)
+    font["name"].setName(ps, 6, 3, 1, 0x409)
     if "CFF " in font:
-        cff = font["CFF "].cff
-        cff.fontNames[0] = cff.fontNames[0].replace(
-            "SauceHanCodeJPNF", f"SauceHanCodeJP{suffix}NF")
-    new_path = path.with_name(path.name.replace(
-        "SauceHanCodeJPNerdFont", f"SauceHanCodeJP{suffix}NerdFont"))
-    font.save(new_path)
-    if new_path != path:
-        path.unlink()
-    return new_path
+        font["CFF "].cff.fontNames[0] = ps
+    out = patched.parent / f"{ps}.otf"
+    font.save(out)
+    if out != patched and patched.exists():
+        patched.unlink()
+    return out
 
 
 def main():
@@ -60,8 +68,6 @@ def main():
         for src in sorted(DIST.glob("*.otf")):
             if name_filter and name_filter not in src.name:
                 continue
-            m = src.name.replace("SauceHanCodeJP", "", 1).split("-")[0]
-            suffix = m if m in ("Term", "35") else ""
             print(f"patching: {src.name}")
             flat = Path(tmp) / src.name
             subprocess.run(
@@ -75,7 +81,7 @@ def main():
                         if "===>" in l and "'" in l]
             for p in produced:
                 p = ROOT / p if not Path(p).is_absolute() else Path(p)
-                final = fix_suffix_names(p, suffix) if suffix else Path(p)
+                final = fix_names(Path(p), src)
                 print(f"  -> {final.name}")
 
 

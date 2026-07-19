@@ -8,12 +8,15 @@ import uharfbuzz as hb
 
 CELL = 667
 FONT = Path(sys.argv[1]) if len(sys.argv) > 1 else (
-    Path(__file__).resolve().parent.parent / "dist" / "SauceHanCodeJP-Regular.otf"
+    Path(__file__).resolve().parent.parent / "dist" / "ShoyuCodeProJP-Regular.otf"
 )
 
 # (text, expected glyph count after shaping)
 CASES = [
-    ("a != b", 5),("x := 0", 6),  # := deliberately NOT ligated("a <= b", 5),("a >= b", 5),("a -> b", 5),("a <- b", 5),("a === b", 5),("a !== b", 5),("a == b", 6),  # must NOT ligate
+    ("a != b", 5), ("x := 0", 5), ("a <= b", 5), ("a >= b", 5),
+    ("a -> b", 5), ("a <- b", 5), ("a === b", 5), ("a !== b", 5),
+    ("a == b", 5), ("a => b", 5), ("x |> f", 5), ("t :: u", 5),
+    ("m >>= g", 5), ("s // c", 5),
     ("日本語 != x", 7),
 ]
 

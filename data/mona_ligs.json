@@ -1,0 +1,304 @@
+{
+ "==": {
+  "cells": 2,
+  "glyphs": [
+   "equal_equal"
+  ]
+ },
+ "===": {
+  "cells": 3,
+  "glyphs": [
+   "equal_equal_equal"
+  ]
+ },
+ "!=": {
+  "cells": 2,
+  "glyphs": [
+   "exclam_equal"
+  ]
+ },
+ "!==": {
+  "cells": 3,
+  "glyphs": [
+   "exclam_equal_equal"
+  ]
+ },
+ "=/=": {
+  "cells": 3,
+  "glyphs": [
+   "equal_slash_equal"
+  ]
+ },
+ "<=": {
+  "cells": 2,
+  "glyphs": [
+   "less_equal"
+  ]
+ },
+ ">=": {
+  "cells": 2,
+  "glyphs": [
+   "greater_equal"
+  ]
+ },
+ "<>": {
+  "cells": 2,
+  "glyphs": [
+   "less_greater"
+  ]
+ },
+ "->": {
+  "cells": 2,
+  "glyphs": [
+   "hyphen_greater"
+  ]
+ },
+ "<-": {
+  "cells": 2,
+  "glyphs": [
+   "less_hyphen"
+  ]
+ },
+ "=>": {
+  "cells": 2,
+  "glyphs": [
+   "equal_greater"
+  ]
+ },
+ "~>": {
+  "cells": 2,
+  "glyphs": [
+   "asciitilde_greater"
+  ]
+ },
+ "<~": {
+  "cells": 2,
+  "glyphs": [
+   "less_asciitilde"
+  ]
+ },
+ "=>>": {
+  "cells": 3,
+  "glyphs": [
+   "equal_greater_greater"
+  ]
+ },
+ "<<=": {
+  "cells": 3,
+  "glyphs": [
+   "less_less_equal"
+  ]
+ },
+ ">>=": {
+  "cells": 3,
+  "glyphs": [
+   "greater_greater_equal"
+  ]
+ },
+ "=<<": {
+  "cells": 3,
+  "glyphs": [
+   "equal_less_less"
+  ]
+ },
+ "<=>": {
+  "cells": 3,
+  "glyphs": [
+   "less_equal_greater"
+  ]
+ },
+ "<->": {
+  "cells": 3,
+  "glyphs": [
+   "less_hyphen_greater"
+  ]
+ },
+ "-->": {
+  "cells": 3,
+  "glyphs": [
+   "hyphen_hyphen_greater"
+  ]
+ },
+ "<--": {
+  "cells": 3,
+  "glyphs": [
+   "less_hyphen_hyphen"
+  ]
+ },
+ "<-->": {
+  "cells": 4,
+  "glyphs": [
+   "less_hyphen_hyphen_greater"
+  ]
+ },
+ "|>": {
+  "cells": 2,
+  "glyphs": [
+   "bar_greater"
+  ]
+ },
+ "<|": {
+  "cells": 2,
+  "glyphs": [
+   "less_bar"
+  ]
+ },
+ "..": {
+  "cells": 2,
+  "glyphs": [
+   "period_period"
+  ]
+ },
+ "...": {
+  "cells": 3,
+  "glyphs": [
+   "period_period_period"
+  ]
+ },
+ "!!": {
+  "cells": 2,
+  "glyphs": [
+   "exclam_exclam"
+  ]
+ },
+ "||": {
+  "cells": 2,
+  "glyphs": [
+   "bar_bar"
+  ]
+ },
+ "//": {
+  "cells": 2,
+  "glyphs": [
+   "slash_slash"
+  ]
+ },
+ "///": {
+  "cells": 3,
+  "glyphs": [
+   "slash_slash_slash"
+  ]
+ },
+ "</": {
+  "cells": 2,
+  "glyphs": [
+   "less_slash"
+  ]
+ },
+ "/>": {
+  "cells": 2,
+  "glyphs": [
+   "slash_greater"
+  ]
+ },
+ "</>": {
+  "cells": 3,
+  "glyphs": [
+   "less_slash_greater"
+  ]
+ },
+ "#[": {
+  "cells": 2,
+  "glyphs": [
+   "numbersign_bracketleft"
+  ]
+ },
+ "#(": {
+  "cells": 2,
+  "glyphs": [
+   "numbersign_parenleft"
+  ]
+ },
+ "~~": {
+  "cells": 2,
+  "glyphs": [
+   "asciitilde_asciitilde"
+  ]
+ },
+ "~-": {
+  "cells": 2,
+  "glyphs": [
+   "asciitilde_hyphen"
+  ]
+ },
+ "-~": {
+  "cells": 2,
+  "glyphs": [
+   "hyphen_asciitilde"
+  ]
+ },
+ "=!=": {
+  "cells": 3,
+  "glyphs": [
+   "equal_exclam_equal"
+  ]
+ },
+ "&=": {
+  "cells": 2,
+  "glyphs": [
+   "ampersand_equal"
+  ]
+ },
+ "/=": {
+  "cells": 2,
+  "glyphs": [
+   "slash_equal"
+  ]
+ },
+ "<<": {
+  "cells": 2,
+  "glyphs": [
+   "less_less"
+  ]
+ },
+ ">>": {
+  "cells": 2,
+  "glyphs": [
+   "greater_greater"
+  ]
+ },
+ "[|": {
+  "cells": 2,
+  "glyphs": [
+   "bracketleft_bar"
+  ]
+ },
+ "|]": {
+  "cells": 2,
+  "glyphs": [
+   "bar_bracketright"
+  ]
+ },
+ "{|": {
+  "cells": 2,
+  "glyphs": [
+   "braceleft_bar"
+  ]
+ },
+ "|}": {
+  "cells": 2,
+  "glyphs": [
+   "bar_braceright"
+  ]
+ },
+ ";;": {
+  "cells": 2,
+  "glyphs": [
+   "semicolon_semicolon"
+  ]
+ },
+ ":=": {
+  "cells": 2,
+  "glyphs": [
+   "colon.case",
+   "equal"
+  ]
+ },
+ "::": {
+  "cells": 2,
+  "glyphs": [
+   "colon.case",
+   "colon.case"
+  ]
+ }
+}

@@ -25,15 +25,20 @@ jobs:
           curl -sSfL -o /tmp/FontPatcher.zip \
             https://github.com/ryanoasis/nerd-fonts/releases/download/v3.4.0/FontPatcher.zip
           unzip -qo /tmp/FontPatcher.zip -d FontPatcher
+      - run: |
+          curl -sSfL -o /tmp/mona.zip \
+            https://github.com/githubnext/monaspace/releases/download/v1.400/monaspace-variable-v1.400.zip
+          mkdir -p monaspace-vf && unzip -qo /tmp/mona.zip -d monaspace-vf
+      - run: echo "MONA_VF=$(find monaspace-vf -name 'Monaspace Neon Var.ttf' | head -1)" >> "$GITHUB_ENV"
       - run: python scripts/build.py
-      - run: python scripts/verify.py dist/SauceHanCodeJP-Regular.otf
-      - run: python scripts/verify.py dist/SauceHanCodeJPTerm-Regular.otf
+      - run: python scripts/verify.py dist/ShoyuCodeProJP-Regular.otf
+      - run: python scripts/verify.py dist/ShoyuCodeProJPConsole-Regular.otf
       - run: python scripts/nerdpatch.py FontPatcher
       - run: |
-          cd dist && zip SauceHanCodeJP.zip *.otf
-          cd nerd && zip ../SauceHanCodeJP-NerdFont.zip *.otf
+          cd dist && zip ShoyuCodeProJP.zip *.otf
+          cd nerd && zip ../ShoyuCodeProJP-NerdFont.zip *.otf
       - uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/SauceHanCodeJP.zip
-            dist/SauceHanCodeJP-NerdFont.zip
+            dist/ShoyuCodeProJP.zip
+            dist/ShoyuCodeProJP-NerdFont.zip
