@@ -24,6 +24,7 @@ jobs:
           key: shcj-2.012R
       - if: steps.ttc.outputs.cache-hit != 'true'
         run: |
+          mkdir -p upstream
           curl -sSfL -o upstream/SourceHanCodeJP.ttc \
             https://github.com/adobe-fonts/source-han-code-jp/releases/download/2.012R/SourceHanCodeJP.ttc
       - run: python scripts/build.py "JP R"

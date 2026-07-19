@@ -17,6 +17,7 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt
       - run: |
+          mkdir -p upstream
           curl -sSfL -o upstream/SourceHanCodeJP.ttc \
             https://github.com/adobe-fonts/source-han-code-jp/releases/download/2.012R/SourceHanCodeJP.ttc
       - run: python scripts/build.py
