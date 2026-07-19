@@ -58,6 +58,26 @@ def main():
         ok = got == want
         print(f"{'ok  ' if ok else 'FAIL'} {text!r} {sorted(k for k,v in feats.items() if v)}: {got} (want {want})")
         failed |= not ok
+
+    # SCP character variants and Monaspace alt designs must swap glyphs
+    def first_gid(text, feats, i=0):
+        buf = hb.Buffer()
+        buf.add_str(text)
+        buf.guess_segment_properties()
+        hb.shape(font, buf, feats)
+        return buf.glyph_infos[i].codepoint
+
+    variant_checks = [
+        ("0", "zero"), ("a", "cv01"), ("g", "cv02"), ("a", "salt"),
+    ]
+    for ch, tag in variant_checks:
+        ok = first_gid(ch, {}) != first_gid(ch, {tag: True})
+        print(f"{'ok  ' if ok else 'FAIL'} {tag} swaps {ch!r}")
+        failed |= not ok
+    ok = first_gid("a != b", {"calt": True}, 2) != first_gid(
+        "a != b", {"calt": True, "cv99": True}, 2)
+    print(f"{'ok  ' if ok else 'FAIL'} cv99 swaps ligature design")
+    failed |= not ok
     sys.exit(1 if failed else 0)
 
 

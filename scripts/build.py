@@ -169,6 +169,7 @@ def graft_halfwidth(base, scp, ref):
     private = td.FDArray[fd_index].Private
 
     new_map = {}
+    default_map = {}  # scp glyph name -> our glyph name (for variant wiring)
     from_scp = from_ref = 0
     for cp, g in sorted(ref_cm.items()):
         if ref_hm[g][0] != CELL:
@@ -187,24 +188,81 @@ def graft_halfwidth(base, scp, ref):
         append_glyph(base, td, name, pen.getCharString(private=private),
                      fd_index, CELL, lsb)
         new_map[cp] = name
+        if cp in scp_cm:
+            default_map[scp_cm[cp]] = name
 
     for table in base["cmap"].tables:
         if table.isUnicode():
             for cp, name in new_map.items():
                 if cp in table.cmap:
                     table.cmap[cp] = name
-    return from_scp, from_ref
+    return from_scp, from_ref, default_map
+
+
+def _remap_scp_tag(tag):
+    """SCP feature tags, shifted around our own: ssNN -> ss(NN+10) because
+    ss01-ss08 are the ligature groups; cv/zero/salt keep their names."""
+    if tag in ("zero", "salt") or tag.startswith("cv"):
+        return tag
+    if tag.startswith("ss"):
+        return f"ss{int(tag[2:]) + 10:02d}"
+    return None
+
+
+def import_scp_variants(base, scp, default_map):
+    """Carry SCP's own character variants (dotted/slashed zero bodies,
+    one/two-story a, g shapes, salt...) through the graft. Returns
+    {our tag: {our default glyph: our variant glyph}}."""
+    gsub = scp["GSUB"].table
+    cff = base["CFF "].cff
+    td = cff[cff.fontNames[0]]
+    bcm = base.getBestCmap()
+    fd_index = td.FDSelect[base.getGlyphID(bcm[ord("A")])]
+    private = td.FDArray[fd_index].Private
+    scp_gs = scp.getGlyphSet()
+
+    imported = {}   # scp variant glyph -> our glyph name
+    tag_maps = {}
+    for fr in gsub.FeatureList.FeatureRecord:
+        tag = _remap_scp_tag(fr.FeatureTag)
+        if tag is None:
+            continue
+        for li in fr.Feature.LookupListIndex:
+            lookup = gsub.LookupList.Lookup[li]
+            if lookup.LookupType != 1:
+                continue
+            for st in lookup.SubTable:
+                for src, dst in st.mapping.items():
+                    if src not in default_map:
+                        continue
+                    if dst not in imported:
+                        pen = T2CharStringPen(
+                            pen_width(private, CELL), scp_gs)
+                        scp_gs[dst].draw(
+                            TransformPen(pen, (SCP_K, 0, 0, SCP_K, 0, 0)))
+                        name = f"cid{len(base.getGlyphOrder()):05d}"
+                        append_glyph(
+                            base, td, name,
+                            pen.getCharString(private=private),
+                            fd_index, CELL,
+                            round(scp["hmtx"][dst][1] * SCP_K))
+                        imported[dst] = name
+                    tag_maps.setdefault(tag, {})[default_map[src]] = imported[dst]
+    return tag_maps
 
 
 def copy_line_metrics(base, ref):
-    """Keep SHCJ's vertical rhythm — line height must not change."""
+    """Keep SHCJ's vertical rhythm and width metadata — the rendered line
+    height and how font pickers classify the font must not change."""
     for tbl, attrs in (
         ("hhea", ("ascent", "descent", "lineGap")),
         ("OS/2", ("sTypoAscender", "sTypoDescender", "sTypoLineGap",
-                  "usWinAscent", "usWinDescent")),
+                  "usWinAscent", "usWinDescent", "xAvgCharWidth")),
+        ("post", ("isFixedPitch",)),
     ):
         for a in attrs:
             setattr(base[tbl], a, getattr(ref[tbl], a))
+    base["OS/2"].panose = ref["OS/2"].panose
 
 
 def set_names(font, suffix, weight, italic):
@@ -314,7 +372,7 @@ def _new_feature(gsub, tag, lookup_indices):
     return gsub.FeatureList.FeatureCount - 1
 
 
-def add_gsub(font, added, alts):
+def add_gsub(font, added, alts, variant_maps=None):
     """calt/liga carry every ligature (default on); each Monaspace-style
     group is additionally exposed as ssNN so users can toggle selectively
     (calt off + ssNN on). cv01 switches to the .alt operator designs."""
@@ -347,7 +405,11 @@ def add_gsub(font, added, alts):
         feature_indices.append(_new_feature(gsub, grp, [group_lookups[grp]]))
     if alts:
         alt_lookup = _new_lookup(gsub, otl.buildSingleSubstSubtable(alts))
-        feature_indices.append(_new_feature(gsub, "cv01", [alt_lookup]))
+        feature_indices.append(_new_feature(gsub, "cv99", [alt_lookup]))
+    for tag in sorted(variant_maps or {}):
+        vlookup = _new_lookup(
+            gsub, otl.buildSingleSubstSubtable(variant_maps[tag]))
+        feature_indices.append(_new_feature(gsub, tag, [vlookup]))
 
     for script in gsub.ScriptList.ScriptRecord:
         langsys_list = [script.Script.DefaultLangSys] + [
@@ -411,13 +473,14 @@ def main():
                 target = bar_thickness(ref, ref.getBestCmap()[ord("=")])
                 scp = (scp_i if italic else scp_u).matched(target)
                 base = TTFont(Path(env["SHS_DIR"]) / shs_file)
-                n_scp, n_ref = graft_halfwidth(base, scp, ref)
+                n_scp, n_ref, default_map = graft_halfwidth(base, scp, ref)
+                variant_maps = import_scp_variants(base, scp, default_map)
                 copy_line_metrics(base, ref)
                 mona = mona_src.matched(
                     target, ref["post"].italicAngle if italic else None)
                 alts = {}
                 added = add_glyphs(base, mona, alts)
-                add_gsub(base, added, alts)
+                add_gsub(base, added, alts, variant_maps)
                 if cell != CELL:
                     rescale(base, cell)
                 ps = set_names(base, suffix, weight, italic)

@@ -37,7 +37,13 @@ GSUB は `calt` / `liga` 両登録（全合字が既定で有効）。加えて 
 | ss06 | ドット | `..` `...` |
 | ss07 | コメント | `//` `#!` |
 | ss08 | 反復・論理 | `&&` `\|\|` `<<` `>>` |
-| cv01 | 演算子の代替デザイン（Monaspace の .alt） | |
+| cv99 | 演算子の代替デザイン（Monaspace の .alt） | |
+
+さらに **Source Code Pro 自身の字形バリアントを貫通**させている:
+`zero`（スラッシュゼロ切替）、`cv01`〜`cv17`（`a` の一階建て、`g` の形など
+SCP 純正の文字変異）、`salt`、SCP の stylistic set は ss11〜ss17 に +10 で
+マウント（ss01〜ss08 は合字グループが使用）。等幅メタデータ
+（`post.isFixedPitch` / PANOSE / xAvgCharWidth）と行間は SHCJ の宣言値を複写。
 
 ```jsonc
 // 例: !== の一体化が読みにくい場合、比較系だけ切って矢印は残す
