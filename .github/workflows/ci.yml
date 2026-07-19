@@ -30,15 +30,16 @@ jobs:
       - if: steps.up.outputs.cache-hit != 'true'
         run: |
           mkdir -p upstreams
-          curl -sSfL -o upstreams/shcj.ttc \
+          fetch() { echo "fetching $2"; curl -sSfL -o "$1" "$2" || { echo "FAILED: $2"; exit 22; }; }
+          fetch upstreams/shcj.ttc \
             https://github.com/adobe-fonts/source-han-code-jp/releases/download/2.012R/SourceHanCodeJP.ttc
-          curl -sSfL -o /tmp/shs.zip \
+          fetch /tmp/shs.zip \
             "https://github.com/adobe-fonts/source-han-sans/releases/download/${SHS_TAG}/17_SourceHanSansJP.zip"
           unzip -qo /tmp/shs.zip -d upstreams/shs
-          curl -sSfL -o /tmp/scp.zip \
+          fetch /tmp/scp.zip \
             "https://github.com/adobe-fonts/source-code-pro/releases/download/${SCP_TAG}/${SCP_VF_ZIP}"
           unzip -qo /tmp/scp.zip -d upstreams/scp
-          curl -sSfL -o /tmp/mona.zip \
+          fetch /tmp/mona.zip \
             "https://github.com/githubnext/monaspace/releases/download/${MONA_TAG}/monaspace-variable-${MONA_TAG#v}.zip"
           unzip -qo /tmp/mona.zip -d upstreams/mona
       - name: Export upstream paths
