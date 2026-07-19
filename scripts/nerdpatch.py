@@ -9,6 +9,7 @@ Usage: python scripts/nerdpatch.py <path-to-FontPatcher-dir> [name-filter]
 Requires: fontforge on PATH.
 """
 
+import os
 import subprocess
 import sys
 import tempfile
@@ -27,6 +28,15 @@ if f.is_cid:
     f.cidFlatten()
 f.generate(sys.argv[2])
 """
+
+
+def ff_env():
+    """FontForge embeds its own Python; strip setup-python's env vars that
+    otherwise poison it on CI (mismatched stdlib -> ModuleNotFoundError)."""
+    env = dict(os.environ)
+    for k in ("PYTHONPATH", "PYTHONHOME", "LD_LIBRARY_PATH", "pythonLocation"):
+        env.pop(k, None)
+    return env
 
 
 def fix_names(patched: Path, src: Path) -> Path:
@@ -72,11 +82,11 @@ def main():
             flat = Path(tmp) / src.name
             subprocess.run(
                 ["fontforge", "-script", str(flatten_script), str(src), str(flat)],
-                check=True, capture_output=True)
+                check=True, capture_output=True, env=ff_env())
             r = subprocess.run(
                 ["fontforge", "-script", str(patcher_dir / "font-patcher"),
                  "--complete", "--quiet", "--outputdir", str(OUT), str(flat)],
-                capture_output=True, text=True)
+                capture_output=True, text=True, env=ff_env())
             if r.returncode != 0:
                 print(r.stdout)
                 print(r.stderr)
