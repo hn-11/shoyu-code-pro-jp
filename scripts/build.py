@@ -66,7 +66,10 @@ def compose_charstring(font, td, design, width):
         w1, w2 = b1[2] - b1[0], b2[2] - b2[0]
         total = w1 + gap + w2
         x = (width - total) / 2
-        gs[g1].draw(TransformPen(pen, (1, 0, 0, 1, round(x - b1[0]), 0)))
+        # Vertically center the first glyph on the second's axis — a raw ':'
+        # sits near the baseline and looks sunken next to '=' otherwise.
+        dy = ((b2[1] + b2[3]) - (b1[1] + b1[3])) / 2
+        gs[g1].draw(TransformPen(pen, (1, 0, 0, 1, round(x - b1[0]), round(dy))))
         gs[g2].draw(TransformPen(pen, (1, 0, 0, 1, round(x + w1 + gap - b2[0]), 0)))
         src_for_fd = g2
 
