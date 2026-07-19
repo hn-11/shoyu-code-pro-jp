@@ -20,12 +20,20 @@ jobs:
           mkdir -p upstream
           curl -sSfL -o upstream/SourceHanCodeJP.ttc \
             https://github.com/adobe-fonts/source-han-code-jp/releases/download/2.012R/SourceHanCodeJP.ttc
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq fontforge python3-fontforge
+      - run: |
+          curl -sSfL -o /tmp/FontPatcher.zip \
+            https://github.com/ryanoasis/nerd-fonts/releases/download/v3.4.0/FontPatcher.zip
+          unzip -qo /tmp/FontPatcher.zip -d FontPatcher
       - run: python scripts/build.py
-      - run: python scripts/verify.py
-      - run: cd dist && zip SauceHanCodeJP.zip *.otf
+      - run: python scripts/verify.py dist/SauceHanCodeJP-Regular.otf
+      - run: python scripts/verify.py dist/SauceHanCodeJPTerm-Regular.otf
+      - run: python scripts/nerdpatch.py FontPatcher
+      - run: |
+          cd dist && zip SauceHanCodeJP.zip *.otf
+          cd nerd && zip ../SauceHanCodeJP-NerdFont.zip *.otf
       - uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/SauceHanCodeJP.zip
-            dist/SauceHanCodeJP-Regular.otf
-            dist/SauceHanCodeJP-Bold.otf
+            dist/SauceHanCodeJP-NerdFont.zip

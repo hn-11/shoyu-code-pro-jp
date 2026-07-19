@@ -9,8 +9,7 @@ registers them under GSUB 'calt' + 'liga', renames the family to
 Ligature designs (all reuse existing glyphs, centered across n cells):
   !=  -> U+2260 (2 cells)      ->  -> U+2192 (2 cells)
   <=  -> U+2264 (2 cells)      <-  -> U+2190 (2 cells)
-  >=  -> U+2265 (2 cells)      :=  -> ':' + '=' tightened (2 cells)
-  === -> U+2261 (3 cells)      !== -> U+2262 (3 cells)
+  >=  -> U+2265 (2 cells)      === -> U+2261 (3 cells)      !== -> U+2262 (3 cells)
 """
 
 import sys
@@ -35,7 +34,9 @@ LIGATURES = [
     ("ge",      ">=",  2, ("center", 0x2265)),
     ("arrowr",  "->",  2, ("center", 0x2192)),
     ("arrowl",  "<-",  2, ("center", 0x2190)),
-    ("coloneq", ":=",  2, ("pair", 0x003A, 0x003D, 40)),
+    # ":=" was tried (colon+equal composed, raised and baseline variants) and
+    # rejected by eye — no coloneq source glyph exists in the font, and a
+    # composed one reads as foreign. Go's := stays unligated on purpose.
     ("eq3",     "===", 3, ("center", 0x2261)),
     ("ne3",     "!==", 3, ("center", 0x2262)),
 ]
@@ -47,18 +48,30 @@ def glyph_bounds(glyph_set, gname):
     return pen.bounds  # (xmin, ymin, xmax, ymax)
 
 
+def pen_width(private, advance):
+    """CFF charstring width operand: omitted when equal to defaultWidthX,
+    otherwise encoded relative to nominalWidthX. T2CharStringPen writes the
+    value verbatim, so feed it the encoded form."""
+    default = getattr(private, "defaultWidthX", 0)
+    nominal = getattr(private, "nominalWidthX", 0)
+    return None if advance == default else advance - nominal
+
+
 def compose_charstring(font, td, design, width):
     """Build a T2 charstring for one ligature from existing outlines."""
     gs = font.getGlyphSet()
     cmap = font.getBestCmap()
-    pen = T2CharStringPen(width, gs)
+    src_for_fd = cmap[design[1]]
+    gid = font.getGlyphID(src_for_fd)
+    fd_index = td.FDSelect[gid]
+    private = td.FDArray[fd_index].Private
+    pen = T2CharStringPen(pen_width(private, width), gs)
 
     if design[0] == "center":
         gname = cmap[design[1]]
         xmin, _, xmax, _ = glyph_bounds(gs, gname)
         dx = (width - (xmax - xmin)) / 2 - xmin
         gs[gname].draw(TransformPen(pen, (1, 0, 0, 1, round(dx), 0)))
-        src_for_fd = gname
     else:  # "pair"
         _, cp1, cp2, gap = design
         g1, g2 = cmap[cp1], cmap[cp2]
@@ -66,17 +79,12 @@ def compose_charstring(font, td, design, width):
         w1, w2 = b1[2] - b1[0], b2[2] - b2[0]
         total = w1 + gap + w2
         x = (width - total) / 2
-        # Vertically center the first glyph on the second's axis — a raw ':'
-        # sits near the baseline and looks sunken next to '=' otherwise.
-        dy = ((b2[1] + b2[3]) - (b1[1] + b1[3])) / 2
-        gs[g1].draw(TransformPen(pen, (1, 0, 0, 1, round(x - b1[0]), round(dy))))
+        # Keep the first glyph at its natural vertical position. Raising ':'
+        # to the equals axis (a la U+2254) was tried and read as wrong to
+        # eyes trained on this font — the familiar baseline colon wins.
+        gs[g1].draw(TransformPen(pen, (1, 0, 0, 1, round(x - b1[0]), 0)))
         gs[g2].draw(TransformPen(pen, (1, 0, 0, 1, round(x + w1 + gap - b2[0]), 0)))
-        src_for_fd = g2
 
-    # Assign the new glyph to the same FD (hinting zones etc.) as its source.
-    gid = font.getGlyphID(src_for_fd)
-    fd_index = td.FDSelect[gid]
-    private = td.FDArray[fd_index].Private
     return pen.getCharString(private=private), fd_index
 
 
@@ -155,11 +163,41 @@ def add_gsub(font, added):
             ls.FeatureCount = len(ls.FeatureIndex)
 
 
-def rename(font):
+HALF_SCALE = {667: 500, 1334: 1000, 2001: 1500}
+
+
+def scale_to_half(font):
+    """Isotropic 667->500 rescale of half-width glyphs (and ligatures) so the
+    full-width CJK (1000) is exactly two cells: the 1:2 "Term" variant.
+    Same recipe Adobe used in reverse when deriving SHCJ's Latin from
+    Source Code Pro (600 -> 667 at 10/9)."""
+    cff = font["CFF "].cff
+    td = cff.topDictIndex.items[0]
+    gs = font.getGlyphSet()
+    hmtx = font["hmtx"]
+    k = 500 / 667
+    new_cs = {}
+    for name in font.getGlyphOrder():
+        adv, lsb = hmtx.metrics[name]
+        if adv not in HALF_SCALE:
+            continue
+        gid = font.getGlyphID(name)
+        private = td.FDArray[td.FDSelect[gid]].Private
+        pen = T2CharStringPen(pen_width(private, HALF_SCALE[adv]), gs)
+        gs[name].draw(TransformPen(pen, (k, 0, 0, k, 0, 0)))
+        new_cs[name] = pen.getCharString(private=private)
+        hmtx.metrics[name] = (HALF_SCALE[adv], round(lsb * k))
+    for name, cs in new_cs.items():  # swap after drawing everything
+        td.CharStrings.charStringsIndex[td.CharStrings.charStrings[name]] = cs
+
+
+def rename(font, term=False):
+    family = "Sauce Han Code JP Term" if term else "Sauce Han Code JP"
+    psfam = "SauceHanCodeJPTerm" if term else "SauceHanCodeJP"
     for rec in font["name"].names:
         s = rec.toUnicode()
-        s = s.replace("Source Han Code JP", "Sauce Han Code JP")
-        s = s.replace("SourceHanCodeJP", "SauceHanCodeJP")
+        s = s.replace("Source Han Code JP", family)
+        s = s.replace("SourceHanCodeJP", psfam)
         rec.string = s
     # Use name ID 6 (unique per face) — the CFF-internal fontName is shared
     # between upright and italic faces in the upstream TTC.
@@ -170,7 +208,7 @@ def rename(font):
     for attr in ("FullName", "FamilyName"):
         if hasattr(td, attr):
             setattr(td, attr, getattr(td, attr).replace(
-                "Source Han Code JP", "Sauce Han Code JP"))
+                "Source Han Code JP", family))
     return ps
 
 
@@ -179,18 +217,21 @@ def main():
     src = ROOT / "upstream" / "SourceHanCodeJP.ttc"
     out_dir = ROOT / "dist"
     out_dir.mkdir(exist_ok=True)
-    tc = TTCollection(src)
-    for font in tc.fonts:
-        subfamily = font["name"].getDebugName(4)
-        if only and only not in subfamily:
-            continue
-        print(f"processing: {subfamily}")
-        added = add_glyphs(font)
-        add_gsub(font, added)
-        ps = rename(font)
-        out = out_dir / f"{ps}.otf"
-        font.save(out)
-        print(f"  -> {out.name} ({len(added)} ligatures)")
+    for term in (False, True):
+        tc = TTCollection(src)  # fresh load per variant
+        for font in tc.fonts:
+            subfamily = font["name"].getDebugName(4)
+            if only and only not in subfamily:
+                continue
+            print(f"processing: {subfamily}{' [Term 1:2]' if term else ''}")
+            added = add_glyphs(font)
+            add_gsub(font, added)
+            if term:
+                scale_to_half(font)
+            ps = rename(font, term)
+            out = out_dir / f"{ps}.otf"
+            font.save(out)
+            print(f"  -> {out.name} ({len(added)} ligatures)")
 
 
 if __name__ == "__main__":

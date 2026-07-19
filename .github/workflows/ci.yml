@@ -27,5 +27,20 @@ jobs:
           mkdir -p upstream
           curl -sSfL -o upstream/SourceHanCodeJP.ttc \
             https://github.com/adobe-fonts/source-han-code-jp/releases/download/2.012R/SourceHanCodeJP.ttc
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq fontforge python3-fontforge
+      - name: Fetch FontPatcher (cached)
+        uses: actions/cache@v4
+        id: fp
+        with:
+          path: FontPatcher
+          key: fontpatcher-v3.4.0
+      - if: steps.fp.outputs.cache-hit != 'true'
+        run: |
+          curl -sSfL -o /tmp/FontPatcher.zip \
+            https://github.com/ryanoasis/nerd-fonts/releases/download/v3.4.0/FontPatcher.zip
+          unzip -qo /tmp/FontPatcher.zip -d FontPatcher
       - run: python scripts/build.py "JP R"
-      - run: python scripts/verify.py
+      - run: python scripts/verify.py dist/SauceHanCodeJP-Regular.otf
+      - run: python scripts/verify.py dist/SauceHanCodeJPTerm-Regular.otf
+      - name: Nerd-patch smoke test (one font)
+        run: python scripts/nerdpatch.py FontPatcher SauceHanCodeJPTerm-Regular
