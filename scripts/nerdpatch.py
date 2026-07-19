@@ -76,7 +76,11 @@ def main():
             r = subprocess.run(
                 ["fontforge", "-script", str(patcher_dir / "font-patcher"),
                  "--complete", "--quiet", "--outputdir", str(OUT), str(flat)],
-                check=True, capture_output=True, text=True)
+                capture_output=True, text=True)
+            if r.returncode != 0:
+                print(r.stdout)
+                print(r.stderr)
+                raise SystemExit(f"font-patcher failed on {src.name}")
             produced = [l.split("'")[1] for l in r.stdout.splitlines()
                         if "===>" in l and "'" in l]
             for p in produced:
