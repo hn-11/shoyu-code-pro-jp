@@ -11,7 +11,7 @@ from pathlib import Path
 from fontTools.ttLib import TTCollection, TTFont
 
 DIST = Path(__file__).resolve().parent.parent / "dist"
-FAMILIES = ["ShoyuCodeProJP", "ShoyuCodeProJP35"]
+FAMILIES = ["ShoyuCodeProJP", "ShoyuCodeProJP35", "ShoyuCodeProJPTerm"]
 
 
 def main():

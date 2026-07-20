@@ -27,7 +27,7 @@ def main():
     a_adv = tf["hmtx"][tf.getBestCmap()[ord("a")]][0]
     cjk_adv = tf["hmtx"][tf.getBestCmap()[0x65E5]][0]
     print(f"half={a_adv} full={cjk_adv} ratio={cjk_adv/a_adv:.3f}")
-    assert cjk_adv == 1000 and a_adv in (500, 600, 667), "unexpected metrics"
+    assert cjk_adv in (1000, 1334) and a_adv in (500, 600, 667), "unexpected metrics"
     blob = hb.Blob.from_file_path(str(FONT))
     font = hb.Font(hb.Face(blob))
     failed = False

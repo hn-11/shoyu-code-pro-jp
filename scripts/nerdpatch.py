@@ -51,8 +51,8 @@ def fix_names(patched: Path, src: Path) -> Path:
     def nf_name(s):
         # JP-font convention (HackGen/PlemolJP/UDEV): NF goes AFTER the
         # variant token — "Shoyu Code Pro JP Console NF", not "... NF Console".
-        s = re.sub(r"(Shoyu Code Pro JP(?: Console| 35)?)", r"\1 NF", s, count=1)
-        return re.sub(r"(ShoyuCodeProJP(?:Console|35)?)", r"\1NF", s, count=1)
+        s = re.sub(r"(Shoyu Code Pro JP(?: Console| 35| Term)?)", r"\1 NF", s, count=1)
+        return re.sub(r"(ShoyuCodeProJP(?:Console|35|Term)?)", r"\1NF", s, count=1)
 
     font = TTFont(patched)
     src_font = TTFont(src)

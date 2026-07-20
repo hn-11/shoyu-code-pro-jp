@@ -53,7 +53,7 @@ MONA_K = CELL / MONA_CELL
 SCP_CELL = 600      # Source Code Pro advance (upm 1000)
 SCP_K = CELL / SCP_CELL  # 10/9, Adobe's SHCJ scale factor
 
-VARIANTS = {"": 667, "35": 600}
+VARIANTS = {"": 667, "35": 600, "Term": 667}
 
 # (output weight name, SHCJ reference face, Source Han Sans static file)
 FACES = [
@@ -292,7 +292,7 @@ def copy_line_metrics(base, ref):
     base["OS/2"].panose = ref["OS/2"].panose
 
 
-def narrow_ambiguous(font):
+def narrow_ambiguous(font, cell=500):
     """Console (1:2) only: East-Asian-Width Ambiguous/Narrow codepoints that
     carry full-width (1000) glyphs — … → ≠ Greek etc. — get a half-width
     (500) scaled copy, because terminals allocate them ONE cell by default
@@ -313,15 +313,16 @@ def narrow_ambiguous(font):
         if unicodedata.east_asian_width(chr(cp)) in ("W", "F"):
             continue
         if g not in made:
-            pen = T2CharStringPen(pen_width(private, 500), gs)
+            k = cell / 1000
+            pen = T2CharStringPen(pen_width(private, cell), gs)
             bp = BoundsPen(gs)
             gs[g].draw(bp)
             cy = (bp.bounds[1] + bp.bounds[3]) / 2 if bp.bounds else 0
-            # halve about the vertical center so marks don't sink
-            gs[g].draw(TransformPen(pen, (0.5, 0, 0, 0.5, 0, round(cy / 2))))
+            # shrink about the vertical center so marks don't sink
+            gs[g].draw(TransformPen(pen, (k, 0, 0, k, 0, round(cy * (1 - k)))))
             name = alloc_glyph_name(font)
             append_glyph(font, td, name, pen.getCharString(private=private),
-                         fd_index, 500)
+                         fd_index, cell)
             made[g] = name
         new_map[cp] = made[g]
     for table in font["cmap"].tables:
@@ -330,6 +331,30 @@ def narrow_ambiguous(font):
                 if cp in table.cmap:
                     table.cmap[cp] = name
     return len(new_map)
+
+
+def widen_fullwidth(font):
+    """Term variant: widen every full-width glyph's advance to 1334
+    (= 2 x 667) and center the unchanged 1000-unit outline (+167). The
+    Latin layer stays byte-identical to the 2:3 family; the terminal grid
+    becomes exact (CJK = two cells, no right-side gap)."""
+    cff = font["CFF "].cff
+    td = cff.topDictIndex.items[0]
+    gs = font.getGlyphSet()
+    hmtx = font["hmtx"]
+    new_cs = {}
+    for name in font.getGlyphOrder():
+        adv, lsb = hmtx.metrics[name]
+        if adv != 1000:
+            continue
+        gid = font.getGlyphID(name)
+        private = td.FDArray[td.FDSelect[gid]].Private
+        pen = T2CharStringPen(pen_width(private, 1334), gs)
+        gs[name].draw(TransformPen(pen, (1, 0, 0, 1, 167, 0)))
+        new_cs[name] = pen.getCharString(private=private)
+        hmtx.metrics[name] = (1334, lsb + 167)
+    for name, cs in new_cs.items():
+        td.CharStrings.charStringsIndex[td.CharStrings.charStrings[name]] = cs
 
 
 def set_names(font, suffix, weight, italic):
@@ -554,8 +579,10 @@ def main():
                 add_gsub(base, added, alts, variant_maps)
                 if cell != CELL:
                     rescale(base, cell)
-                if suffix == "Console":
-                    narrow_ambiguous(base)
+                if suffix == "Term":
+                    # ambiguous-width first (adv==1000 probe), then widen CJK
+                    narrow_ambiguous(base, 667)
+                    widen_fullwidth(base)
                 ps = set_names(base, suffix, weight, italic)
                 out = out_dir / f"{ps}.otf"
                 base.save(out)
