@@ -30,6 +30,7 @@ Env (all required):
 import json
 import os
 import sys
+import unicodedata
 from pathlib import Path
 
 from fontTools.ttLib import TTCollection, TTFont
@@ -287,6 +288,46 @@ def copy_line_metrics(base, ref):
     base["OS/2"].panose = ref["OS/2"].panose
 
 
+def narrow_ambiguous(font):
+    """Console (1:2) only: East-Asian-Width Ambiguous/Narrow codepoints that
+    carry full-width (1000) glyphs — … → ≠ Greek etc. — get a half-width
+    (500) scaled copy, because terminals allocate them ONE cell by default
+    and the full-width ink bleeds into the neighbour (Sarasa Term does the
+    same). CJK (W/F) stays two cells; the original glyphs are untouched.
+    Must run AFTER rescale, on the 500-cell font."""
+    cff = font["CFF "].cff
+    td = cff[cff.fontNames[0]]
+    cmap = font.getBestCmap()
+    gs = font.getGlyphSet()
+    fd_index = td.FDSelect[font.getGlyphID(cmap[ord("A")])]
+    private = td.FDArray[fd_index].Private
+    new_map = {}
+    made = {}  # source glyph -> scaled glyph (dedup shared glyphs)
+    for cp, g in sorted(cmap.items()):
+        if font["hmtx"][g][0] != 1000:
+            continue
+        if unicodedata.east_asian_width(chr(cp)) in ("W", "F"):
+            continue
+        if g not in made:
+            pen = T2CharStringPen(pen_width(private, 500), gs)
+            bp = BoundsPen(gs)
+            gs[g].draw(bp)
+            cy = (bp.bounds[1] + bp.bounds[3]) / 2 if bp.bounds else 0
+            # halve about the vertical center so marks don't sink
+            gs[g].draw(TransformPen(pen, (0.5, 0, 0, 0.5, 0, round(cy / 2))))
+            name = alloc_glyph_name(font)
+            append_glyph(font, td, name, pen.getCharString(private=private),
+                         fd_index, 500)
+            made[g] = name
+        new_map[cp] = made[g]
+    for table in font["cmap"].tables:
+        if table.isUnicode():
+            for cp, name in new_map.items():
+                if cp in table.cmap:
+                    table.cmap[cp] = name
+    return len(new_map)
+
+
 def set_names(font, suffix, weight, italic):
     """Fresh name table: standard family-per-weight scheme."""
     base_family = ("Shoyu Code Pro JP " + suffix).strip()
@@ -507,6 +548,8 @@ def main():
                 add_gsub(base, added, alts, variant_maps)
                 if cell != CELL:
                     rescale(base, cell)
+                if suffix == "Console":
+                    narrow_ambiguous(base)
                 ps = set_names(base, suffix, weight, italic)
                 out = out_dir / f"{ps}.otf"
                 base.save(out)
