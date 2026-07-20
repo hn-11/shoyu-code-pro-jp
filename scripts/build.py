@@ -132,6 +132,24 @@ def pen_width(private, advance):
     return None if advance == default else advance - nominal
 
 
+def alloc_glyph_name(font):
+    """Allocate an unused CID. Subset OTFs have sparse CIDs (SHS JP tops
+    out at 65497 with only ~18k glyphs), so len(order) collides with real
+    names and max+1 overflows 65534 — walk the gaps instead."""
+    used = getattr(font, "_used_cids", None)
+    if used is None:
+        used = {int(g[3:]) for g in font.getGlyphOrder()
+                if g.startswith("cid") and g[3:].isdigit()}
+        font._used_cids = used
+        font._next_cid = 1
+    n = font._next_cid
+    while n in used:
+        n += 1
+    used.add(n)
+    font._next_cid = n + 1
+    return f"cid{n:05d}"
+
+
 def append_glyph(font, td, name, cs, fd_index, width, lsb=0):
     order = font.getGlyphOrder()
     order.append(name)
@@ -184,18 +202,22 @@ def graft_halfwidth(base, scp, ref):
             ref_gs[g].draw(TransformPen(pen, (1, 0, 0, 1, 0, 0)))
             lsb = ref_hm[g][1]
             from_ref += 1
-        name = f"cid{len(base.getGlyphOrder()):05d}"
+        name = alloc_glyph_name(base)
         append_glyph(base, td, name, pen.getCharString(private=private),
                      fd_index, CELL, lsb)
         new_map[cp] = name
         if cp in scp_cm:
             default_map[scp_cm[cp]] = name
 
+    # Drop legacy non-Unicode subtables (Mac (1,0) format 6): they still
+    # point at the old proportional Latin, and FontForge unifies subtables
+    # on load — the conflict silently drops ~40 ASCII slots after
+    # cidFlatten, which is how the Nerd Font variants lost 'M' et al.
+    base["cmap"].tables = [t for t in base["cmap"].tables if t.isUnicode()]
     for table in base["cmap"].tables:
-        if table.isUnicode():
-            for cp, name in new_map.items():
-                if cp in table.cmap:
-                    table.cmap[cp] = name
+        for cp, name in new_map.items():
+            if cp in table.cmap:
+                table.cmap[cp] = name
     return from_scp, from_ref, default_map
 
 
@@ -240,7 +262,7 @@ def import_scp_variants(base, scp, default_map):
                             pen_width(private, CELL), scp_gs)
                         scp_gs[dst].draw(
                             TransformPen(pen, (SCP_K, 0, 0, SCP_K, 0, 0)))
-                        name = f"cid{len(base.getGlyphOrder()):05d}"
+                        name = alloc_glyph_name(base)
                         append_glyph(
                             base, td, name,
                             pen.getCharString(private=private),
@@ -334,7 +356,7 @@ def add_glyphs(font, mona, alts):
         for gname, dx in zip(spec["glyphs"], offsets):
             mona_gs[gname].draw(
                 TransformPen(pen, (MONA_K, 0, 0, MONA_K, dx, dy)))
-        name = f"cid{len(order):05d}"
+        name = alloc_glyph_name(font)
         append_glyph(font, td, name, pen.getCharString(private=private),
                      fd_index, width)
         added[seq] = name
@@ -345,7 +367,7 @@ def add_glyphs(font, mona, alts):
             pen = T2CharStringPen(pen_width(private, width), font.getGlyphSet())
             mona_gs[alt_src].draw(TransformPen(
                 pen, (MONA_K, 0, 0, MONA_K, (cells - 1) * MONA_CELL * MONA_K, dy)))
-            alt_name = f"cid{len(order):05d}"
+            alt_name = alloc_glyph_name(font)
             append_glyph(font, td, alt_name, pen.getCharString(private=private),
                          fd_index, width)
             alts[name] = alt_name
