@@ -46,18 +46,24 @@ def fix_names(patched: Path, src: Path) -> Path:
     and collapses every face to "Regular", colliding on disk and at install
     time. Take the source names verbatim and splice in the NF marker.
     """
+    import re
+
+    def nf_name(s):
+        # JP-font convention (HackGen/PlemolJP/UDEV): NF goes AFTER the
+        # variant token — "Shoyu Code Pro JP Console NF", not "... NF Console".
+        s = re.sub(r"(Shoyu Code Pro JP(?: Console| 35)?)", r"\1 NF", s, count=1)
+        return re.sub(r"(ShoyuCodeProJP(?:Console|35)?)", r"\1NF", s, count=1)
+
     font = TTFont(patched)
     src_font = TTFont(src)
     font["name"].names = []
     for rec in src_font["name"].names:
         s = rec.toUnicode()
-        s = s.replace("Shoyu Code Pro JP", "Shoyu Code Pro JP NF", 1) \
-             .replace("ShoyuCodeProJP", "ShoyuCodeProJPNF", 1) \
-            if "Shoyu" in s else s
+        if "Shoyu" in s:
+            s = nf_name(s)
         font["name"].setName(s, rec.nameID, rec.platformID,
                              rec.platEncID, rec.langID)
-    ps = src_font["name"].getDebugName(6).replace(
-        "ShoyuCodeProJP", "ShoyuCodeProJPNF", 1)
+    ps = nf_name(src_font["name"].getDebugName(6))
     font["name"].setName(ps, 6, 3, 1, 0x409)
     if "CFF " in font:
         font["CFF "].cff.fontNames[0] = ps
