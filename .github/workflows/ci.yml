@@ -63,7 +63,6 @@ jobs:
           unzip -qo /tmp/FontPatcher.zip -d FontPatcher
       - run: python scripts/build.py "Regular"
       - run: python scripts/verify.py dist/ShoyuCodeProJP-Regular.otf
-      - run: python scripts/verify.py dist/ShoyuCodeProJPConsole-Regular.otf
       - run: python scripts/verify.py dist/ShoyuCodeProJP35-Regular.otf
       - name: Nerd-patch smoke test (one font)
-        run: python scripts/nerdpatch.py FontPatcher ShoyuCodeProJPConsole-Regular
+        run: python scripts/nerdpatch.py FontPatcher ShoyuCodeProJP35-Regular

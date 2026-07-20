@@ -17,9 +17,13 @@ not by name. Italic faces take SCP Italic VF + upright Japanese, matching
 SHCJ's own behavior.
 
 Families (suffix -> half-width cell):
-  ""        667  2:3 (SHCJ metrics)
-  "Console" 500  exact 1:2 for terminal grids
-  "35"      600  Source Code Pro's native proportion
+  ""   667  2:3 (SHCJ metrics) — editor AND terminal, as SHCJ always was
+  "35"  600  Source Code Pro's native proportion
+
+A 1:2 "Console" variant was built and retired: squeezing SCP's roomy
+skeleton into a 500 cell loses too much (25% smaller Latin isotropically,
+or ~17% condensation + stroke-contrast skew anisotropically). The
+narrow_ambiguous/rescale machinery stays for anyone who wants it back.
 
 Env (all required):
   SHS_DIR  = dir with SourceHanSansJP-<Weight>.otf
@@ -49,7 +53,7 @@ MONA_K = CELL / MONA_CELL
 SCP_CELL = 600      # Source Code Pro advance (upm 1000)
 SCP_K = CELL / SCP_CELL  # 10/9, Adobe's SHCJ scale factor
 
-VARIANTS = {"": 667, "Console": 500, "35": 600}
+VARIANTS = {"": 667, "35": 600}
 
 # (output weight name, SHCJ reference face, Source Han Sans static file)
 FACES = [
