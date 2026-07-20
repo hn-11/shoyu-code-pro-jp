@@ -93,25 +93,31 @@ font-patcher がグリフを Unicode で引けないため、パッチ前に Fon
 
 ## ビルド
 
+4つの上流（Source Han Sans JP / Source Code Pro VF / Monaspace VF /
+Source Han Code JP）を取得して環境変数で場所を渡す。具体的なコマンドは
+`.github/workflows/ci.yml` の手順がそのまま実行可能なリファレンス。
+
 ```sh
 pip install -r requirements.txt
-curl -sSfL -o upstream/SourceHanCodeJP.ttc \
-  https://github.com/adobe-fonts/source-han-code-jp/releases/download/2.012R/SourceHanCodeJP.ttc
-python scripts/build.py            # 全14面
-python scripts/build.py "JP R"     # Regular系のみ（動作確認用）
+SHS_DIR=... SCP_VF_U=... SCP_VF_I=... MONA_VF=... \
+  python scripts/build.py            # 全ファミリー（2:3 / 35 × 14面）
+  python scripts/build.py "Regular"  # Regular系のみ（動作確認用）
+python scripts/verify.py dist/ShoyuCodeProJP-Regular.otf   # 回帰テスト
+python scripts/nerdpatch.py <FontPatcher dir>              # NF 変種
+python scripts/makeotc.py                                  # .ttc 化
 ```
-
-`dist/` に個別 OTF が生成される。
 
 ## 仕組み
 
-- 上流 TTC（CID-keyed CFF, 14面）を fontTools で面ごとに開き、合字グリフを
-  CFF に追加（CharStrings / charset / FDSelect / hmtx / vmtx / maxp を更新）
-- GSUB に LigatureSubst ルックアップを1つ追加し、`calt` / `liga` として
-  全 script / langsys に登録。最長一致なので `!==` が `!=` に食われることはない
-- 上流の Italic 面は CFF テーブルを立体と共有している（イタリック化は
-  GSUB `ital` 側）ため、出力ファイル名は name テーブルの PostScript 名
-  （name ID 6）を使う
+- Source Han Sans JP（CID-keyed CFF）を土台に、SHCJ が半角にしている
+  477 コードポイントへ SCP VF 由来のグリフを接ぎ木し cmap を差し替える
+  （SCP に無い半角カナ等は SHCJ から複写）。追加 CID は疎な空間の空きを
+  昇順割当（サブセット OTF の CID は不連続なため）
+- 各面の `=` バー厚を実測し、SCP / Monaspace VF の wght を二分探索して
+  太さを一致させる。Italic は SCP Italic VF + slnt 追随
+- 合字は LigatureSubst。`calt`/`liga` は結合ルックアップ1つ（最長一致の
+  保証のため）、ss01〜08 はグループ別ルックアップ、cv99 が .alt 切替
+- 行間・等幅メタデータは SHCJ の宣言値を複写し、レンダリング上の連続性を保つ
 
 ## ライセンス
 
