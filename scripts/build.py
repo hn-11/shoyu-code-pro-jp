@@ -62,7 +62,6 @@ SCP_K = CELL / SCP_CELL  # 10/9, Adobe's SHCJ scale factor
 VARIANTS = {
     "": (667, False, False),      # 2:3, the SHCJ look — editor
     "35": (600, False, False),    # SCP native size AND native weight
-    "35W": (600, True, False),    # SCP native size, CJK-paired weight
     "Term": (600, True, True),    # 1:2 terminal grid (600:1200)
 }
 
