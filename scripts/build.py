@@ -53,7 +53,18 @@ MONA_K = CELL / MONA_CELL
 SCP_CELL = 600      # Source Code Pro advance (upm 1000)
 SCP_K = CELL / SCP_CELL  # 10/9, Adobe's SHCJ scale factor
 
-VARIANTS = {"": 667, "35": 600, "Term": 667}
+# suffix -> (half-width cell, weight-compensate, terminal-grid mode)
+# comp: re-match stroke weight AFTER rescale so Latin keeps SHCJ's CJK
+#   pairing (69/1000em bar). Without comp, a rescaled Latin keeps Source
+#   Code Pro's native weight instead (the "faithful" reading).
+# term: widen full-width advances to 2 cells (centered) + one-cell copies
+#   for East-Asian-Width-ambiguous codepoints.
+VARIANTS = {
+    "": (667, False, False),      # 2:3, the SHCJ look — editor
+    "35": (600, False, False),    # SCP native size AND native weight
+    "35W": (600, True, False),    # SCP native size, CJK-paired weight
+    "Term": (600, True, True),    # 1:2 terminal grid (600:1200)
+}
 
 # (output weight name, SHCJ reference face, Source Han Sans static file)
 FACES = [
@@ -333,11 +344,13 @@ def narrow_ambiguous(font, cell=500):
     return len(new_map)
 
 
-def widen_fullwidth(font):
-    """Term variant: widen every full-width glyph's advance to 1334
-    (= 2 x 667) and center the unchanged 1000-unit outline (+167). The
-    Latin layer stays byte-identical to the 2:3 family; the terminal grid
-    becomes exact (CJK = two cells, no right-side gap)."""
+def widen_fullwidth(font, cell):
+    """Term variant: widen every full-width glyph's advance to two cells
+    (2 x cell) and center the unchanged 1000-unit outline. The Latin layer
+    is untouched by this pass; the terminal grid becomes exact (CJK = two
+    cells, symmetric padding instead of a right-side gap)."""
+    full = 2 * cell
+    shift = (full - 1000) // 2
     cff = font["CFF "].cff
     td = cff.topDictIndex.items[0]
     gs = font.getGlyphSet()
@@ -349,10 +362,10 @@ def widen_fullwidth(font):
             continue
         gid = font.getGlyphID(name)
         private = td.FDArray[td.FDSelect[gid]].Private
-        pen = T2CharStringPen(pen_width(private, 1334), gs)
-        gs[name].draw(TransformPen(pen, (1, 0, 0, 1, 167, 0)))
+        pen = T2CharStringPen(pen_width(private, full), gs)
+        gs[name].draw(TransformPen(pen, (1, 0, 0, 1, shift, 0)))
         new_cs[name] = pen.getCharString(private=private)
-        hmtx.metrics[name] = (1334, lsb + 167)
+        hmtx.metrics[name] = (full, lsb + shift)
     for name, cs in new_cs.items():
         td.CharStrings.charStringsIndex[td.CharStrings.charStrings[name]] = cs
 
@@ -559,7 +572,7 @@ def main():
     out_dir = ROOT / "dist"
     out_dir.mkdir(exist_ok=True)
 
-    for suffix, cell in VARIANTS.items():
+    for suffix, (cell, comp, term) in VARIANTS.items():
         for weight, ref_name, shs_file in FACES:
             for italic in (False, True):
                 face_label = f"{weight}{' Italic' if italic else ''}"
@@ -567,6 +580,8 @@ def main():
                     continue
                 ref = refs[ref_name + (" Italic" if italic else "")]
                 target = bar_thickness(ref, ref.getBestCmap()[ord("=")])
+                if comp:
+                    target *= CELL / cell  # pre-inflate; rescale undoes it
                 scp = (scp_i if italic else scp_u).matched(target)
                 base = TTFont(Path(env["SHS_DIR"]) / shs_file)
                 n_scp, n_ref, default_map = graft_halfwidth(base, scp, ref)
@@ -579,10 +594,10 @@ def main():
                 add_gsub(base, added, alts, variant_maps)
                 if cell != CELL:
                     rescale(base, cell)
-                if suffix == "Term":
+                if term:
                     # ambiguous-width first (adv==1000 probe), then widen CJK
-                    narrow_ambiguous(base, 667)
-                    widen_fullwidth(base)
+                    narrow_ambiguous(base, cell)
+                    widen_fullwidth(base, cell)
                 ps = set_names(base, suffix, weight, italic)
                 out = out_dir / f"{ps}.otf"
                 base.save(out)
