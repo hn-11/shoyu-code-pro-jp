@@ -485,16 +485,18 @@ def add_gsub(font, added, alts, variant_maps=None):
             ls.FeatureCount = len(ls.FeatureIndex)
 
 
-def rescale(font, cell):
-    """Isotropically rescale half-width glyphs (and ligatures) from 667 to
-    `cell`. Same recipe Adobe used when deriving SHCJ's Latin from Source
-    Code Pro (600 -> 667 at 10/9), applied in whatever direction needed."""
+def rescale(font, cell, ky=None):
+    """Rescale half-width glyphs (and ligatures) from 667 to `cell`.
+    Isotropic by default — Adobe's own SHCJ recipe. Pass `ky` to keep a
+    taller vertical scale (condensed experiment: terminal fonts like
+    HackGen/PlemolJP run cap/half ~1.3 vs SCP's roomy 1.09)."""
     scale_map = {667: cell, 1334: 2 * cell, 2001: 3 * cell}
     cff = font["CFF "].cff
     td = cff.topDictIndex.items[0]
     gs = font.getGlyphSet()
     hmtx = font["hmtx"]
     k = cell / 667
+    ky = k if ky is None else ky
     new_cs = {}
     for name in font.getGlyphOrder():
         adv, lsb = hmtx.metrics[name]
@@ -503,7 +505,7 @@ def rescale(font, cell):
         gid = font.getGlyphID(name)
         private = td.FDArray[td.FDSelect[gid]].Private
         pen = T2CharStringPen(pen_width(private, scale_map[adv]), gs)
-        gs[name].draw(TransformPen(pen, (k, 0, 0, k, 0, 0)))
+        gs[name].draw(TransformPen(pen, (k, 0, 0, ky, 0, 0)))
         new_cs[name] = pen.getCharString(private=private)
         hmtx.metrics[name] = (scale_map[adv], round(lsb * k))
     for name, cs in new_cs.items():  # swap after drawing everything
