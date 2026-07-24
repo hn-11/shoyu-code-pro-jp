@@ -43,6 +43,7 @@ from fontTools.pens.boundsPen import BoundsPen
 from fontTools.pens.recordingPen import RecordingPen
 from fontTools.pens.t2CharStringPen import T2CharStringPen
 from fontTools.pens.transformPen import TransformPen
+import pathops
 from fontTools.otlLib import builder as otl
 from fontTools.ttLib.tables import otTables
 
@@ -139,6 +140,22 @@ def glyph_vcenter(font, gname, scale=1.0):
     return (pen.bounds[1] + pen.bounds[3]) / 2 * scale
 
 
+def draw_clean(draws, pen):
+    """Draw (glyphset, glyph, transform) triples through skia-pathops
+    simplify before hitting the charstring pen. Variable-font instancing
+    leaves self-intersecting outlines (A/K/x/R... — masters keep overlaps
+    for interpolation; Adobe removes them only in static releases), and
+    some rasterizers render seams at the overlaps."""
+    path = pathops.Path()
+    for gs, gname, t in draws:
+        gs[gname].draw(TransformPen(path.getPen(), t))
+    try:
+        path = pathops.simplify(path, clockwise=path.clockwise)
+    except pathops.PathOpsError:
+        pass  # degenerate outline: keep as drawn
+    path.draw(pen)
+
+
 def pen_width(private, advance):
     """CFF charstring width operand: omitted when equal to defaultWidthX,
     otherwise encoded relative to nominalWidthX."""
@@ -209,12 +226,11 @@ def graft_halfwidth(base, scp, ref):
             continue
         pen = T2CharStringPen(pen_width(private, CELL), scp_gs)
         if cp in scp_cm:
-            scp_gs[scp_cm[cp]].draw(
-                TransformPen(pen, (SCP_K, 0, 0, SCP_K, 0, 0)))
+            draw_clean([(scp_gs, scp_cm[cp], (SCP_K, 0, 0, SCP_K, 0, 0))], pen)
             lsb = round(scp["hmtx"][scp_cm[cp]][1] * SCP_K)
             from_scp += 1
         else:
-            ref_gs[g].draw(TransformPen(pen, (1, 0, 0, 1, 0, 0)))
+            draw_clean([(ref_gs, g, (1, 0, 0, 1, 0, 0))], pen)
             lsb = ref_hm[g][1]
             from_ref += 1
         name = alloc_glyph_name(base)
@@ -275,8 +291,8 @@ def import_scp_variants(base, scp, default_map):
                     if dst not in imported:
                         pen = T2CharStringPen(
                             pen_width(private, CELL), scp_gs)
-                        scp_gs[dst].draw(
-                            TransformPen(pen, (SCP_K, 0, 0, SCP_K, 0, 0)))
+                        draw_clean(
+                            [(scp_gs, dst, (SCP_K, 0, 0, SCP_K, 0, 0))], pen)
                         name = alloc_glyph_name(base)
                         append_glyph(
                             base, td, name,
@@ -447,8 +463,9 @@ def add_glyphs(font, mona, alts):
         alt_src = spec["glyphs"][0] + ".alt"
         if len(spec["glyphs"]) == 1 and alt_src in mona_names:
             pen = T2CharStringPen(pen_width(private, width), font.getGlyphSet())
-            mona_gs[alt_src].draw(TransformPen(
-                pen, (MONA_K, 0, 0, MONA_K, (cells - 1) * MONA_CELL * MONA_K, dy)))
+            draw_clean([(mona_gs, alt_src,
+                         (MONA_K, 0, 0, MONA_K,
+                          (cells - 1) * MONA_CELL * MONA_K, dy))], pen)
             alt_name = alloc_glyph_name(font)
             append_glyph(font, td, alt_name, pen.getCharString(private=private),
                          fd_index, width)
