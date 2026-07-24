@@ -78,6 +78,21 @@ def main():
         "a != b", {"calt": True, "cv99": True}, 2)
     print(f"{'ok  ' if ok else 'FAIL'} cv99 swaps ligature design")
     failed |= not ok
+
+    # imported outlines must be overlap-free (VF instancing leaves seams)
+    import pathops
+    gs = tf.getGlyphSet()
+    cm = tf.getBestCmap()
+    for ch in "AKkxRvw&ag":
+        p = pathops.Path()
+        gs[cm[ord(ch)]].draw(p.getPen())
+        eo = pathops.Path(p)
+        eo.fillType = pathops.FillType.EVEN_ODD
+        x = pathops.op(pathops.simplify(p, clockwise=p.clockwise),
+                       pathops.simplify(eo), pathops.PathOp.XOR)
+        ok = not list(x.segments)
+        print(f"{'ok  ' if ok else 'FAIL'} no overlap in {ch!r}")
+        failed |= not ok
     sys.exit(1 if failed else 0)
 
 
