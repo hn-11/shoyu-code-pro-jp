@@ -423,6 +423,93 @@ def import_scp_variants(base, scp, default_map):
     return tag_maps
 
 
+BOX_DRAWING = range(0x2500, 0x2580)
+BLOCK_ELEMENTS = range(0x2580, 0x25A0)
+
+
+def graft_box_drawing(base, scp):
+    """Terminal variant: take the rules and blocks from Source Code Pro.
+
+    These have to be one cell wide and they have to tile, which rules out
+    shrinking Source Han Sans's full-width versions: scaling a rule scales
+    its stroke, so it stops matching the text colour, and it stops meeting
+    its neighbour. Source Code Pro draws all 128 box-drawing and 32
+    block-element glyphs at its own 600 advance -- a one-cell design, with
+    the ink deliberately overhanging the cell by 39 units on each side so
+    adjacent cells overlap and rules join without a hairline gap.
+
+    Their vertical extent is corrected separately, once the cell size is
+    final -- see fit_line_box().
+    """
+    cff = base["CFF "].cff
+    td = cff[cff.fontNames[0]]
+    bcm = base.getBestCmap()
+    fd_index = td.FDSelect[base.getGlyphID(bcm[ord("A")])]
+    private = td.FDArray[fd_index].Private
+    scp_cm, scp_gs = scp.getBestCmap(), scp.getGlyphSet()
+
+    new_map = {}
+    for cp in list(BOX_DRAWING) + list(BLOCK_ELEMENTS):
+        if cp not in scp_cm or cp not in bcm:
+            continue
+        pen = T2CharStringPen(pen_width(private, CELL), scp_gs)
+        draw_clean([(scp_gs, scp_cm[cp], (SCP_K, 0, 0, SCP_K, 0, 0))], pen)
+        name = alloc_glyph_name(base)
+        append_glyph(base, td, name, pen.getCharString(private=private),
+                     fd_index, CELL, round(scp["hmtx"][scp_cm[cp]][1] * SCP_K))
+        new_map[cp] = name
+    for table in base["cmap"].tables:
+        if table.isUnicode():
+            for cp, name in new_map.items():
+                if cp in table.cmap:
+                    table.cmap[cp] = name
+    return len(new_map)
+
+
+def fit_line_box(base):
+    """Stretch the rules and blocks to the line box, after the cell is final.
+
+    Box drawing only reads as continuous if it fills the line: a vertical
+    rule that stops short leaves a gap between rows, and a full block that
+    stops short leaves a stripe of background. Source Code Pro fills its own
+    -400..1000 em box, which is neither Source Han Code JP's line box nor
+    what it becomes once the half-width layer is rescaled to a smaller cell.
+
+    The whole range shares one design box, so one affine keeps every join
+    and every half-block boundary where it belongs.
+    """
+    cmap = base.getBestCmap()
+    if 0x2588 not in cmap:
+        return 0
+    gs = base.getGlyphSet()
+    probe = BoundsPen(gs)
+    gs[cmap[0x2588]].draw(probe)          # FULL BLOCK defines the design box
+    src_bottom, src_top = probe.bounds[1], probe.bounds[3]
+    top, bottom = base["hhea"].ascent, base["hhea"].descent
+    if src_top <= src_bottom:
+        return 0
+    ky = (top - bottom) / (src_top - src_bottom)
+    dy = bottom - src_bottom * ky
+
+    cff = base["CFF "].cff
+    td = cff.topDictIndex.items[0]
+    hmtx = base["hmtx"]
+    done, new_cs = 0, {}
+    for cp in list(BOX_DRAWING) + list(BLOCK_ELEMENTS):
+        if cp not in cmap:
+            continue
+        name = cmap[cp]
+        gid = base.getGlyphID(name)
+        private = td.FDArray[td.FDSelect[gid]].Private
+        pen = T2CharStringPen(pen_width(private, hmtx[name][0]), gs)
+        gs[name].draw(TransformPen(pen, (1, 0, 0, ky, 0, dy)))
+        new_cs[name] = pen.getCharString(private=private)
+        done += 1
+    for name, cs in new_cs.items():
+        td.CharStrings.charStringsIndex[td.CharStrings.charStrings[name]] = cs
+    return done
+
+
 def copy_line_metrics(base, ref):
     """Keep SHCJ's vertical rhythm and width metadata — the rendered line
     height and how font pickers classify the font must not change."""
@@ -437,13 +524,28 @@ def copy_line_metrics(base, ref):
     base["OS/2"].panose = ref["OS/2"].panose
 
 
-def narrow_ambiguous(font, cell=500):
-    """Console (1:2) only: East-Asian-Width Ambiguous/Narrow codepoints that
-    carry full-width (1000) glyphs — … → ≠ Greek etc. — get a half-width
-    (500) scaled copy, because terminals allocate them ONE cell by default
-    and the full-width ink bleeds into the neighbour (Sarasa Term does the
-    same). CJK (W/F) stays two cells; the original glyphs are untouched.
-    Must run AFTER rescale, on the 500-cell font."""
+KEEP_HEIGHT = 0.9   # of a narrowed glyph; PlemolJP squashes to 0.9 for this
+
+
+def narrow_ambiguous(font, cell):
+    """Terminal variant: give one-cell codepoints a one-cell glyph.
+
+    Terminals allocate a single cell to everything East-Asian-Width does not
+    call Wide or Fullwidth, so a 1000-unit glyph there bleeds into its
+    neighbour (Sarasa Term narrows the same set). The property is the right
+    rule for WHICH codepoints — it is the question the terminal is itself
+    answering — but the treatment matters as much as the selection, and the
+    old one scaled by cell/1000 in both directions: 60% linear, 36% of the
+    area, so a circled digit read as two thirds the height of the kana next
+    to it.
+
+    Keep the height and take the width down only as far as the cell actually
+    needs, which leaves '…' and '×' nearly untouched instead of shrinking
+    them on a rule meant for '①'. Box drawing and block elements are excluded
+    because they are replaced rather than shrunk — see graft_box_drawing().
+
+    Must run AFTER rescale, on the final cell.
+    """
     cff = font["CFF "].cff
     td = cff[cff.fontNames[0]]
     cmap = font.getBestCmap()
@@ -457,14 +559,24 @@ def narrow_ambiguous(font, cell=500):
             continue
         if unicodedata.east_asian_width(chr(cp)) in ("W", "F"):
             continue
+        if cp in BOX_DRAWING or cp in BLOCK_ELEMENTS:
+            continue
         if g not in made:
-            k = cell / 1000
-            pen = T2CharStringPen(pen_width(private, cell), gs)
             bp = BoundsPen(gs)
             gs[g].draw(bp)
-            cy = (bp.bounds[1] + bp.bounds[3]) / 2 if bp.bounds else 0
-            # shrink about the vertical center so marks don't sink
-            gs[g].draw(TransformPen(pen, (k, 0, 0, k, 0, round(cy * (1 - k)))))
+            if bp.bounds:
+                ink = bp.bounds[2] - bp.bounds[0]
+                cx = (bp.bounds[0] + bp.bounds[2]) / 2
+                cy = (bp.bounds[1] + bp.bounds[3]) / 2
+            else:
+                ink, cx, cy = 0, cell / 2, 0
+            ky = KEEP_HEIGHT
+            kx = min(ky, cell / ink) if ink > 0 else ky
+            pen = T2CharStringPen(pen_width(private, cell), gs)
+            # scale about the ink's own centre, then centre it in the cell
+            gs[g].draw(TransformPen(pen, (kx, 0, 0, ky,
+                                          round(cell / 2 - cx * kx),
+                                          round(cy * (1 - ky)))))
             name = alloc_glyph_name(font)
             append_glyph(font, td, name, pen.getCharString(private=private),
                          fd_index, cell)
@@ -724,6 +836,11 @@ def main():
                 base = TTFont(Path(env["SHS_DIR"]) / shs_file)
                 n_scp, n_ref, default_map = graft_halfwidth(base, scp, ref)
                 variant_maps = import_scp_variants(base, scp, default_map)
+                # Rules and blocks go one-cell only where they have to tile
+                # against a terminal grid; the editor variants keep SHCJ's
+                # full-width ones, which line up with CJK in prose. PlemolJP
+                # splits its Console variant off along the same line.
+                n_box = graft_box_drawing(base, scp) if term else 0
                 copy_line_metrics(base, ref)
                 mona = mona_src.matched(
                     target, ref["post"].italicAngle if italic else None)
@@ -736,11 +853,13 @@ def main():
                     # ambiguous-width first (adv==1000 probe), then widen CJK
                     narrow_ambiguous(base, cell)
                     widen_fullwidth(base, cell)
+                    fit_line_box(base)
                 ps = set_names(base, suffix, weight, italic)
                 out = out_dir / f"{ps}.otf"
                 base.save(out)
                 print(f"{face_label}{f' [{suffix}]' if suffix else ''}: "
-                      f"scp={n_scp} shcj={n_ref} ligs={len(added)} -> {out.name}")
+                      f"scp={n_scp} shcj={n_ref} ligs={len(added)}"
+                      f"{f' box={n_box}' if n_box else ''} -> {out.name}")
 
 
 if __name__ == "__main__":
