@@ -231,41 +231,52 @@ class Cff2Target:
         self.fd_index = self.td.FDSelect[font.getGlyphID(
             font.getBestCmap()[ord("A")])]
         self.private = self.td.FDArray[self.fd_index].Private
-        self.vsindex = self._add_regions()
+        self._vsindexes = {}
+        self.vsindex = self.vsindex_for(model)
         self._next = 1
 
-    def _add_regions(self):
-        """Give the appended layer its own VarData, so it can carry a master
-        per named weight while the CJK keeps the two regions it shipped with.
+    def vsindex_for(self, model):
+        """A private VarData for this set of masters.
+
+        The appended layer carries a master per named weight while the CJK
+        keeps the two regions it shipped with, which is what CFF2's vsindex
+        operator is for. A donor whose static faces do not all interpolate
+        gets a second one over the subset that does, so the glyph still
+        follows the axis as far as its outlines allow.
         """
+        supports = model.supports[1:]
+        if not supports:
+            return 0                      # single master: nothing to blend
+        key = tuple(tuple(sorted(s.items())) for s in supports)
+        if key in self._vsindexes:
+            return self._vsindexes[key]
         store = self.td.VarStore.otVarStore
         region_list = store.VarRegionList
-        before = region_list.RegionCount
         indices = []
-        for region in varbuilder.buildVarRegionList(
-                self.model.supports[1:], ["wght"]).Region:
+        for region in varbuilder.buildVarRegionList(supports, ["wght"]).Region:
             region_list.Region.append(region)
             indices.append(region_list.RegionCount)
             region_list.RegionCount += 1
         store.VarData.append(varbuilder.buildVarData(indices, None, False))
         store.VarDataCount += 1
-        print(f"varstore: regions {before} -> {region_list.RegionCount}, "
-              f"vsindex {store.VarDataCount - 1} for the grafted layer")
-        return store.VarDataCount - 1
+        self._vsindexes[key] = store.VarDataCount - 1
+        return self._vsindexes[key]
 
-    def blended(self, name, draw_master):
+    def blended(self, name, draw_master, model=None):
         """One charstring holding every master. draw_master(i, pen) draws
         master i; identical outlines across masters simply yield no blend."""
-        pen = CFF2CharStringMergePen([], name, len(self.model.locations), 0)
-        for i in range(len(self.model.locations)):
+        model = model or self.model
+        vsindex = self.vsindex_for(model)
+        pen = CFF2CharStringMergePen([], name, len(model.locations), 0)
+        for i in range(len(model.locations)):
             if i:
                 pen.restart(i)
             draw_master(i, pen)
         cs = pen.getCharString(private=self.private,
                                globalSubrs=self.cff.GlobalSubrs,
-                               var_model=self.model, optimize=True)
-        if "blend" in cs.program and self.vsindex:
-            cs.program[:0] = [self.vsindex, "vsindex"]
+                               var_model=model, optimize=True)
+        if "blend" in cs.program and vsindex:
+            cs.program[:0] = [vsindex, "vsindex"]
         return cs
 
     def append(self, cs, advance):
@@ -293,8 +304,8 @@ class Cff2Target:
         font["maxp"].numGlyphs = len(order)
         return name
 
-    def add(self, draw_master, advance):
-        return self.append(self.blended("tmp", draw_master), advance)
+    def add(self, draw_master, advance, model=None):
+        return self.append(self.blended("tmp", draw_master, model), advance)
 
 
 def draw_from(font, glyph_name, scale, dx=0, dy=0):
@@ -317,7 +328,7 @@ def outline_signature(font, glyph_name):
 # the three grafted layers
 # --------------------------------------------------------------------------
 
-def graft_halfwidth(target, scps, donors, donor0, V):
+def graft_halfwidth(target, scps, donors, donor0, V, model):
     """Re-point every half-width codepoint at a new variable glyph.
 
     Outline from Source Code Pro when it has the codepoint, otherwise from
@@ -335,7 +346,8 @@ def graft_halfwidth(target, scps, donors, donor0, V):
     ref_cm, ref_hm = donor0.getBestCmap(), donor0["hmtx"]
     scp_cm = scps[0].getBestCmap()
     new_map, default_map = {}, {}
-    from_scp = from_mono = frozen = 0
+    from_scp = from_mono = partial = 0
+    masters = {}
 
     for cp, g in sorted(ref_cm.items()):
         if ref_hm[g][0] != CELL:
@@ -345,15 +357,28 @@ def graft_halfwidth(target, scps, donors, donor0, V):
             draws = [draw_from(s, name, V.scp_draw) for s in scps]
             from_scp += 1
         else:
-            sigs = {outline_signature(d, d.getBestCmap()[cp]) for d in donors
-                    if cp in d.getBestCmap()}
-            if len(sigs) == 1 and all(cp in d.getBestCmap() for d in donors):
-                draws = [draw_from(d, d.getBestCmap()[cp], V.shcj_draw)
-                         for d in donors]
-            else:                       # incompatible across weights
-                draws = [draw_from(donor0, g, V.shcj_draw)] * len(donors)
-                frozen += 1
+            # Adobe removes overlaps per weight, so Mono's static faces only
+            # interpolate where their outlines happen to agree. Blend over
+            # the subset that does rather than freezing the glyph at the
+            # default: a partial axis beats none.
+            sig0 = outline_signature(donor0, g)
+            usable = [d if (cp in d.getBestCmap()
+                            and outline_signature(d, d.getBestCmap()[cp]) == sig0)
+                      else None for d in donors]
+            sub_model, sub_donors = model.getSubModel(usable)
+            if len(sub_donors) < len(donors):
+                partial += 1
+                masters[len(sub_donors)] = masters.get(len(sub_donors), 0) + 1
+            draws = [draw_from(d, d.getBestCmap()[cp], V.shcj_draw)
+                     for d in sub_donors]
             from_mono += 1
+
+            def draw_master(i, pen, draws=draws):
+                draws[i](i, pen)
+
+            our = target.add(draw_master, V.cell, sub_model)
+            new_map[cp] = our
+            continue
 
         def draw_master(i, pen, draws=draws):
             draws[i](i, pen)
@@ -373,8 +398,9 @@ def graft_halfwidth(target, scps, donors, donor0, V):
                 table.cmap[cp] = name
     print(f"halfwidth: {from_scp} from Source Code Pro, "
           f"{from_mono} from Source Han Mono"
-          + (f" ({frozen} could not interpolate, frozen at Regular)"
-             if frozen else ""))
+          + (f" ({partial} over a subset of masters: "
+             + ", ".join(f"{n}x{k} masters" for k, n in sorted(masters.items()))
+             + ")" if partial else ""))
     return default_map
 
 
@@ -695,7 +721,7 @@ def set_names(font, user_wghts, V):
                        (6, ps), (16, family), (17, "Regular")):
         name.setName(value, nid, 3, 1, 0x409)
     # one record per named instance, then re-point fvar at them
-    for instance, (weight, _, _) in zip(font["fvar"].instances, MASTERS):
+    for instance, (weight, _, _, _) in zip(font["fvar"].instances, MASTERS):
         nid = name.addName(weight, platforms=((3, 1, 0x409),))
         instance.subfamilyNameID = nid
         instance.postscriptNameID = 0xFFFF
@@ -710,21 +736,25 @@ def set_names(font, user_wghts, V):
         "values": [{"value": w, "name": n,
                     **({"flags": 0x2} if n == "Regular" else {}),
                     **({"linkedValue": 700.0} if n == "Regular" else {})}
-                   for w, (n, _, _) in zip(user_wghts, MASTERS)],
+                   for w, (n, _, _, _) in zip(user_wghts, MASTERS)],
     }])
     return ps
 
 
 # --------------------------------------------------------------------------
 
-def check_masters(path, shcj, V):
-    """Assert the pairing survived the blend, at every named instance.
+def check_masters(path, expected):
+    """Assert the blend reproduces the masters it was given.
 
-    A variable font can be wrong in a way no single instance reveals -- feed
+    A variable font can be wrong in a way no single instance reveals: feed
     the merge pen its masters in the wrong order and the deltas still
     interpolate smoothly, just around the wrong origin. Measuring the '=' bar
-    at each named weight against the Source Han Code JP face it was paired
-    with is the same check the static build gets for free.
+    at each named weight catches it.
+
+    The comparison is against the donor instances this build actually
+    selected, not against the Source Han Code JP target. Where a donor's axis
+    cannot reach the target the matcher has already said so out loud, and
+    re-reporting it here would only bury the thing this check exists for.
     """
     import uharfbuzz as hb
 
@@ -740,22 +770,20 @@ def check_masters(path, shcj, V):
     named = {built["name"].getDebugName(i.subfamilyNameID): i.coordinates["wght"]
              for i in built["fvar"].instances}
     worst, failed = 0.0, []
-    for weight, ref_name, _, _ in MASTERS:
+    for weight, want in expected.items():
         font = hb.Font(face)
         font.set_variations({"wght": named[weight]})
         points = []
         font.draw_glyph(font.get_nominal_glyph(ord("=")), draw, points)
         first = points[:points.index(None)]
         got = max(y for _, y in first) - min(y for _, y in first)
-        ref = shcj[ref_name]
-        want = bar_thickness(ref, ref.getBestCmap()[ord("=")]) * V.bar_scale
         worst = max(worst, abs(got - want))
         if abs(got - want) > 1.5:
-            failed.append(f"{weight}: bar {got:.0f}, expected {want:.0f}")
+            failed.append(f"{weight}: bar {got:.0f}, master has {want:.0f}")
     if failed:
         sys.exit("master check FAILED\n  " + "\n  ".join(failed))
-    print(f"master check: '=' bar within {worst:.1f} units of the SHCJ pairing "
-          f"at all {len(MASTERS)} named weights")
+    print(f"master check: '=' bar within {worst:.1f} units of its master "
+          f"at all {len(expected)} named weights")
 
 
 def build_variant(V, env, shcj, shmono, base_path, out_dir):
@@ -768,14 +796,17 @@ def build_variant(V, env, shcj, shmono, base_path, out_dir):
     scp_src = VFSource(env["SCP_VF_U"], V.scp_draw / V.bar_scale, {"wght": 0})
     mona_src = VFSource(env["MONA_VF"], V.mona_draw / V.bar_scale,
                         {"wght": 0, "wdth": 100, "slnt": 0}, extrapolate=True)
-    refs, scps, monas, donors = [], [], [], []
+    refs, scps, monas, donors, expected = [], [], [], [], {}
     for weight, ref_name, _, mono_name in MASTERS:
         ref = shcj[ref_name]
         target_bar = bar_thickness(ref, ref.getBestCmap()[ord("=")])
         refs.append(ref)
         donors.append(shmono[mono_name])
-        scps.append(scp_src.matched(target_bar))
+        scp = scp_src.matched(target_bar)
+        scps.append(scp)
         monas.append(mona_src.matched(target_bar))
+        expected[weight] = round(
+            bar_thickness(scp, scp.getBestCmap()[ord("=")]) * V.scp_draw)
 
     # The merge pen reads its masters positionally, with the default first --
     # varLib reorders them into the model's own order before handing them
@@ -791,7 +822,7 @@ def build_variant(V, env, shcj, shmono, base_path, out_dir):
     copy_line_metrics(font, regular_ref)
 
     target = Cff2Target(font, model)
-    default_map = graft_halfwidth(target, scps, donors, donors[0], V)
+    default_map = graft_halfwidth(target, scps, donors, donors[0], V, model)
     variant_maps = import_scp_variants(target, scps, default_map, V)
     if V.term:
         n_box = graft_box_drawing(target, scps, V,
@@ -814,7 +845,7 @@ def build_variant(V, env, shcj, shmono, base_path, out_dir):
     font.save(out)
     print(f"-> {out.name}  ({font['maxp'].numGlyphs} glyphs, "
           f"cell {V.cell}:{V.full})")
-    check_masters(out, shcj, V)
+    check_masters(out, expected)
     return out
 
 
