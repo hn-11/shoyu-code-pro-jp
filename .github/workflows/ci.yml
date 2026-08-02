@@ -1,5 +1,6 @@
-# Gate for every push/PR: assemble the Regular faces from live upstreams
-# and run the shaping regression test. Full build happens in release.yml.
+# Gate for every push/PR: assemble the Regular faces and one variable
+# family from live upstreams, then run the shaping regression test.
+# The full build happens in release.yml.
 name: CI
 on:
   push:
@@ -10,6 +11,9 @@ env:
   SCP_TAG: 2.042R-u%2F1.062R-i%2F1.026R-vf
   SCP_VF_ZIP: VF-source-code-VF-1.026R.zip
   MONA_TAG: v1.400
+  SHMONO_TAG: 1.002
+  # the variable release lives in the repo, not in a release asset
+  SHS_VF_REF: release
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -26,7 +30,7 @@ jobs:
         id: up
         with:
           path: upstreams
-          key: upstreams-shs2.005-scp1.026-mona1.400-shcj2.012
+          key: upstreams-shs2.005-scp1.026-mona1.400-shcj2.012-shmono1.002-shsvf
       - if: steps.up.outputs.cache-hit != 'true'
         run: |
           mkdir -p upstreams
@@ -42,6 +46,10 @@ jobs:
           fetch /tmp/mona.zip \
             "https://github.com/githubnext/monaspace/releases/download/${MONA_TAG}/monaspace-variable-${MONA_TAG}.zip"
           unzip -qo /tmp/mona.zip -d upstreams/mona
+          fetch upstreams/shmono.ttc \
+            "https://github.com/adobe-fonts/source-han-mono/releases/download/${SHMONO_TAG}/SourceHanMono.ttc"
+          fetch upstreams/shs-vf.ttc \
+            "https://raw.githubusercontent.com/adobe-fonts/source-han-sans/${SHS_VF_REF}/Variable/OTC/SourceHanSans-VF.otf.ttc"
       - name: Export upstream paths
         run: |
           echo "SHCJ_TTC=upstreams/shcj.ttc" >> "$GITHUB_ENV"
@@ -49,6 +57,8 @@ jobs:
           echo "SCP_VF_U=$(find upstreams/scp -name 'SourceCodeVF-Upright.otf' | head -1)" >> "$GITHUB_ENV"
           echo "SCP_VF_I=$(find upstreams/scp -name 'SourceCodeVF-Italic.otf' | head -1)" >> "$GITHUB_ENV"
           echo "MONA_VF=$(find upstreams/mona -name 'Monaspace Neon Var.ttf' | head -1)" >> "$GITHUB_ENV"
+          echo "SHMONO_TTC=upstreams/shmono.ttc" >> "$GITHUB_ENV"
+          echo "SHS_VF=upstreams/shs-vf.ttc" >> "$GITHUB_ENV"
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq fontforge python3-fontforge
       - name: Fetch FontPatcher (cached)
         uses: actions/cache@v4
@@ -64,5 +74,8 @@ jobs:
       - run: python scripts/build.py "Regular"
       - run: python scripts/verify.py dist/ShoyuCodeProJP-Regular.otf
       - run: python scripts/verify.py dist/ShoyuCodeProJP35-Regular.otf
+      # the variable build checks its own masters, and shapes the same suite
+      - run: python scripts/build_vf.py 35
+      - run: python scripts/verify.py dist/ShoyuCodeProJP35-VF.otf
       - name: Nerd-patch smoke test (one font)
         run: python scripts/nerdpatch.py FontPatcher ShoyuCodeProJP35-Regular

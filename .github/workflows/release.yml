@@ -1,5 +1,6 @@
-# Tag push (v*) -> full assembly from live upstreams (42 fonts x 3 families),
-# verify, Nerd-patch everything, zip, GitHub release.
+# Tag push (v*) -> full assembly from live upstreams: 42 static fonts across
+# 3 families plus one variable font per family, verify, Nerd-patch the
+# statics, zip, GitHub release.
 name: Release
 on:
   push:
@@ -11,6 +12,9 @@ env:
   SCP_TAG: 2.042R-u%2F1.062R-i%2F1.026R-vf
   SCP_VF_ZIP: VF-source-code-VF-1.026R.zip
   MONA_TAG: v1.400
+  SHMONO_TAG: 1.002
+  # the variable release lives in the repo, not in a release asset
+  SHS_VF_REF: release
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -36,6 +40,10 @@ jobs:
           curl -sSfL -o /tmp/mona.zip \
             "https://github.com/githubnext/monaspace/releases/download/${MONA_TAG}/monaspace-variable-${MONA_TAG}.zip"
           unzip -qo /tmp/mona.zip -d upstreams/mona
+          curl -sSfL -o upstreams/shmono.ttc \
+            "https://github.com/adobe-fonts/source-han-mono/releases/download/${SHMONO_TAG}/SourceHanMono.ttc"
+          curl -sSfL -o upstreams/shs-vf.ttc \
+            "https://raw.githubusercontent.com/adobe-fonts/source-han-sans/${SHS_VF_REF}/Variable/OTC/SourceHanSans-VF.otf.ttc"
       - name: Export upstream paths
         run: |
           echo "SHCJ_TTC=upstreams/shcj.ttc" >> "$GITHUB_ENV"
@@ -43,6 +51,8 @@ jobs:
           echo "SCP_VF_U=$(find upstreams/scp -name 'SourceCodeVF-Upright.otf' | head -1)" >> "$GITHUB_ENV"
           echo "SCP_VF_I=$(find upstreams/scp -name 'SourceCodeVF-Italic.otf' | head -1)" >> "$GITHUB_ENV"
           echo "MONA_VF=$(find upstreams/mona -name 'Monaspace Neon Var.ttf' | head -1)" >> "$GITHUB_ENV"
+          echo "SHMONO_TTC=upstreams/shmono.ttc" >> "$GITHUB_ENV"
+          echo "SHS_VF=upstreams/shs-vf.ttc" >> "$GITHUB_ENV"
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq fontforge python3-fontforge
       - run: |
           curl -sSfL -o /tmp/FontPatcher.zip \
@@ -54,8 +64,14 @@ jobs:
       - run: python scripts/nerdpatch.py FontPatcher
       - run: python scripts/makeotc.py
       - run: |
-          cd dist && zip -q ShoyuCodeProJP.zip *.otf
+          cd dist && zip -q ShoyuCodeProJP.zip *-*.otf
           cd nerd && zip -q ../ShoyuCodeProJP-NerdFont.zip *.otf
+      # variable families last: they reuse dist/ and must not land in the
+      # static zip above
+      - run: python scripts/build_vf.py
+      - run: |
+          for f in dist/*-VF.otf; do python scripts/verify.py "$f"; done
+          cd dist && zip -q ShoyuCodeProJP-Variable.zip *-VF.otf
       - uses: softprops/action-gh-release@v2
         with:
           files: |
@@ -64,3 +80,4 @@ jobs:
             dist/ShoyuCodeProJP.ttc
             dist/ShoyuCodeProJP35.ttc
             dist/ShoyuCodeProJPTerm.ttc
+            dist/ShoyuCodeProJP-Variable.zip

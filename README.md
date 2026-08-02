@@ -10,8 +10,31 @@ CI で合成し、上流の新リリースにも追従する。
 ウェイトの対応付けは名前ではなく実測 — 各面で `=` のバー厚を測り、
 SCP / Monaspace のバリアブルフォントの wght を二分探索で一致させる。
 基準は [Source Han Code JP](https://github.com/adobe-fonts/source-han-code-jp)
-（ペアリング参照、行間メトリクス、SCP 非収録の半角カナ等のドナー）なので、
-SHCJ ユーザーの見た目の連続性が保たれる。
+（ペアリング参照と行間メトリクス）なので、SHCJ ユーザーの見た目の連続性が保たれる。
+半角レイヤの収録範囲と、SCP にない半角グリフのドナーは
+[Source Han Mono](https://github.com/adobe-fonts/source-han-mono) から取る。
+
+## 設計方針
+
+**上流にあるものは移植する。伸縮は最終手段。** ある字がセル幅で必要なら、
+まずその幅で設計されたグリフを上流から探す。見つからないときだけ変形する。
+
+| 必要なもの | 供給元 |
+|-----------|--------|
+| 半角欧文・記号 | Source Code Pro（原寸、または 10/9 拡大） |
+| 半角カナ・`｡｢｣､･`・`￨￩￪￫￬￭￮`・`×÷±§…‖†‡‰−` ほか | **Source Han Mono**（セル幅で設計済み） |
+| 罫線 `─│┼` ・ブロック `█▀▄░` （Term） | Source Code Pro（原寸600、セルを食み出してタイル） |
+| 合字50種 | Monaspace |
+| 全角・和文 | Source Han Sans |
+
+伸縮が残るのは、**どの上流もセル幅で持っていない**もの（`①` `○` `★` など
+の囲み文字・幾何学記号）だけ。そこでも等方縮小はせず、高さを保って
+必要な分だけ横を詰める。
+
+半角カタカナは長らく advance 500 のまま入っていた（SHCJ 由来）。等幅フォント
+では半角グリフは必ず1セルなので桁がずれる。Source Han Mono はこれを修正済み
+で、しかも字ごとに手が入っている（カナは水平に伸長、`｡` は原寸のまま
+字送りだけ調整、`￩` は垂直位置も変更）ため、自前の一律変形では再現できない。
 
 ## 合字一覧
 
@@ -54,8 +77,6 @@ SCP 純正の文字変異）、`salt`、SCP の stylistic set は ss11〜ss17 �
 
 ## ファミリー構成
 
-| ファミリー | 半角:全角 | 用途 |
-|-----------|-----------|------|
 | ファミリー | 半角:全角 | `=`バー | 用途 |
 |-----------|-----------|--------|------|
 | Shoyu Code Pro JP | 667:1000 (2:3) | 69 | エディタ用（SHCJ の見た目） |
@@ -65,8 +86,19 @@ SCP 純正の文字変異）、`salt`、SCP の stylistic set は ss11〜ss17 �
 **Term** は発想を逆にした 1:2: 欧文を縮めず、**全角の送りを 1200
 （=600×2）に広げてグリフを中央配置**する。欧文は SCP 原寸（600）に
 太さ補正（SHCJ の CJK ペアリング 69/1000em に一致）を掛けたもの。
-ターミナルのセルグリッドに厳密一致し罫線も繋がる。曖昧幅（EAW=A）の
-`×` `±` `…` や罫線素片は1セル幅版に差し替え、食み出しを解消。
+ターミナルのセルグリッドに厳密一致する。
+
+罫線・ブロック要素は **Source Code Pro の原寸600グリフに差し替え**。
+全角版を縮小すると線の太さまで縮んで本文と色が合わなくなり、隣のセルとも
+繋がらなくなる。SCP はこれらを1セル設計で持っており、しかもインクを
+セルから39ユニット食み出させてあるので隣接セルが重なって継ぎ目が出ない
+（PlemolJP は同じ目的で全角罫線フォントを自前で描き起こしている）。
+さらに縦罫線とブロックは**行ボックス全体に合わせて伸ばす**ので、
+行をまたいで縦線が途切れず、`█` の上下に地色の筋も出ない。
+
+その他の曖昧幅（EAW=A）文字は1セル版に差し替えるが、**高さは保ったまま**
+横だけ必要な分詰める。`①` は `あ` の 99% の高さになる（等方0.6倍だった
+ときは 66%）。
 
 35 の太さ補正版（35W、バー69）も試作したが、実用サイズ（14px）で
 知覚できない差だったため引退。Term は全角と常時並ぶ前提なので
@@ -82,6 +114,27 @@ SCP 純正の文字変異）、`salt`、SCP の stylistic set は ss11〜ss17 �
 各ファミリー 7ウェイト（ExtraLight / Light / Normal / Regular / Medium /
 Bold / Heavy）× 2スタイル（Upright / Italic — Italic は SCP の本物の
 イタリック、和文は SHCJ と同じく直立のまま）。
+
+### バリアブル版
+
+各ファミリーに wght 軸（250–900）を持つ1ファイル版もある。
+`ShoyuCodeProJP-VF.otf` / `ShoyuCodeProJP35-VF.otf` / `ShoyuCodeProJPTerm-VF.otf`。
+
+土台は Source Han Sans の**バリアブル版**。静的7ウェイトは Adobe が
+ウェイトごとに重なり除去をしているため互いに補間互換ではなく
+（`あ` が 50/49/49/49/46/46/45 点）、束ねてもバリアブルにはできない。
+
+欧文レイヤは名前付き7ウェイトぶんのマスターを持ち、CFF2 の `vsindex` で
+和文（マスター2つ）とは別の VarData を参照する。ペアリングは静的版と同じ
+実測ルールで、全ウェイトで `=` バーの誤差 0.4 ユニット以内。
+軸の既定値は Regular（Source Han Sans は最軽量が既定なので、ウェイトを
+指定せず読み込むと ExtraLight になってしまう）。
+
+35 のバリアブル版では欧文が**Source Code Pro の座標そのまま**になる。
+静的版は 10/9 拡大 → 600/667 縮小の往復で丸めが2回入るが、原寸600で
+直接置けば往復自体が不要なため。
+
+Nerd Fonts 版は静的のみ（font-patcher が FontForge ベースで VF 非対応）。
 
 35 は半角グリフを 600/667 に等方縮小したもの（= オリジナル SCP の原寸復元）。全出力に Nerd Fonts
 パッチ済み変種も生成する。NF ファミリー名は日本語プログラミングフォントの
@@ -106,31 +159,39 @@ font-patcher がグリフを Unicode で引けないため、パッチ前に Fon
 
 ## ビルド
 
-4つの上流（Source Han Sans JP / Source Code Pro VF / Monaspace VF /
-Source Han Code JP）を取得して環境変数で場所を渡す。具体的なコマンドは
-`.github/workflows/ci.yml` の手順がそのまま実行可能なリファレンス。
+上流（Source Han Sans JP 静的 + VF / Source Code Pro VF / Monaspace VF /
+Source Han Code JP / Source Han Mono）を取得して環境変数で場所を渡す。
+具体的なコマンドは `.github/workflows/ci.yml` の手順がそのまま実行可能な
+リファレンス。
 
 ```sh
 pip install -r requirements.txt
-SHS_DIR=... SCP_VF_U=... SCP_VF_I=... MONA_VF=... \
-  python scripts/build.py            # 全ファミリー（2:3 / 35 × 14面）
-  python scripts/build.py "Regular"  # Regular系のみ（動作確認用）
+export SHS_DIR=... SHS_VF=... SCP_VF_U=... SCP_VF_I=... MONA_VF=...
+export SHCJ_TTC=... SHMONO_TTC=...
+
+python scripts/build.py                  # 静的 全ファミリー（3 × 14面）
+python scripts/build.py "Regular"        # Regular系のみ（動作確認用）
+python scripts/build_vf.py               # バリアブル 全ファミリー
+python scripts/build_vf.py 35            # 35 のみ
 python scripts/verify.py dist/ShoyuCodeProJP-Regular.otf   # 回帰テスト
-python scripts/nerdpatch.py <FontPatcher dir>              # NF 変種
+python scripts/nerdpatch.py <FontPatcher dir>              # NF 変種（静的のみ）
 python scripts/makeotc.py                                  # .ttc 化
 ```
 
 ## 仕組み
 
-- Source Han Sans JP（CID-keyed CFF）を土台に、SHCJ が半角にしている
-  477 コードポイントへ SCP VF 由来のグリフを接ぎ木し cmap を差し替える
-  （SCP に無い半角カナ等は SHCJ から複写）。追加 CID は疎な空間の空きを
-  昇順割当（サブセット OTF の CID は不連続なため）
+- Source Han Sans JP（CID-keyed CFF）を土台に、Source Han Mono が半角に
+  している 590 コードポイントへ SCP VF 由来のグリフを接ぎ木し cmap を
+  差し替える（SCP に無い半角カナ等は Source Han Mono から複写）。追加 CID は
+  疎な空間の空きを昇順割当（サブセット OTF の CID は不連続なため）
 - 各面の `=` バー厚を実測し、SCP / Monaspace VF の wght を二分探索して
   太さを一致させる。Italic は SCP Italic VF + slnt 追随
 - 合字は LigatureSubst。`calt`/`liga` は結合ルックアップ1つ（最長一致の
   保証のため）、ss01〜08 はグループ別ルックアップ、cv99 が .alt 切替
 - 行間・等幅メタデータは SHCJ の宣言値を複写し、レンダリング上の連続性を保つ
+- バリアブル版は Source Han Sans VF を土台にし、JP へサブセットしてから
+  （OTC の各面は 65535 グリフ = OpenType の上限ちょうどで、1字も足せない）
+  同じレイヤを blend 付き CFF2 charstring として接ぎ木する
 
 ## ライセンス
 
