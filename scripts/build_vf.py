@@ -318,6 +318,25 @@ def draw_from(font, glyph_name, scale, dx=0, dy=0):
     return draw
 
 
+def sub_model_for(locations, mask, cache):
+    """A model over the masters that agree, with its master order settled.
+
+    The merge pen reads masters positionally with the default first, which
+    means the model has to be normalised and the items permuted to match --
+    and VariationModel.getSubModel() cannot be used for it: it caches, so
+    normalising what it returns leaves the next caller with a permuted model
+    and items still in the parent's order. Keep the pair here instead.
+    """
+    key = tuple(mask)
+    if key not in cache:
+        model = VariationModel([l for l, keep in zip(locations, mask) if keep],
+                               axisOrder=["wght"])
+        order = list(model.reverseMapping)
+        model.reorderMasters(list(range(len(order))), order)
+        cache[key] = (model, order)
+    return cache[key]
+
+
 def outline_signature(font, glyph_name):
     pen = RecordingPen()
     font.getGlyphSet()[glyph_name].draw(pen)
@@ -328,7 +347,10 @@ def outline_signature(font, glyph_name):
 # the three grafted layers
 # --------------------------------------------------------------------------
 
-def graft_halfwidth(target, scps, donors, donor0, V, model):
+PROBE_KANA = 0xFF71     # check_masters() watches this one; see build_variant
+
+
+def graft_halfwidth(target, scps, donors, donor0, V, model, locations):
     """Re-point every half-width codepoint at a new variable glyph.
 
     Outline from Source Code Pro when it has the codepoint, otherwise from
@@ -347,7 +369,8 @@ def graft_halfwidth(target, scps, donors, donor0, V, model):
     scp_cm = scps[0].getBestCmap()
     new_map, default_map = {}, {}
     from_scp = from_mono = partial = 0
-    masters = {}
+    masters, sub_cache = {}, {}
+    probe = [True] * len(donors)
 
     for cp, g in sorted(ref_cm.items()):
         if ref_hm[g][0] != CELL:
@@ -365,7 +388,12 @@ def graft_halfwidth(target, scps, donors, donor0, V, model):
             usable = [d if (cp in d.getBestCmap()
                             and outline_signature(d, d.getBestCmap()[cp]) == sig0)
                       else None for d in donors]
-            sub_model, sub_donors = model.getSubModel(usable)
+            mask = [u is not None for u in usable]
+            if cp == PROBE_KANA:
+                probe[:] = mask
+            sub_model, sub_order = sub_model_for(locations, mask, sub_cache)
+            surviving = [d for d, keep in zip(donors, mask) if keep]
+            sub_donors = [surviving[i] for i in sub_order]
             if len(sub_donors) < len(donors):
                 partial += 1
                 masters[len(sub_donors)] = masters.get(len(sub_donors), 0) + 1
@@ -401,7 +429,7 @@ def graft_halfwidth(target, scps, donors, donor0, V, model):
           + (f" ({partial} over a subset of masters: "
              + ", ".join(f"{n}x{k} masters" for k, n in sorted(masters.items()))
              + ")" if partial else ""))
-    return default_map
+    return default_map, probe
 
 
 def import_scp_variants(target, scps, default_map, V):
@@ -770,20 +798,31 @@ def check_masters(path, expected):
     named = {built["name"].getDebugName(i.subfamilyNameID): i.coordinates["wght"]
              for i in built["fvar"].instances}
     worst, failed = 0.0, []
-    for weight, want in expected.items():
+    for weight, (want_bar, want_kana) in expected.items():
         font = hb.Font(face)
         font.set_variations({"wght": named[weight]})
         points = []
         font.draw_glyph(font.get_nominal_glyph(ord("=")), draw, points)
         first = points[:points.index(None)]
         got = max(y for _, y in first) - min(y for _, y in first)
-        worst = max(worst, abs(got - want))
-        if abs(got - want) > 1.5:
-            failed.append(f"{weight}: bar {got:.0f}, master has {want:.0f}")
+        worst = max(worst, abs(got - want_bar))
+        if abs(got - want_bar) > 1.5:
+            failed.append(f"{weight}: '=' bar {got:.0f}, master has {want_bar:.0f}")
+        # a half-width kana too: those come from a donor whose faces do not
+        # all interpolate, so they ride a sub-model, which is its own chance
+        # to get the master order wrong
+        points = []
+        font.draw_glyph(font.get_nominal_glyph(0xFF71), draw, points)
+        xs = [x for p in points if p for x, _ in [p]]
+        got = max(xs) - min(xs)
+        worst = max(worst, abs(got - want_kana))
+        if abs(got - want_kana) > 2.5:
+            failed.append(f"{weight}: kana width {got:.0f}, "
+                          f"master has {want_kana:.0f}")
     if failed:
         sys.exit("master check FAILED\n  " + "\n  ".join(failed))
-    print(f"master check: '=' bar within {worst:.1f} units of its master "
-          f"at all {len(expected)} named weights")
+    print(f"master check: '=' bar and half-width kana within {worst:.1f} "
+          f"units of their masters at all {len(expected)} named weights")
 
 
 def build_variant(V, env, shcj, shmono, base_path, out_dir):
@@ -796,7 +835,7 @@ def build_variant(V, env, shcj, shmono, base_path, out_dir):
     scp_src = VFSource(env["SCP_VF_U"], V.scp_draw / V.bar_scale, {"wght": 0})
     mona_src = VFSource(env["MONA_VF"], V.mona_draw / V.bar_scale,
                         {"wght": 0, "wdth": 100, "slnt": 0}, extrapolate=True)
-    refs, scps, monas, donors, expected = [], [], [], [], {}
+    refs, scps, monas, donors, labels, expected = [], [], [], [], [], {}
     for weight, ref_name, _, mono_name in MASTERS:
         ref = shcj[ref_name]
         target_bar = bar_thickness(ref, ref.getBestCmap()[ord("=")])
@@ -805,8 +844,13 @@ def build_variant(V, env, shcj, shmono, base_path, out_dir):
         scp = scp_src.matched(target_bar)
         scps.append(scp)
         monas.append(mona_src.matched(target_bar))
-        expected[weight] = round(
-            bar_thickness(scp, scp.getBestCmap()[ord("=")]) * V.scp_draw)
+        kana = BoundsPen(shmono[mono_name].getGlyphSet())
+        shmono[mono_name].getGlyphSet()[
+            shmono[mono_name].getBestCmap()[0xFF71]].draw(kana)
+        labels.append(weight)
+        expected[weight] = (
+            round(bar_thickness(scp, scp.getBestCmap()[ord("=")]) * V.scp_draw),
+            round((kana.bounds[2] - kana.bounds[0]) * V.shcj_draw))
 
     # The merge pen reads its masters positionally, with the default first --
     # varLib reorders them into the model's own order before handing them
@@ -817,12 +861,21 @@ def build_variant(V, env, shcj, shmono, base_path, out_dir):
     scps = model.reorderMasters(scps, order)
     monas = [monas[i] for i in order]
     refs = [refs[i] for i in order]
+    donors = [donors[i] for i in order]
+    labels = [labels[i] for i in order]
+    locations = [locs[i] for i in order]
 
     # before anything is drawn: the box-drawing fit needs the final line box
     copy_line_metrics(font, regular_ref)
 
     target = Cff2Target(font, model)
-    default_map = graft_halfwidth(target, scps, donors, donors[0], V, model)
+    default_map, kana_masters = graft_halfwidth(
+        target, scps, donors, donors[0], V, model, locations)
+    # A donor glyph that does not interpolate everywhere rides a sub-model and
+    # simply stops following the axis past its last master. Check it only
+    # where it has one.
+    kept = {labels[i] for i, keep in enumerate(kana_masters) if keep}
+    expected = {w: v for w, v in expected.items() if w in kept}
     variant_maps = import_scp_variants(target, scps, default_map, V)
     if V.term:
         n_box = graft_box_drawing(target, scps, V,
