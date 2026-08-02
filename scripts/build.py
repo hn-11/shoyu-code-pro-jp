@@ -92,6 +92,12 @@ FACES = [
 
 LIGATURES = json.load(open(ROOT / "data" / "mona_ligs.json"))
 
+# Source Han Code JP declares italicAngle 0 on its italic faces, so reading
+# the slant off the reference asked Monaspace for none: the operators stood
+# upright among letters leaning 12 degrees. Declare both ends ourselves.
+ITALIC_ANGLE = -12
+SLANT = -11.0           # Monaspace's slnt axis bottoms out here
+
 
 def bar_thickness(font, glyph_name):
     """Height of the top contour of '=' — our stroke-weight probe."""
@@ -448,6 +454,56 @@ def import_scp_variants(base, scp, default_map):
 
 BOX_DRAWING = range(0x2500, 0x2580)
 BLOCK_ELEMENTS = range(0x2580, 0x25A0)
+KEEP_HEIGHT = 0.9   # of a narrowed glyph; PlemolJP squashes to 0.9 for this
+SCP_EM_BOX = (-400, 1000)   # the box Source Code Pro fills with its rules
+
+
+def one_cell_codepoints(font):
+    """Codepoints a terminal gives ONE cell that still carry a full-width
+    glyph. East-Asian-Width is the rule because it is the question the
+    terminal is itself answering. Box drawing and block elements are left
+    out: they are replaced with one-cell designs, not shrunk."""
+    cmap, hmtx = font.getBestCmap(), font["hmtx"]
+    for cp, g in sorted(cmap.items()):
+        if hmtx[g][0] != 1000:
+            continue
+        if unicodedata.east_asian_width(chr(cp)) in ("W", "F"):
+            continue
+        if cp in BOX_DRAWING or cp in BLOCK_ELEMENTS:
+            continue
+        yield cp, g
+
+
+def narrow_transform(bounds, cell):
+    """How to fit a full-width glyph into one cell.
+
+    Keep the height and give up only the width the cell actually needs,
+    rather than taking a rule meant for a circled digit and applying it to
+    an ellipsis. Scaling by cell/1000 in both directions -- 60% linear, 36%
+    of the area -- left a circled digit two thirds the height of the kana
+    beside it.
+    """
+    if bounds:
+        ink = bounds[2] - bounds[0]
+        cx = (bounds[0] + bounds[2]) / 2
+        cy = (bounds[1] + bounds[3]) / 2
+    else:
+        ink, cx, cy = 0, cell / 2, 0
+    ky = KEEP_HEIGHT
+    kx = min(ky, cell / ink) if ink > 0 else ky
+    return (kx, 0, 0, ky, otRound(cell / 2 - cx * kx), otRound(cy * (1 - ky)))
+
+
+def line_box_fit(src, top, bottom):
+    """Map a design box onto the line box, as (y-scale, y-offset).
+
+    Box drawing only reads as continuous if it fills the line: a vertical
+    rule that stops short leaves a gap between rows, a full block leaves a
+    stripe of background. The whole range shares one design box, so one
+    affine keeps every join and half-block boundary in place.
+    """
+    ky = (top - bottom) / (src[1] - src[0])
+    return ky, bottom - src[0] * ky
 
 
 def graft_box_drawing(base, scp):
@@ -511,8 +567,7 @@ def fit_line_box(base):
     top, bottom = base["hhea"].ascent, base["hhea"].descent
     if src_top <= src_bottom:
         return 0
-    ky = (top - bottom) / (src_top - src_bottom)
-    dy = bottom - src_bottom * ky
+    ky, dy = line_box_fit((src_bottom, src_top), top, bottom)
 
     cff = base["CFF "].cff
     td = cff.topDictIndex.items[0]
@@ -547,9 +602,6 @@ def copy_line_metrics(base, ref):
     base["OS/2"].panose = ref["OS/2"].panose
 
 
-KEEP_HEIGHT = 0.9   # of a narrowed glyph; PlemolJP squashes to 0.9 for this
-
-
 def narrow_ambiguous(font, cell):
     """Terminal variant: give one-cell codepoints a one-cell glyph.
 
@@ -577,29 +629,12 @@ def narrow_ambiguous(font, cell):
     private = td.FDArray[fd_index].Private
     new_map = {}
     made = {}  # source glyph -> scaled glyph (dedup shared glyphs)
-    for cp, g in sorted(cmap.items()):
-        if font["hmtx"][g][0] != 1000:
-            continue
-        if unicodedata.east_asian_width(chr(cp)) in ("W", "F"):
-            continue
-        if cp in BOX_DRAWING or cp in BLOCK_ELEMENTS:
-            continue
+    for cp, g in one_cell_codepoints(font):
         if g not in made:
             bp = BoundsPen(gs)
             gs[g].draw(bp)
-            if bp.bounds:
-                ink = bp.bounds[2] - bp.bounds[0]
-                cx = (bp.bounds[0] + bp.bounds[2]) / 2
-                cy = (bp.bounds[1] + bp.bounds[3]) / 2
-            else:
-                ink, cx, cy = 0, cell / 2, 0
-            ky = KEEP_HEIGHT
-            kx = min(ky, cell / ink) if ink > 0 else ky
             pen = T2CharStringPen(pen_width(private, cell), gs)
-            # scale about the ink's own centre, then centre it in the cell
-            gs[g].draw(TransformPen(pen, (kx, 0, 0, ky,
-                                          round(cell / 2 - cx * kx),
-                                          round(cy * (1 - ky)))))
+            gs[g].draw(TransformPen(pen, narrow_transform(bp.bounds, cell)))
             name = alloc_glyph_name(font)
             append_glyph(font, td, name, pen.getCharString(private=private),
                          fd_index, cell)
@@ -665,7 +700,7 @@ def set_names(font, suffix, weight, italic):
     if hasattr(td, "FullName"):
         td.FullName = full
     if italic:
-        font["post"].italicAngle = -12
+        font["post"].italicAngle = ITALIC_ANGLE
         font["head"].macStyle |= 0x2
         font["OS/2"].fsSelection = (font["OS/2"].fsSelection & ~0x40) | 0x1
     return ps
@@ -868,8 +903,7 @@ def main():
                 # splits its Console variant off along the same line.
                 n_box = graft_box_drawing(base, scp) if term else 0
                 copy_line_metrics(base, ref)
-                mona = mona_src.matched(
-                    target, ref["post"].italicAngle if italic else None)
+                mona = mona_src.matched(target, SLANT if italic else None)
                 alts = {}
                 added = add_glyphs(base, mona, alts)
                 add_gsub(base, added, alts, variant_maps)

@@ -64,14 +64,17 @@ jobs:
       - run: python scripts/nerdpatch.py FontPatcher
       - run: python scripts/makeotc.py
       - run: |
-          cd dist && zip -q ShoyuCodeProJP.zip *-*.otf
+          cd dist
+          for fam in ShoyuCodeProJP ShoyuCodeProJP35 ShoyuCodeProJPTerm; do
+            zip -q ShoyuCodeProJP.zip "$fam"-[A-Z]*.otf
+          done
           cd nerd && zip -q ../ShoyuCodeProJP-NerdFont.zip *.otf
       # variable families last: they reuse dist/ and must not land in the
       # static zip above
       - run: python scripts/build_vf.py
       - run: |
-          for f in dist/*-VF.otf; do python scripts/verify.py "$f"; done
-          cd dist && zip -q ShoyuCodeProJP-Variable.zip *-VF.otf
+          for f in dist/*-VF*.otf; do python scripts/verify.py "$f"; done
+          cd dist && zip -q ShoyuCodeProJP-Variable.zip *-VF*.otf
       - uses: softprops/action-gh-release@v2
         with:
           files: |

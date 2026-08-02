@@ -33,7 +33,7 @@ named weight, while the CJK keeps the two it came with.
 Env (all required):
   SHS_VF   = Variable/OTC/SourceHanSans-VF.otf.ttc   (the JP face is [0])
   SHS_DIR  = dir with SourceHanSansJP-<Weight>.otf   (defines the repertoire)
-  SCP_VF_U = SourceCodeVF-Upright.otf
+  SCP_VF_U = SourceCodeVF-Upright.otf   SCP_VF_I = SourceCodeVF-Italic.otf
   MONA_VF  = Monaspace VF
   SHCJ_TTC = upstream/SourceHanCodeJP.ttc (default)
   SHMONO_TTC = upstream/SourceHanMono.ttc (default) -- half-width donor
@@ -41,7 +41,6 @@ Env (all required):
 
 import os
 import sys
-import unicodedata
 from pathlib import Path
 from typing import NamedTuple
 
@@ -60,12 +59,23 @@ from fontTools.misc.psCharStrings import T2CharString
 from fontTools.varLib.models import (VariationModel, normalizeValue,
                                      supportScalar)
 
-from build import (BLOCK_ELEMENTS, BOX_DRAWING, CELL, KEEP_HEIGHT,
-                   LIGATURES, MONA_CELL, SCP_CELL, VFSource, add_gsub,
-                   bar_thickness, copy_line_metrics, _remap_scp_tag)
+from build import (BLOCK_ELEMENTS, BOX_DRAWING, CELL, LIGATURES,
+                   MONA_CELL, SCP_CELL, SCP_EM_BOX, VFSource, add_gsub,
+                   bar_thickness, copy_line_metrics, line_box_fit,
+                   narrow_transform, one_cell_codepoints,
+                   _remap_scp_tag)
 
 ROOT = Path(__file__).resolve().parent.parent
+# Intermediates go in build/, never in dist/: dist/ is what gets zipped and
+# released, and a glob there will happily pick up a half-finished base font.
+WORK = ROOT / "build"
 DEFAULT_WGHT = 400      # the axis origin: Regular, not Adobe's ExtraLight
+# Source Han Code JP declares italicAngle 0 on its italic faces, so the value
+# cannot be read off the reference the way the static build tries to. These
+# are the angle we declare and the slant we ask Monaspace for, so the
+# ligatures lean with the letters instead of standing upright among them.
+ITALIC_ANGLE = -12.0
+SLANT = -11.0           # Monaspace's slnt axis bottoms out here
 
 
 class Variant(NamedTuple):
@@ -654,26 +664,10 @@ def narrow_ambiguous(target, base_masters, V):
     shrunk.
     """
     font = target.font
-    cmap = font.getBestCmap()
-    hmtx = font["hmtx"]
     new_map, made = {}, {}
-    for cp, g in sorted(cmap.items()):
-        if hmtx.metrics[g][0] != 1000:
-            continue
-        if unicodedata.east_asian_width(chr(cp)) in ("W", "F"):
-            continue
-        if cp in BOX_DRAWING or cp in BLOCK_ELEMENTS:
-            continue
+    for cp, g in one_cell_codepoints(font):
         if g not in made:
-            b = base_masters.bounds(g, 0)
-            if b:
-                ink, cx, cy = b[2] - b[0], (b[0] + b[2]) / 2, (b[1] + b[3]) / 2
-            else:
-                ink, cx, cy = 0, V.cell / 2, 0
-            ky = KEEP_HEIGHT
-            kx = min(ky, V.cell / ink) if ink > 0 else ky
-            tr = (kx, 0, 0, ky, otRound(V.cell / 2 - cx * kx),
-                  otRound(cy * (1 - ky)))
+            tr = narrow_transform(base_masters.bounds(g, 0), V.cell)
 
             def draw_master(i, pen, g=g, tr=tr):
                 base_masters.draw(g, i, pen, tr)
@@ -702,9 +696,8 @@ def graft_box_drawing(target, scps, V, line_top, line_bottom):
     stripe of background. One affine over the whole range fixes that and
     keeps every join and half-block boundary in place.
     """
-    src_bottom, src_top = -400 * V.scp_draw, 1000 * V.scp_draw
-    ky = (line_top - line_bottom) / (src_top - src_bottom)
-    dy = line_bottom - src_bottom * ky
+    ky, dy = line_box_fit([c * V.scp_draw for c in SCP_EM_BOX],
+                          line_top, line_bottom)
     tr = (V.scp_draw, 0, 0, V.scp_draw * ky, 0, dy)
 
     scp_cm = scps[0].getBestCmap()
@@ -739,15 +732,21 @@ def strip_advance_variation(font):
             del font[tag]
 
 
-def set_names(font, user_wghts, V):
+def set_names(font, user_wghts, V, italic):
     family = ("Shoyu Code Pro JP " + V.suffix).strip()
-    ps = "ShoyuCodeProJP" + V.suffix + "-VF"
+    sub = "Italic" if italic else "Regular"
+    ps = "ShoyuCodeProJP" + V.suffix + "-VF" + ("Italic" if italic else "")
+    full = f"{family} Italic" if italic else family
     name = font["name"]
     name.names = []
-    for nid, value in ((1, family), (2, "Regular"),
-                       (3, f"{ps};shoyu-code-pro-jp"), (4, family),
-                       (6, ps), (16, family), (17, "Regular")):
+    for nid, value in ((1, family), (2, sub),
+                       (3, f"{ps};shoyu-code-pro-jp"), (4, full),
+                       (6, ps), (16, family), (17, sub)):
         name.setName(value, nid, 3, 1, 0x409)
+    if italic:
+        font["post"].italicAngle = ITALIC_ANGLE
+        font["head"].macStyle |= 0x2
+        font["OS/2"].fsSelection = (font["OS/2"].fsSelection & ~0x40) | 0x1
     # one record per named instance, then re-point fvar at them
     for instance, (weight, _, _, _) in zip(font["fvar"].instances, MASTERS):
         nid = name.addName(weight, platforms=((3, 1, 0x409),))
@@ -756,7 +755,7 @@ def set_names(font, user_wghts, V):
     cff = font["CFF2"].cff
     cff.fontNames[0] = ps
     top = cff.topDictIndex[0]
-    for attr, value in (("FamilyName", family), ("FullName", family)):
+    for attr, value in (("FamilyName", family), ("FullName", full)):
         if hasattr(top, attr):
             setattr(top, attr, value)
     otl.buildStatTable(font, [{
@@ -825,25 +824,31 @@ def check_masters(path, expected):
           f"units of their masters at all {len(expected)} named weights")
 
 
-def build_variant(V, env, shcj, shmono, base_path, out_dir):
+def build_variant(V, italic, env, shcj, shmono, base_path, out_dir):
+    """One family, one style. Italic is a separate file, not an axis: Source
+    Code Pro's upright and italic are different designs -- one-story a, and
+    so on -- so there are no compatible masters to interpolate between. The
+    Japanese stays upright either way, as it does in Source Han Code JP."""
+    style = " Italic" if italic else ""
     font = TTFont(base_path)
     locs, user_wghts = master_locations(font)
     model = VariationModel(locs, axisOrder=["wght"])
 
     # One matched donor instance per master, by the same measurement rule
     # build.py uses: Source Han Code JP's '=' bar decides the wght.
-    scp_src = VFSource(env["SCP_VF_U"], V.scp_draw / V.bar_scale, {"wght": 0})
+    scp_src = VFSource(env["SCP_VF_I" if italic else "SCP_VF_U"],
+                       V.scp_draw / V.bar_scale, {"wght": 0})
     mona_src = VFSource(env["MONA_VF"], V.mona_draw / V.bar_scale,
                         {"wght": 0, "wdth": 100, "slnt": 0}, extrapolate=True)
     refs, scps, monas, donors, labels, expected = [], [], [], [], [], {}
     for weight, ref_name, _, mono_name in MASTERS:
-        ref = shcj[ref_name]
+        ref = shcj[ref_name + style]
         target_bar = bar_thickness(ref, ref.getBestCmap()[ord("=")])
         refs.append(ref)
-        donors.append(shmono[mono_name])
+        donors.append(shmono[mono_name + style])
         scp = scp_src.matched(target_bar)
         scps.append(scp)
-        monas.append(mona_src.matched(target_bar))
+        monas.append(mona_src.matched(target_bar, SLANT if italic else None))
         kana = BoundsPen(shmono[mono_name].getGlyphSet())
         shmono[mono_name].getGlyphSet()[
             shmono[mono_name].getBestCmap()[0xFF71]].draw(kana)
@@ -892,7 +897,7 @@ def build_variant(V, env, shcj, shmono, base_path, out_dir):
         print(f"terminal grid: {n_amb} narrowed to one cell, "
               f"{n_wide} widened to {V.full}")
     strip_advance_variation(font)
-    ps = set_names(font, user_wghts, V)
+    ps = set_names(font, user_wghts, V, italic)
 
     out = out_dir / f"{ps}.otf"
     font.save(out)
@@ -908,7 +913,7 @@ def main():
     if unknown:
         sys.exit(f"unknown variant(s) {unknown}; choose from {list(VARIANTS)!r}")
     env = {k: os.environ.get(k) for k in
-           ("SHS_VF", "SHS_DIR", "SCP_VF_U", "MONA_VF")}
+           ("SHS_VF", "SHS_DIR", "SCP_VF_U", "SCP_VF_I", "MONA_VF")}
     missing = [k for k, v in env.items() if not v or not Path(v).exists()]
     if missing:
         sys.exit(f"missing env: {missing}")
@@ -917,7 +922,8 @@ def main():
 
     out_dir = ROOT / "dist"
     out_dir.mkdir(exist_ok=True)
-    base_path = out_dir / "shs-vf-jp.base.otf"
+    WORK.mkdir(exist_ok=True)
+    base_path = WORK / "shs-vf-jp.base.otf"
     prepare_base(env["SHS_VF"],
                  Path(env["SHS_DIR"]) / "SourceHanSansJP-Regular.otf",
                  base_path, DEFAULT_WGHT)
@@ -926,8 +932,10 @@ def main():
 
     for suffix in want:
         V = VARIANTS[suffix]
-        print(f"\n=== Shoyu Code Pro JP {V.suffix} ({suffix}) ===")
-        build_variant(V, env, shcj, shmono, base_path, out_dir)
+        for italic in (False, True):
+            print(f"\n=== Shoyu Code Pro JP {V.suffix} ({suffix})"
+                  f"{' Italic' if italic else ''} ===")
+            build_variant(V, italic, env, shcj, shmono, base_path, out_dir)
 
 
 if __name__ == "__main__":

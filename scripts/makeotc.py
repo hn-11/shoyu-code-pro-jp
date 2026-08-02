@@ -16,8 +16,11 @@ FAMILIES = ["ShoyuCodeProJP", "ShoyuCodeProJP35", "ShoyuCodeProJPTerm"]
 
 def main():
     for fam in FAMILIES:
+        # Statics only. A variable face in here would be bundled as though
+        # it were one more weight, and the glob would happily do it.
         faces = sorted(
             p for p in DIST.glob(f"{fam}-*.otf")
+            if "-VF" not in p.stem
         )
         if not faces:
             print(f"skip {fam}: no faces")
