@@ -37,7 +37,9 @@ import sys
 import unicodedata
 from pathlib import Path
 
+from fontTools.misc.roundTools import otRound
 from fontTools.ttLib import TTCollection, TTFont
+from fontTools.ttLib.tables._g_l_y_f import GlyphCoordinates
 from fontTools.varLib.instancer import instantiateVariableFont
 from fontTools.pens.boundsPen import BoundsPen
 from fontTools.pens.recordingPen import RecordingPen
@@ -97,6 +99,27 @@ def bar_thickness(font, glyph_name):
     return max(ys) - min(ys)
 
 
+def _blend_outlines(a, b, t):
+    """a + t*(b - a), in place on `a`. Both must be instances of the same
+    variable font, which makes them point-compatible; t outside [0, 1]
+    extrapolates. glyf only — the one donor that needs this is a TTF."""
+    ga, gb = a["glyf"], b["glyf"]
+    for name in a.getGlyphOrder():
+        ca, cb = ga[name], gb[name]
+        if ca.isComposite():
+            for pa, pb in zip(ca.components, cb.components):
+                pa.x = otRound(pa.x + t * (pb.x - pa.x))
+                pa.y = otRound(pa.y + t * (pb.y - pa.y))
+        elif ca.numberOfContours > 0:
+            ca.coordinates = GlyphCoordinates(
+                [(otRound(xa + t * (xb - xa)), otRound(ya + t * (yb - ya)))
+                 for (xa, ya), (xb, yb) in zip(ca.coordinates, cb.coordinates)])
+        wa, wb = a["hmtx"].metrics[name], b["hmtx"].metrics[name]
+        a["hmtx"].metrics[name] = (otRound(wa[0] + t * (wb[0] - wa[0])),
+                                   otRound(wa[1] + t * (wb[1] - wa[1])))
+    return a
+
+
 class VFSource:
     """Variable-font instances matched to a target '=' bar thickness.
 
@@ -110,17 +133,22 @@ class VFSource:
     differently-sized ranges would resolve Monaspace and Source Code Pro to
     different precisions, so the operators' stroke weight would depend on
     which font a glyph came from rather than on the target.
+
+    `extrapolate` lets a donor be walked below its own axis floor when even
+    its lightest weight is heavier than the target — see _past_the_floor().
     """
 
     WGHT_EPS = 0.5    # wght units; ~0.07 outline units of bar, well under
                       # the ~1 unit quantization of the donors' own outlines
     SATURATION_WARN = 0.05   # relative bar error worth shouting about; the
                              # donors' integer outlines already cost ~1.5%
+    EXTRAP_SPAN = 200.0      # wght span used to read the slope for extrapolation
 
-    def __init__(self, vf_path, scale, axes):
+    def __init__(self, vf_path, scale, axes, extrapolate=False):
         self.vf_path = vf_path
         self.scale = scale        # em scale applied when the glyphs are used
         self.axes = axes          # template; wght filled by the search
+        self.extrapolate = extrapolate
         self._cache = {}
         # Search the donor's OWN wght range. Monaspace stops at 800, Source
         # Code Pro goes to 900; a shared 200..800 bound silently clipped the
@@ -165,12 +193,64 @@ class VFSource:
         # out loud — an unnoticed clip is how the Heavy face shipped 3.5%
         # light for as long as the search stopped at wght 800.
         if best[0] / pre_scale_target > self.SATURATION_WARN:
+            if self.extrapolate:
+                inst = self._past_the_floor(pre_scale_target, slant)
+                if inst is not None:
+                    self._cache[key] = inst
+                    return inst
             print(f"  WARNING: {Path(self.vf_path).name} cannot reach a "
                   f"{target_units:.0f}-unit bar (nearest {best[2] * self.scale:.0f}, "
                   f"{100 * (best[2] - pre_scale_target) / pre_scale_target:+.0f}%) "
                   f"— its axis stops at {self.wght_range}")
         self._cache[key] = best[1]
         return best[1]
+
+    def _instance(self, wght, slant):
+        inst = TTFont(self.vf_path)
+        axes = dict(self.axes, wght=wght)
+        if slant is not None and "slnt" in axes:
+            axes["slnt"] = max(-11.0, min(0.0, slant))
+        instantiateVariableFont(inst, axes, inplace=True)
+        return inst
+
+    def _past_the_floor(self, pre_scale_target, slant):
+        """Walk the outlines below the donor's lightest weight.
+
+        Monaspace's axis floor (wght 200) still draws a 59-unit '=' in our
+        cell; SHCJ ExtraLight wants 31 and Light 46, so no weight on the axis
+        pairs with those faces and the operators come out up to 91% heavier
+        than the text they sit in. Instances of a variable font are
+        point-compatible by construction, so P(t) = A + t*(B - A) stays well
+        defined for t < 0 and needs nothing from the donor's master structure.
+
+        Only sound because the imported set is 50 operator glyphs — bars,
+        dots and diagonals. Do not turn this on for a donor supplying letters.
+        """
+        lo_w = self.wght_range[0]
+        hi_w = min(lo_w + self.EXTRAP_SPAN, self.wght_range[1])
+        if "glyf" not in TTFont(self.vf_path):
+            return None
+        a, b = self._instance(lo_w, slant), self._instance(hi_w, slant)
+        bar_a = bar_thickness(a, a.getBestCmap()[ord("=")])
+        bar_b = bar_thickness(b, b.getBestCmap()[ord("=")])
+        if bar_b <= bar_a:
+            return None
+        t = (pre_scale_target - bar_a) / (bar_b - bar_a)
+        if t >= 0:
+            return None       # in range after all; the bisection had it
+        # The bar is near-linear in t but the outlines are integer-rounded,
+        # so land it with a secant step rather than trusting the first solve.
+        out = _blend_outlines(self._instance(lo_w, slant), b, t)
+        for _ in range(3):
+            got = bar_thickness(out, out.getBestCmap()[ord("=")])
+            if abs(got - pre_scale_target) < 0.5:
+                break
+            t += (pre_scale_target - got) / (bar_b - bar_a)
+            out = _blend_outlines(self._instance(lo_w, slant), b, t)
+        print(f"  {Path(self.vf_path).name}: extrapolated to t={t:+.3f} "
+              f"(wght {lo_w + t * (hi_w - lo_w):.0f}, below the {lo_w:.0f} floor) "
+              f"for a {pre_scale_target * self.scale:.0f}-unit bar")
+        return out
 
 
 def glyph_vcenter(font, gname, scale=1.0):
@@ -619,7 +699,10 @@ def main():
     if missing:
         sys.exit(f"missing env: {missing}")
     shcj_ttc = os.environ.get("SHCJ_TTC", ROOT / "upstream" / "SourceHanCodeJP.ttc")
-    mona_src = VFSource(env["MONA_VF"], MONA_K, {"wght": 0, "wdth": 100, "slnt": 0})
+    # Monaspace bottoms out well above SHCJ EL/L, and it only supplies the 50
+    # operator glyphs, so it is the one donor allowed past its axis floor.
+    mona_src = VFSource(env["MONA_VF"], MONA_K, {"wght": 0, "wdth": 100, "slnt": 0},
+                        extrapolate=True)
     scp_u = VFSource(env["SCP_VF_U"], SCP_K, {"wght": 0})
     scp_i = VFSource(env["SCP_VF_I"], SCP_K, {"wght": 0})
 
