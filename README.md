@@ -115,6 +115,15 @@ SCP 純正の文字変異）、`salt`、SCP の stylistic set は ss11〜ss17 �
 Bold / Heavy）× 2スタイル（Upright / Italic — Italic は SCP の本物の
 イタリック、和文は SHCJ と同じく直立のまま）。
 
+### Nerd Fonts 版
+
+全ての静的出力に Nerd Fonts パッチ済み変種も生成する。NF ファミリー名は
+日本語プログラミングフォントの慣習（HackGen / PlemolJP / UDEV Gothic と同じ）
+に合わせ**変種名の後ろ**に付く: `Shoyu Code Pro JP NF` /
+`Shoyu Code Pro JP Term NF` / `Shoyu Code Pro JP 35 NF`。CID-keyed CFF の
+ままでは font-patcher がグリフを Unicode で引けないため、パッチ前に
+FontForge の `cidFlatten()` で平坦化している（アウトラインは無変換）。
+
 ### バリアブル版
 
 各ファミリーに wght 軸（250–900）を持つ1ファイル版もある。
@@ -134,14 +143,43 @@ Bold / Heavy）× 2スタイル（Upright / Italic — Italic は SCP の本物�
 静的版は 10/9 拡大 → 600/667 縮小の往復で丸めが2回入るが、原寸600で
 直接置けば往復自体が不要なため。
 
+Italic も各ファミリーにある（`ShoyuCodeProJP35-VFItalic.otf` など）。軸では
+なく別ファイルなのは、Source Code Pro の直立体とイタリック体が別デザイン
+（`a` の一階建てなど）で、補間できるマスターが存在しないため。和文は静的版
+と同じく直立のまま。
+
 Nerd Fonts 版は静的のみ（font-patcher が FontForge ベースで VF 非対応）。
 
-35 は半角グリフを 600/667 に等方縮小したもの（= オリジナル SCP の原寸復元）。全出力に Nerd Fonts
-パッチ済み変種も生成する。NF ファミリー名は日本語プログラミングフォントの
-慣習（HackGen / PlemolJP / UDEV Gothic と同じ）に合わせ**変種名の後ろ**に付く:
-`Shoyu Code Pro JP NF` / `Shoyu Code Pro JP Term NF` / `Shoyu Code Pro JP 35 NF`。CID-keyed CFF のままでは
-font-patcher がグリフを Unicode で引けないため、パッチ前に FontForge の
-`cidFlatten()` で平坦化している（アウトラインは無変換）。
+
+## 既知の制限
+
+上流に由来し、こちらでは直せないもの。
+
+**Term Heavy の欧文が7%軽い。** Term は欧文の太さを和文に合わせる変種だが、
+Heavy で必要な 129 ユニットのバーには Source Code Pro の原寸600では届かない
+（上限は 120、129 には wght 1012 相当＝軸の12.5%外が必要）。文字を軸外に
+外挿すると Source Code Pro の字形が変わるため、120 で頭打ちにしている。
+ビルド時に警告が出る。
+
+**VF で半角カナ28字が全ウェイトを追従しない。** Source Han Mono は静的面
+しか無く、Adobe がウェイトごとに重なり除去をしているため、同じ字でも面に
+よって輪郭の構造が違う。形が一致するマスターだけで変化させているので、
+最後のマスターより先では止まる（`ｱ` `ｲ` `ｵ` `ｸ` `ｺ` `ﾀ` は Medium まで、
+`ｷ` `ﾔ` `ｬ` は Regular で固定）。静的版は影響を受けない。Source Han Mono に
+バリアブル版が出れば解消する。
+
+**ExtraLight / Light の合字は Monaspace を軸外に外挿している。** Monaspace の
+最も細い `=` は 59 ユニットで、SHCJ ExtraLight が要求する 31 に届かない
+（全5ファミリーが同じ下限）。演算子50種のみ・棒と点が主体の形状なので
+外挿しており、全ドナーで退化・輪郭反転が無いことを自動検査している。
+
+**`①` `○` `★` 等は縮小している。** これらを1セル幅で設計している上流が
+無いため。Monaspace は 613 字中 257 字を持つが、欧文キャップハイト基準の
+設計なので600セルに入れると `①` が 586 ユニット高（`あ` の 69%）になり、
+全角を縮めた現状の 838（99%）より悪化する。採用しない。
+
+**VF は重なりを保持している。** マスターが重なりを持たないと補間できない
+ため（Adobe の Source Han Sans VF も同じ）。静的版は重なり除去済み。
 
 ## インストール
 
