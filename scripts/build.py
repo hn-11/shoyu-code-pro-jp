@@ -7,10 +7,13 @@ Recipe (Source Han Mono's approach, re-executed against latest releases):
                                  (Adobe's own SHCJ derivation, re-run)
   - Ligatures (50):              Monaspace VF (data/mona_ligs.json)
   - Source Han Code JP serves as the PAIRING REFERENCE — each face's '='
-    bar thickness decides the SCP/Monaspace wght instance — and as the
-    donor for half-width glyphs SCP lacks (half-width kana etc.), plus
+    bar thickness decides the SCP/Monaspace wght instance — and supplies
     the vertical line metrics, so the rendered result stays continuous
     with what SHCJ users know.
+  - Source Han Mono defines the half-width REPERTOIRE and donates the
+    glyphs Source Code Pro lacks (half-width kana etc.). SHCJ left those
+    at Source Han Sans's 500-unit advance inside a 667 cell; Mono fitted
+    them to the cell, and covers 590 one-cell codepoints to SHCJ's 477.
 
 All weight pairing is by measurement (binary search on the VF wght axis),
 not by name. Italic faces take SCP Italic VF + upright Japanese, matching
@@ -29,6 +32,7 @@ Env (all required):
   SHS_DIR  = dir with SourceHanSansJP-<Weight>.otf
   SCP_VF_U = SourceCodeVF-Upright.otf   SCP_VF_I = SourceCodeVF-Italic.otf
   SHCJ_TTC = upstream/SourceHanCodeJP.ttc (default)   MONA_VF = Monaspace VF
+  SHMONO_TTC = upstream/SourceHanMono.ttc (default) — the half-width donor
 """
 
 import json
@@ -68,15 +72,22 @@ VARIANTS = {
     "Term": (600, True, True),    # 1:2 terminal grid (600:1200)
 }
 
-# (output weight name, SHCJ reference face, Source Han Sans static file)
+# (output weight, SHCJ pairing reference, Source Han Sans file, SH Mono face)
 FACES = [
-    ("ExtraLight", "Source Han Code JP EL", "SourceHanSansJP-ExtraLight.otf"),
-    ("Light", "Source Han Code JP L", "SourceHanSansJP-Light.otf"),
-    ("Normal", "Source Han Code JP N", "SourceHanSansJP-Normal.otf"),
-    ("Regular", "Source Han Code JP R", "SourceHanSansJP-Regular.otf"),
-    ("Medium", "Source Han Code JP M", "SourceHanSansJP-Medium.otf"),
-    ("Bold", "Source Han Code JP R Bold", "SourceHanSansJP-Bold.otf"),
-    ("Heavy", "Source Han Code JP H", "SourceHanSansJP-Heavy.otf"),
+    ("ExtraLight", "Source Han Code JP EL", "SourceHanSansJP-ExtraLight.otf",
+     "Source Han Mono EL"),
+    ("Light", "Source Han Code JP L", "SourceHanSansJP-Light.otf",
+     "Source Han Mono L"),
+    ("Normal", "Source Han Code JP N", "SourceHanSansJP-Normal.otf",
+     "Source Han Mono N"),
+    ("Regular", "Source Han Code JP R", "SourceHanSansJP-Regular.otf",
+     "Source Han Mono"),
+    ("Medium", "Source Han Code JP M", "SourceHanSansJP-Medium.otf",
+     "Source Han Mono M"),
+    ("Bold", "Source Han Code JP R Bold", "SourceHanSansJP-Bold.otf",
+     "Source Han Mono Bold"),
+    ("Heavy", "Source Han Code JP H", "SourceHanSansJP-Heavy.otf",
+     "Source Han Mono H"),
 ]
 
 LIGATURES = json.load(open(ROOT / "data" / "mona_ligs.json"))
@@ -323,10 +334,22 @@ def append_glyph(font, td, name, cs, fd_index, width, lsb=0):
 def graft_halfwidth(base, scp, ref):
     """Give `base` (Source Han Sans JP) its half-width layer.
 
-    Every codepoint SHCJ maps to a 667-advance glyph is re-pointed to a new
-    glyph: outline from the SCP instance scaled 10/9 when SCP has it,
-    otherwise copied verbatim from the SHCJ reference face (half-width
-    kana and a handful of symbols SCP never had).
+    Every codepoint the reference maps to a 667-advance glyph is re-pointed
+    to a new glyph: outline from the SCP instance scaled 10/9 when SCP has
+    it, otherwise copied verbatim from the reference (half-width kana and a
+    handful of symbols SCP never had).
+
+    The reference is Source Han Mono, not Source Han Code JP. SHCJ leaves 72
+    codepoints -- the whole half-width kana block, plus ｡｢｣､･ and ￨￩￪￫￬￭￮ --
+    at Source Han Sans's 500-unit advance inside a 667 cell, so they sit off
+    the grid the rest of the font is built on. Source Han Mono fixed exactly
+    that, and fitting them here instead would mean guessing: Adobe stretched
+    the kana horizontally, left ｡ at its original size, and moved ￩
+    vertically, glyph by glyph.
+
+    Mono is also a superset -- 590 one-cell codepoints against SHCJ's 477 --
+    so × ÷ ± § … ‖ † ‡ ‰ − and the arrows arrive as designs drawn for the
+    cell rather than full-width glyphs squeezed into it later.
     """
     ref_cm, ref_hm = ref.getBestCmap(), ref["hmtx"]
     scp_cm = scp.getBestCmap()
@@ -339,7 +362,7 @@ def graft_halfwidth(base, scp, ref):
 
     new_map = {}
     default_map = {}  # scp glyph name -> our glyph name (for variant wiring)
-    from_scp = from_ref = 0
+    from_scp = from_mono = 0
     for cp, g in sorted(ref_cm.items()):
         if ref_hm[g][0] != CELL:
             continue
@@ -351,7 +374,7 @@ def graft_halfwidth(base, scp, ref):
         else:
             draw_clean([(ref_gs, g, (1, 0, 0, 1, 0, 0))], pen)
             lsb = ref_hm[g][1]
-            from_ref += 1
+            from_mono += 1
         name = alloc_glyph_name(base)
         append_glyph(base, td, name, pen.getCharString(private=private),
                      fd_index, CELL, lsb)
@@ -368,7 +391,7 @@ def graft_halfwidth(base, scp, ref):
         for cp, name in new_map.items():
             if cp in table.cmap:
                 table.cmap[cp] = name
-    return from_scp, from_ref, default_map
+    return from_scp, from_mono, default_map
 
 
 def _remap_scp_tag(tag):
@@ -811,6 +834,7 @@ def main():
     if missing:
         sys.exit(f"missing env: {missing}")
     shcj_ttc = os.environ.get("SHCJ_TTC", ROOT / "upstream" / "SourceHanCodeJP.ttc")
+    shmono_ttc = os.environ.get("SHMONO_TTC", ROOT / "upstream" / "SourceHanMono.ttc")
     # Monaspace bottoms out well above SHCJ EL/L, and it only supplies the 50
     # operator glyphs, so it is the one donor allowed past its axis floor.
     mona_src = VFSource(env["MONA_VF"], MONA_K, {"wght": 0, "wdth": 100, "slnt": 0},
@@ -819,22 +843,24 @@ def main():
     scp_i = VFSource(env["SCP_VF_I"], SCP_K, {"wght": 0})
 
     refs = {f["name"].getDebugName(4): f for f in TTCollection(shcj_ttc).fonts}
+    monos = {f["name"].getDebugName(4): f for f in TTCollection(shmono_ttc).fonts}
     out_dir = ROOT / "dist"
     out_dir.mkdir(exist_ok=True)
 
     for suffix, (cell, comp, term) in VARIANTS.items():
-        for weight, ref_name, shs_file in FACES:
+        for weight, ref_name, shs_file, mono_name in FACES:
             for italic in (False, True):
                 face_label = f"{weight}{' Italic' if italic else ''}"
                 if only and only not in face_label:
                     continue
                 ref = refs[ref_name + (" Italic" if italic else "")]
+                mono = monos[mono_name + (" Italic" if italic else "")]
                 target = bar_thickness(ref, ref.getBestCmap()[ord("=")])
                 if comp:
                     target *= CELL / cell  # pre-inflate; rescale undoes it
                 scp = (scp_i if italic else scp_u).matched(target)
                 base = TTFont(Path(env["SHS_DIR"]) / shs_file)
-                n_scp, n_ref, default_map = graft_halfwidth(base, scp, ref)
+                n_scp, n_mono, default_map = graft_halfwidth(base, scp, mono)
                 variant_maps = import_scp_variants(base, scp, default_map)
                 # Rules and blocks go one-cell only where they have to tile
                 # against a terminal grid; the editor variants keep SHCJ's
@@ -858,7 +884,7 @@ def main():
                 out = out_dir / f"{ps}.otf"
                 base.save(out)
                 print(f"{face_label}{f' [{suffix}]' if suffix else ''}: "
-                      f"scp={n_scp} shcj={n_ref} ligs={len(added)}"
+                      f"scp={n_scp} mono={n_mono} ligs={len(added)}"
                       f"{f' box={n_box}' if n_box else ''} -> {out.name}")
 
 

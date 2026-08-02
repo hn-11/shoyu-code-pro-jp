@@ -36,14 +36,17 @@ Env (all required):
   SCP_VF_U = SourceCodeVF-Upright.otf
   MONA_VF  = Monaspace VF
   SHCJ_TTC = upstream/SourceHanCodeJP.ttc (default)
+  SHMONO_TTC = upstream/SourceHanMono.ttc (default) -- half-width donor
 """
 
 import os
 import sys
+import unicodedata
 from pathlib import Path
 from typing import NamedTuple
 
 from fontTools import subset
+from fontTools.cffLib import specializer
 from fontTools.misc.roundTools import otRound
 from fontTools.otlLib import builder as otl
 from fontTools.pens.boundsPen import BoundsPen
@@ -53,11 +56,13 @@ from fontTools.ttLib import TTCollection, TTFont
 from fontTools.varLib import builder as varbuilder
 from fontTools.varLib.cff import CFF2CharStringMergePen
 from fontTools.varLib.instancer import instantiateVariableFont
-from fontTools.varLib.models import VariationModel, normalizeValue
+from fontTools.misc.psCharStrings import T2CharString
+from fontTools.varLib.models import (VariationModel, normalizeValue,
+                                     supportScalar)
 
-from build import (CELL, LIGATURES, MONA_CELL, MONA_K, SCP_CELL, SCP_K,
-                   VFSource, add_gsub, bar_thickness, copy_line_metrics,
-                   _remap_scp_tag)
+from build import (BLOCK_ELEMENTS, BOX_DRAWING, CELL, KEEP_HEIGHT,
+                   LIGATURES, MONA_CELL, SCP_CELL, VFSource, add_gsub,
+                   bar_thickness, copy_line_metrics, _remap_scp_tag)
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_WGHT = 400      # the axis origin: Regular, not Adobe's ExtraLight
@@ -113,15 +118,15 @@ VARIANTS = {
     "Term": Variant("Term", SCP_CELL, True, True),  # 1:2 terminal grid
 }
 
-# (output weight, SHCJ reference face, name of the SHS VF named instance)
+# (output weight, SHCJ pairing reference, SHS VF named instance, SH Mono face)
 MASTERS = [
-    ("ExtraLight", "Source Han Code JP EL", "ExtraLight"),
-    ("Light", "Source Han Code JP L", "Light"),
-    ("Normal", "Source Han Code JP N", "Normal"),
-    ("Regular", "Source Han Code JP R", "Regular"),
-    ("Medium", "Source Han Code JP M", "Medium"),
-    ("Bold", "Source Han Code JP R Bold", "Bold"),
-    ("Heavy", "Source Han Code JP H", "Heavy"),
+    ("ExtraLight", "Source Han Code JP EL", "ExtraLight", "Source Han Mono EL"),
+    ("Light", "Source Han Code JP L", "Light", "Source Han Mono L"),
+    ("Normal", "Source Han Code JP N", "Normal", "Source Han Mono N"),
+    ("Regular", "Source Han Code JP R", "Regular", "Source Han Mono"),
+    ("Medium", "Source Han Code JP M", "Medium", "Source Han Mono M"),
+    ("Bold", "Source Han Code JP R Bold", "Bold", "Source Han Mono Bold"),
+    ("Heavy", "Source Han Code JP H", "Heavy", "Source Han Mono H"),
 ]
 
 
@@ -199,7 +204,7 @@ def master_locations(font):
     named = {font["name"].getDebugName(i.subfamilyNameID): i.coordinates["wght"]
              for i in font["fvar"].instances}
     locs, user = [], []
-    for _, _, instance_name in MASTERS:
+    for _, _, instance_name, _ in MASTERS:
         w = named[instance_name]
         n = avar_map(font, "wght",
                      normalizeValue(w, (axis.minValue, axis.defaultValue,
@@ -312,19 +317,25 @@ def outline_signature(font, glyph_name):
 # the three grafted layers
 # --------------------------------------------------------------------------
 
-def graft_halfwidth(target, scps, refs, ref0, V):
+def graft_halfwidth(target, scps, donors, donor0, V):
     """Re-point every half-width codepoint at a new variable glyph.
 
     Outline from Source Code Pro when it has the codepoint, otherwise from
-    Source Han Code JP (half-width kana and a few symbols SCP never had).
-    The SHCJ donors come from static faces, which only interpolate where
-    their outlines happen to agree; where they do not, the Regular face
-    stands in for every master.
+    Source Han Mono, which defines the repertoire: 590 one-cell codepoints
+    where Source Han Code JP has 477, and it is the upstream that fitted the
+    half-width kana to the cell instead of leaving them on Source Han Sans's
+    500-unit advance.
+
+    Mono ships as static faces, and Adobe removes overlaps per weight, so
+    they only interpolate where their outlines happen to agree. Where they
+    do not, the default master stands in for all of them and the glyph comes
+    out fixed at Regular -- reported, because a glyph that does not follow
+    the axis is a real if minor flaw in a variable font.
     """
-    ref_cm, ref_hm = ref0.getBestCmap(), ref0["hmtx"]
+    ref_cm, ref_hm = donor0.getBestCmap(), donor0["hmtx"]
     scp_cm = scps[0].getBestCmap()
     new_map, default_map = {}, {}
-    from_scp = from_shcj = frozen = 0
+    from_scp = from_mono = frozen = 0
 
     for cp, g in sorted(ref_cm.items()):
         if ref_hm[g][0] != CELL:
@@ -334,15 +345,15 @@ def graft_halfwidth(target, scps, refs, ref0, V):
             draws = [draw_from(s, name, V.scp_draw) for s in scps]
             from_scp += 1
         else:
-            sigs = {outline_signature(r, ref_cm[cp]) for r in refs
-                    if cp in r.getBestCmap()}
-            if len(sigs) == 1 and all(cp in r.getBestCmap() for r in refs):
-                draws = [draw_from(r, r.getBestCmap()[cp], V.shcj_draw)
-                         for r in refs]
+            sigs = {outline_signature(d, d.getBestCmap()[cp]) for d in donors
+                    if cp in d.getBestCmap()}
+            if len(sigs) == 1 and all(cp in d.getBestCmap() for d in donors):
+                draws = [draw_from(d, d.getBestCmap()[cp], V.shcj_draw)
+                         for d in donors]
             else:                       # incompatible across weights
-                draws = [draw_from(ref0, g, V.shcj_draw)] * len(refs)
+                draws = [draw_from(donor0, g, V.shcj_draw)] * len(donors)
                 frozen += 1
-            from_shcj += 1
+            from_mono += 1
 
         def draw_master(i, pen, draws=draws):
             draws[i](i, pen)
@@ -360,7 +371,8 @@ def graft_halfwidth(target, scps, refs, ref0, V):
         for cp, name in new_map.items():
             if cp in table.cmap:
                 table.cmap[cp] = name
-    print(f"halfwidth: {from_scp} from Source Code Pro, {from_shcj} from SHCJ"
+    print(f"halfwidth: {from_scp} from Source Code Pro, "
+          f"{from_mono} from Source Han Mono"
           + (f" ({frozen} could not interpolate, frozen at Regular)"
              if frozen else ""))
     return default_map
@@ -450,6 +462,216 @@ def add_ligatures(target, monas, scps, V):
 
 
 # --------------------------------------------------------------------------
+# terminal grid
+# --------------------------------------------------------------------------
+
+class MasterOutlines:
+    """The base font's own glyphs, one master at a time.
+
+    A variable glyph holds every weight at once, so a scaled copy of one
+    cannot be made by transforming its charstring -- the deltas would have to
+    be transformed too, and the transform here is anisotropic. Folding the
+    blends by hand at each master location hands the masters back separately,
+    and they can then be merged into a new variable glyph exactly the way the
+    grafted layers are.
+
+    Rendering the base at each weight and reading the outlines back does not
+    work: at the ends of the axis the interpolated points coincide and a
+    rasterizer drops the degenerate segments, so 262 of the 797 glyphs this
+    is used for come back with different point counts per weight and nothing
+    interpolates.
+    """
+
+    def __init__(self, font, locations):
+        self.font = font
+        self.td = font["CFF2"].cff[font["CFF2"].cff.fontNames[0]]
+        store = self.td.VarStore.otVarStore
+        regions = store.VarRegionList.Region
+        tags = [a.axisTag for a in font["fvar"].axes]
+        self.counts = [len(vd.VarRegionIndex) for vd in store.VarData]
+        # per VarData, the scalar of each of its regions at each location
+        self.scalars = [
+            [[supportScalar(loc, {tags[i]: (a.StartCoord, a.PeakCoord, a.EndCoord)
+                                  for i, a in enumerate(regions[ri].VarRegionAxis)})
+              for ri in vd.VarRegionIndex]
+             for loc in locations]
+            for vd in store.VarData]
+
+    def _folded(self, name, master):
+        cs = self.td.CharStrings[name]
+        cs.decompile()
+        vsindex = cs.program[1] if len(cs.program) > 1 and cs.program[1] == "vsindex" else 0
+        if vsindex:
+            vsindex = cs.program[0]
+        k = self.counts[vsindex]
+        scalars = self.scalars[vsindex][master]
+        out = []
+        for op, args in specializer.programToCommands(
+                cs.program, getNumRegions=lambda vsi: self.counts[vsi or 0]):
+            if op == "vsindex":
+                continue
+            flat = []
+            for a in args:
+                if isinstance(a, list):
+                    n = a[-1]
+                    for j in range(n):
+                        flat.append(a[j] + sum(a[n + j * k + r] * scalars[r]
+                                               for r in range(k)))
+                else:
+                    flat.append(a)
+            out.append((op, flat))
+        return out
+
+    def draw(self, name, master, pen, transform=None):
+        target = TransformPen(pen, transform) if transform else pen
+        T2CharString(
+            program=specializer.commandsToProgram(self._folded(name, master)),
+            private=self.td.FDArray[0].Private).draw(target)
+
+    def bounds(self, name, master):
+        pen = BoundsPen(None)
+        self.draw(name, master, pen)
+        return pen.bounds
+
+
+def _region_counts(td):
+    store = td.VarStore.otVarStore
+    return [len(vd.VarRegionIndex) for vd in store.VarData]
+
+
+def translate_x(cs, dx, counts):
+    """Shift a charstring sideways, blends and all.
+
+    A charstring is relative after its first moveto, so one operand carries
+    the whole glyph's position -- and under a blend that operand is the
+    default value of the group, with the deltas untouched because every
+    master moves by the same amount.
+    """
+    cs.decompile()
+    commands = specializer.generalizeCommands(
+        specializer.programToCommands(
+            cs.program, getNumRegions=lambda vsi: counts[vsi or 0]))
+    for i, (op, args) in enumerate(commands):
+        if op != "rmoveto":
+            continue
+        if args and isinstance(args[0], list):
+            args[0][0] += dx        # blend group: first default is x
+        else:
+            args[0] += dx
+        commands[i] = (op, args)
+        break
+    else:
+        return False
+    cs.program = specializer.commandsToProgram(
+        specializer.specializeCommands(commands, generalizeFirst=False))
+    return True
+
+
+def widen_fullwidth(target, V):
+    """Give every full-width glyph two cells, with the ink centred.
+
+    The terminal grid is exact only if CJK is exactly twice the Latin. Source
+    Han Sans draws it on a 1000 em, so the advance grows to 2*cell and the
+    outline slides half the difference; padding it on one side instead is
+    what leaves the gap this variant exists to remove.
+    """
+    font, td = target.font, target.td
+    counts = _region_counts(td)
+    shift = (V.full - 1000) // 2
+    hmtx = font["hmtx"]
+    done = 0
+    for name in font.getGlyphOrder():
+        adv, lsb = hmtx.metrics[name]
+        if adv != 1000:
+            continue
+        if translate_x(td.CharStrings[name], shift, counts):
+            done += 1
+        hmtx.metrics[name] = (V.full, lsb + shift)
+    return done
+
+
+def narrow_ambiguous(target, base_masters, V):
+    """One-cell copies of everything the terminal gives one cell.
+
+    Same selection as the static build -- East-Asian-Width is the question
+    the terminal is itself answering -- and the same treatment: keep the
+    height, give up only the width the cell actually needs. Box drawing and
+    block elements are excluded because they are replaced rather than
+    shrunk.
+    """
+    font = target.font
+    cmap = font.getBestCmap()
+    hmtx = font["hmtx"]
+    new_map, made = {}, {}
+    for cp, g in sorted(cmap.items()):
+        if hmtx.metrics[g][0] != 1000:
+            continue
+        if unicodedata.east_asian_width(chr(cp)) in ("W", "F"):
+            continue
+        if cp in BOX_DRAWING or cp in BLOCK_ELEMENTS:
+            continue
+        if g not in made:
+            b = base_masters.bounds(g, 0)
+            if b:
+                ink, cx, cy = b[2] - b[0], (b[0] + b[2]) / 2, (b[1] + b[3]) / 2
+            else:
+                ink, cx, cy = 0, V.cell / 2, 0
+            ky = KEEP_HEIGHT
+            kx = min(ky, V.cell / ink) if ink > 0 else ky
+            tr = (kx, 0, 0, ky, otRound(V.cell / 2 - cx * kx),
+                  otRound(cy * (1 - ky)))
+
+            def draw_master(i, pen, g=g, tr=tr):
+                base_masters.draw(g, i, pen, tr)
+
+            made[g] = target.add(draw_master, V.cell)
+        new_map[cp] = made[g]
+    for table in font["cmap"].tables:
+        if table.isUnicode():
+            for cp, name in new_map.items():
+                if cp in table.cmap:
+                    table.cmap[cp] = name
+    return len(new_map)
+
+
+def graft_box_drawing(target, scps, V, line_top, line_bottom):
+    """Rules and blocks from Source Code Pro, fitted to the line box.
+
+    Scaling Source Han Sans's full-width rules down would scale their stroke
+    with them, so they would stop matching the text colour and stop meeting
+    their neighbours. Source Code Pro draws all 128 box-drawing and 32
+    block-element glyphs at its own 600 advance, ink overhanging the cell by
+    39 units each side so adjacent cells overlap and rules join cleanly.
+
+    Its own -400..1000 em box is not our line box, though: left alone,
+    vertical rules stop short of the row below and full blocks leave a
+    stripe of background. One affine over the whole range fixes that and
+    keeps every join and half-block boundary in place.
+    """
+    src_bottom, src_top = -400 * V.scp_draw, 1000 * V.scp_draw
+    ky = (line_top - line_bottom) / (src_top - src_bottom)
+    dy = line_bottom - src_bottom * ky
+    tr = (V.scp_draw, 0, 0, V.scp_draw * ky, 0, dy)
+
+    scp_cm = scps[0].getBestCmap()
+    cmap = target.font.getBestCmap()
+    new_map = {}
+    for cp in list(BOX_DRAWING) + list(BLOCK_ELEMENTS):
+        if cp not in scp_cm or cp not in cmap:
+            continue
+        def draw_master(i, pen, cp=cp, tr=tr):
+            scps[i].getGlyphSet()[scp_cm[cp]].draw(TransformPen(pen, tr))
+
+        new_map[cp] = target.add(draw_master, V.cell)
+    for table in target.font["cmap"].tables:
+        if table.isUnicode():
+            for cp, name in new_map.items():
+                if cp in table.cmap:
+                    table.cmap[cp] = name
+    return len(new_map)
+
+
+# --------------------------------------------------------------------------
 # metadata
 # --------------------------------------------------------------------------
 
@@ -518,7 +740,7 @@ def check_masters(path, shcj, V):
     named = {built["name"].getDebugName(i.subfamilyNameID): i.coordinates["wght"]
              for i in built["fvar"].instances}
     worst, failed = 0.0, []
-    for weight, ref_name, _ in MASTERS:
+    for weight, ref_name, _, _ in MASTERS:
         font = hb.Font(face)
         font.set_variations({"wght": named[weight]})
         points = []
@@ -536,7 +758,7 @@ def check_masters(path, shcj, V):
           f"at all {len(MASTERS)} named weights")
 
 
-def build_variant(V, env, shcj, base_path, out_dir):
+def build_variant(V, env, shcj, shmono, base_path, out_dir):
     font = TTFont(base_path)
     locs, user_wghts = master_locations(font)
     model = VariationModel(locs, axisOrder=["wght"])
@@ -546,31 +768,45 @@ def build_variant(V, env, shcj, base_path, out_dir):
     scp_src = VFSource(env["SCP_VF_U"], V.scp_draw / V.bar_scale, {"wght": 0})
     mona_src = VFSource(env["MONA_VF"], V.mona_draw / V.bar_scale,
                         {"wght": 0, "wdth": 100, "slnt": 0}, extrapolate=True)
-    refs, scps, monas, labels = [], [], [], []
-    for weight, ref_name, _ in MASTERS:
+    refs, scps, monas, donors = [], [], [], []
+    for weight, ref_name, _, mono_name in MASTERS:
         ref = shcj[ref_name]
         target_bar = bar_thickness(ref, ref.getBestCmap()[ord("=")])
         refs.append(ref)
+        donors.append(shmono[mono_name])
         scps.append(scp_src.matched(target_bar))
         monas.append(mona_src.matched(target_bar))
-        labels.append(weight)
 
     # The merge pen reads its masters positionally, with the default first --
     # varLib reorders them into the model's own order before handing them
     # over, and getDeltas is an identity permutation afterwards. Skipping this
     # silently stores the wrong master as the charstring's default value.
-    regular_ref = refs[[w for w, _, _ in MASTERS].index("Regular")]
+    regular_ref = refs[[w for w, _, _, _ in MASTERS].index("Regular")]
     order = list(model.reverseMapping)
     scps = model.reorderMasters(scps, order)
     monas = [monas[i] for i in order]
     refs = [refs[i] for i in order]
 
+    # before anything is drawn: the box-drawing fit needs the final line box
+    copy_line_metrics(font, regular_ref)
+
     target = Cff2Target(font, model)
-    default_map = graft_halfwidth(target, scps, refs, regular_ref, V)
+    default_map = graft_halfwidth(target, scps, donors, donors[0], V)
     variant_maps = import_scp_variants(target, scps, default_map, V)
+    if V.term:
+        n_box = graft_box_drawing(target, scps, V,
+                                  font["hhea"].ascent, font["hhea"].descent)
+        print(f"box drawing: {n_box} rules and blocks from Source Code Pro")
     added, alts = add_ligatures(target, monas, scps, V)
     add_gsub(font, added, alts, variant_maps)
-    copy_line_metrics(font, regular_ref)
+    if V.term:
+        # ambiguous first: it probes for the 1000-unit advance that widening
+        # is about to replace
+        masters = MasterOutlines(font, [locs[i] for i in order])
+        n_amb = narrow_ambiguous(target, masters, V)
+        n_wide = widen_fullwidth(target, V)
+        print(f"terminal grid: {n_amb} narrowed to one cell, "
+              f"{n_wide} widened to {V.full}")
     strip_advance_variation(font)
     ps = set_names(font, user_wghts, V)
 
@@ -593,6 +829,7 @@ def main():
     if missing:
         sys.exit(f"missing env: {missing}")
     shcj_ttc = os.environ.get("SHCJ_TTC", ROOT / "upstream" / "SourceHanCodeJP.ttc")
+    shmono_ttc = os.environ.get("SHMONO_TTC", ROOT / "upstream" / "SourceHanMono.ttc")
 
     out_dir = ROOT / "dist"
     out_dir.mkdir(exist_ok=True)
@@ -601,11 +838,12 @@ def main():
                  Path(env["SHS_DIR"]) / "SourceHanSansJP-Regular.otf",
                  base_path, DEFAULT_WGHT)
     shcj = {f["name"].getDebugName(4): f for f in TTCollection(shcj_ttc).fonts}
+    shmono = {f["name"].getDebugName(4): f for f in TTCollection(shmono_ttc).fonts}
 
     for suffix in want:
         V = VARIANTS[suffix]
         print(f"\n=== Shoyu Code Pro JP {V.suffix} ({suffix}) ===")
-        build_variant(V, env, shcj, base_path, out_dir)
+        build_variant(V, env, shcj, shmono, base_path, out_dir)
 
 
 if __name__ == "__main__":
