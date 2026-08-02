@@ -103,35 +103,74 @@ class VFSource:
     Used for both Monaspace (wght/wdth/slnt) and Source Code Pro (wght only)
     — the axes dict template decides which. Matching is a binary search on
     wght so the operator/Latin stroke weight equals the reference face's.
+
+    The search is deliberately donor-independent: it bisects to a fixed wght
+    RESOLUTION over the donor's own axis range, and returns the nearest
+    achievable bar rather than the last probe. A shared iteration budget over
+    differently-sized ranges would resolve Monaspace and Source Code Pro to
+    different precisions, so the operators' stroke weight would depend on
+    which font a glyph came from rather than on the target.
     """
+
+    WGHT_EPS = 0.5    # wght units; ~0.07 outline units of bar, well under
+                      # the ~1 unit quantization of the donors' own outlines
+    SATURATION_WARN = 0.05   # relative bar error worth shouting about; the
+                             # donors' integer outlines already cost ~1.5%
 
     def __init__(self, vf_path, scale, axes):
         self.vf_path = vf_path
         self.scale = scale        # em scale applied when the glyphs are used
         self.axes = axes          # template; wght filled by the search
         self._cache = {}
+        # Search the donor's OWN wght range. Monaspace stops at 800, Source
+        # Code Pro goes to 900; a shared 200..800 bound silently clipped the
+        # Heavy face, which needs SCP wght 857 to reach SHCJ H's 129-unit bar
+        # and instead saturated at 124.5 (-3.5%).
+        wght = {a.axisTag: a for a in TTFont(vf_path)["fvar"].axes}["wght"]
+        self.wght_range = (wght.minValue, wght.maxValue)
 
     def matched(self, target_units, slant=None):
         key = (round(target_units), slant if slant is None else round(slant))
         if key in self._cache:
             return self._cache[key]
         pre_scale_target = target_units / self.scale
-        lo, hi = 200.0, 800.0
-        inst = None
-        for _ in range(9):
-            mid = (lo + hi) / 2
+        lo, hi = self.wght_range
+        best = None    # (bar error, instance, bar) over every wght probed
+
+        def probe(wght):
+            nonlocal best
             inst = TTFont(self.vf_path)
-            axes = dict(self.axes, wght=mid)
+            axes = dict(self.axes, wght=wght)
             if slant is not None and "slnt" in axes:
                 axes["slnt"] = max(-11.0, min(0.0, slant))
             instantiateVariableFont(inst, axes, inplace=True)
             t = bar_thickness(inst, inst.getBestCmap()[ord("=")])
-            if t < pre_scale_target:
+            err = abs(t - pre_scale_target)
+            if best is None or err < best[0]:
+                best = (err, inst, t)
+            return t
+
+        # Outlines are integer-quantized, so several wght values share a bar
+        # thickness and the exact crossing is not reachable. Bisect to bracket
+        # it, then keep the nearest probe: taking the last one instead biases
+        # every face to the same side of the target.
+        while hi - lo > self.WGHT_EPS:
+            mid = (lo + hi) / 2
+            if probe(mid) < pre_scale_target:
                 lo = mid
             else:
                 hi = mid
-        self._cache[key] = inst
-        return inst
+        # A donor whose wght axis cannot reach the target saturates silently:
+        # the bisection just walks to an endpoint and hands it back. Say so
+        # out loud — an unnoticed clip is how the Heavy face shipped 3.5%
+        # light for as long as the search stopped at wght 800.
+        if best[0] / pre_scale_target > self.SATURATION_WARN:
+            print(f"  WARNING: {Path(self.vf_path).name} cannot reach a "
+                  f"{target_units:.0f}-unit bar (nearest {best[2] * self.scale:.0f}, "
+                  f"{100 * (best[2] - pre_scale_target) / pre_scale_target:+.0f}%) "
+                  f"— its axis stops at {self.wght_range}")
+        self._cache[key] = best[1]
+        return best[1]
 
 
 def glyph_vcenter(font, gname, scale=1.0):

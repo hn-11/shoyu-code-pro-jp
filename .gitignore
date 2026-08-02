@@ -1,3 +1,4 @@
 dist/
 upstream/*.ttc
+upstreams/
 __pycache__/
