@@ -44,6 +44,8 @@ import sys
 from pathlib import Path
 from typing import NamedTuple
 
+import pathops
+
 from fontTools import subset
 from fontTools.cffLib import specializer
 from fontTools.misc.roundTools import otRound
@@ -358,9 +360,57 @@ def outline_signature(font, glyph_name):
 # --------------------------------------------------------------------------
 
 PROBE_KANA = 0xFF71     # check_masters() watches this one; see build_variant
+# How much of Source Han Mono's drawing an affine is allowed to miss before
+# its exact outline is worth more than a full axis. The corrections it made
+# per glyph are a few units of edge position -- a few percent of the ink --
+# where a redraw is a different shape entirely.
+FIT_MAX_RESIDUAL = 0.25
 
 
-def graft_halfwidth(target, scps, donors, donor0, V, model, locations):
+def mono_fit(base_masters, base_glyph, mono, cp, cell_scale):
+    """Carry Source Han Mono's fit onto the base font's own outline.
+
+    Mono's half-width kana are Source Han Sans's, stretched horizontally into
+    the cell with corrections made per glyph. The stretch transfers as an
+    affine; the corrections do not. Returns the transform and how much of
+    Mono's drawing it fails to reproduce, so the caller can decide whether
+    the trade is worth it.
+
+    This exists because Mono ships static faces only. Where they interpolate,
+    its outlines are used as they are. Where they do not, a glyph built from
+    them stops following the axis partway -- and a kana left at Regular
+    weight inside Heavy text is a far louder mistake than a few units of edge.
+    """
+    a = base_masters.bounds(base_glyph, 0)
+    glyph_set = mono.getGlyphSet()
+    pen = BoundsPen(glyph_set)
+    glyph_set[mono.getBestCmap()[cp]].draw(pen)
+    b = pen.bounds
+    if not a or not b or a[2] <= a[0] or a[3] <= a[1]:
+        return None, 1.0
+    sx = (b[2] - b[0]) / (a[2] - a[0])
+    sy = (b[3] - b[1]) / (a[3] - a[1])
+    fit = (sx, 0, 0, sy, b[0] - a[0] * sx, b[1] - a[1] * sy)
+
+    ours, theirs = pathops.Path(), pathops.Path()
+    base_masters.draw(base_glyph, 0, ours.getPen(), fit)
+    glyph_set[mono.getBestCmap()[cp]].draw(theirs.getPen())
+    try:
+        # Normalise BOTH to the same orientation. Simplifying each to its own
+        # leaves glyphs whose contours happen to wind opposite ways looking
+        # disjoint, and the difference then measures as their sum.
+        ours = pathops.simplify(ours, clockwise=True)
+        theirs = pathops.simplify(theirs, clockwise=True)
+        left_over = pathops.op(ours, theirs, pathops.PathOp.XOR)
+        residual = abs(left_over.area) / max(abs(theirs.area), 1.0)
+    except (pathops.PathOpsError, AttributeError):
+        residual = 1.0
+    k = cell_scale
+    return (fit[0] * k, 0, 0, fit[3] * k, fit[4] * k, fit[5] * k), residual
+
+
+def graft_halfwidth(target, scps, donors, donor0, V, model, locations,
+                    base_masters):
     """Re-point every half-width codepoint at a new variable glyph.
 
     Outline from Source Code Pro when it has the codepoint, otherwise from
@@ -377,8 +427,9 @@ def graft_halfwidth(target, scps, donors, donor0, V, model, locations):
     """
     ref_cm, ref_hm = donor0.getBestCmap(), donor0["hmtx"]
     scp_cm = scps[0].getBestCmap()
+    base_cm = dict(target.font.getBestCmap())   # before we re-point anything
     new_map, default_map = {}, {}
-    from_scp = from_mono = partial = 0
+    from_scp = from_mono = partial = refit = 0
     masters, sub_cache = {}, {}
     probe = [True] * len(donors)
 
@@ -399,6 +450,26 @@ def graft_halfwidth(target, scps, donors, donor0, V, model, locations):
                             and outline_signature(d, d.getBestCmap()[cp]) == sig0)
                       else None for d in donors]
             mask = [u is not None for u in usable]
+            from_mono += 1
+
+            if not all(mask) and cp in base_cm:
+                # Mono cannot interpolate here. The base font can -- it is one
+                # variable font -- so take the shape from it and carry Mono's
+                # fit across, if the affine reproduces Mono closely enough.
+                tr, residual = mono_fit(base_masters, base_cm[cp], donor0, cp,
+                                        V.shcj_draw)
+                if tr is not None and residual <= FIT_MAX_RESIDUAL:
+                    gb = base_cm[cp]
+
+                    def draw_master(i, pen, gb=gb, tr=tr):
+                        base_masters.draw(gb, i, pen, tr)
+
+                    new_map[cp] = target.add(draw_master, V.cell)
+                    refit += 1
+                    if cp == PROBE_KANA:
+                        probe[:] = [True] * len(donors)
+                    continue
+
             if cp == PROBE_KANA:
                 probe[:] = mask
             sub_model, sub_order = sub_model_for(locations, mask, sub_cache)
@@ -409,7 +480,6 @@ def graft_halfwidth(target, scps, donors, donor0, V, model, locations):
                 masters[len(sub_donors)] = masters.get(len(sub_donors), 0) + 1
             draws = [draw_from(d, d.getBestCmap()[cp], V.shcj_draw)
                      for d in sub_donors]
-            from_mono += 1
 
             def draw_master(i, pen, draws=draws):
                 draws[i](i, pen)
@@ -436,9 +506,11 @@ def graft_halfwidth(target, scps, donors, donor0, V, model, locations):
                 table.cmap[cp] = name
     print(f"halfwidth: {from_scp} from Source Code Pro, "
           f"{from_mono} from Source Han Mono"
-          + (f" ({partial} over a subset of masters: "
-             + ", ".join(f"{n}x{k} masters" for k, n in sorted(masters.items()))
-             + ")" if partial else ""))
+          + (f" ({refit} refitted onto the base font for a full axis" if refit else "")
+          + (f", {partial} over a subset of masters: "
+             + ", ".join(f"{n}x{k}" for k, n in sorted(masters.items()))
+             if partial else "")
+          + (")" if refit else ""))
     return default_map, probe
 
 
@@ -873,9 +945,10 @@ def build_variant(V, italic, env, shcj, shmono, base_path, out_dir):
     # before anything is drawn: the box-drawing fit needs the final line box
     copy_line_metrics(font, regular_ref)
 
+    base_masters = MasterOutlines(font, locations)
     target = Cff2Target(font, model)
     default_map, kana_masters = graft_halfwidth(
-        target, scps, donors, donors[0], V, model, locations)
+        target, scps, donors, donors[0], V, model, locations, base_masters)
     # A donor glyph that does not interpolate everywhere rides a sub-model and
     # simply stops following the axis past its last master. Check it only
     # where it has one.
@@ -891,8 +964,7 @@ def build_variant(V, italic, env, shcj, shmono, base_path, out_dir):
     if V.term:
         # ambiguous first: it probes for the 1000-unit advance that widening
         # is about to replace
-        masters = MasterOutlines(font, [locs[i] for i in order])
-        n_amb = narrow_ambiguous(target, masters, V)
+        n_amb = narrow_ambiguous(target, base_masters, V)
         n_wide = widen_fullwidth(target, V)
         print(f"terminal grid: {n_amb} narrowed to one cell, "
               f"{n_wide} widened to {V.full}")
