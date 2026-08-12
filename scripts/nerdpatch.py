@@ -102,8 +102,8 @@ def main():
                 print(r.stdout)
                 print(r.stderr)
                 raise SystemExit(f"font-patcher failed on {src.name}")
-            produced = [l.split("'")[1] for l in r.stdout.splitlines()
-                        if "===>" in l and "'" in l]
+            produced = [ln.split("'")[1] for ln in r.stdout.splitlines()
+                        if "===>" in ln and "'" in ln]
             if not produced:
                 print(r.stdout)
                 raise SystemExit(
