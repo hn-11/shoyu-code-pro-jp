@@ -1,0 +1,72 @@
+# Single source of truth for the pinned upstream font releases used by both
+# ci.yml and release.yml. To bump a pin: edit the `env:` defaults below,
+# nowhere else (see check-upstream.yml for the automated staleness check).
+name: Fetch upstreams
+description: >
+  Download and cache the pinned Source Han Sans / Source Code Pro /
+  Monaspace / Source Han Code JP releases, then export their extracted
+  paths as step outputs.
+inputs:
+  cache:
+    description: Whether to cache the downloaded/extracted upstreams dir.
+    required: false
+    default: "true"
+outputs:
+  shcj_ttc:
+    description: Path to the extracted SourceHanCodeJP.ttc
+    value: ${{ steps.paths.outputs.shcj_ttc }}
+  shs_dir:
+    description: Directory containing the extracted Source Han Sans JP OTFs
+    value: ${{ steps.paths.outputs.shs_dir }}
+  scp_vf_u:
+    description: Path to the extracted SourceCodeVF-Upright.otf
+    value: ${{ steps.paths.outputs.scp_vf_u }}
+  scp_vf_i:
+    description: Path to the extracted SourceCodeVF-Italic.otf
+    value: ${{ steps.paths.outputs.scp_vf_i }}
+  mona_vf:
+    description: Path to the extracted Monaspace Neon Var.ttf
+    value: ${{ steps.paths.outputs.mona_vf }}
+runs:
+  using: composite
+  steps:
+    # --- pins live here, and only here ---
+    - shell: bash
+      run: |
+        echo "SHS_TAG=2.005R" >> "$GITHUB_ENV"
+        echo "SCP_TAG=2.042R-u%2F1.062R-i%2F1.026R-vf" >> "$GITHUB_ENV"
+        echo "SCP_VF_ZIP=VF-source-code-VF-1.026R.zip" >> "$GITHUB_ENV"
+        echo "MONA_TAG=v1.400" >> "$GITHUB_ENV"
+        echo "SHCJ_TAG=2.012R" >> "$GITHUB_ENV"
+    - name: Fetch upstreams (cached)
+      if: inputs.cache == 'true'
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      id: up
+      with:
+        path: upstreams
+        key: upstreams-shs2.005-scp1.026-mona1.400-shcj2.012
+    - if: inputs.cache != 'true' || steps.up.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        mkdir -p upstreams
+        fetch() { echo "fetching $2"; curl -sSfL -o "$1" "$2" || { echo "FAILED: $2"; exit 22; }; }
+        fetch upstreams/shcj.ttc \
+          "https://github.com/adobe-fonts/source-han-code-jp/releases/download/${SHCJ_TAG}/SourceHanCodeJP.ttc"
+        fetch /tmp/shs.zip \
+          "https://github.com/adobe-fonts/source-han-sans/releases/download/${SHS_TAG}/17_SourceHanSansJP.zip"
+        unzip -qo /tmp/shs.zip -d upstreams/shs
+        fetch /tmp/scp.zip \
+          "https://github.com/adobe-fonts/source-code-pro/releases/download/${SCP_TAG}/${SCP_VF_ZIP}"
+        unzip -qo /tmp/scp.zip -d upstreams/scp
+        fetch /tmp/mona.zip \
+          "https://github.com/githubnext/monaspace/releases/download/${MONA_TAG}/monaspace-variable-${MONA_TAG}.zip"
+        unzip -qo /tmp/mona.zip -d upstreams/mona
+    - name: Export upstream paths
+      id: paths
+      shell: bash
+      run: |
+        echo "shcj_ttc=upstreams/shcj.ttc" >> "$GITHUB_OUTPUT"
+        echo "shs_dir=$(dirname "$(find upstreams/shs -name 'SourceHanSansJP-Regular.otf' | head -1)")" >> "$GITHUB_OUTPUT"
+        echo "scp_vf_u=$(find upstreams/scp -name 'SourceCodeVF-Upright.otf' | head -1)" >> "$GITHUB_OUTPUT"
+        echo "scp_vf_i=$(find upstreams/scp -name 'SourceCodeVF-Italic.otf' | head -1)" >> "$GITHUB_OUTPUT"
+        echo "mona_vf=$(find upstreams/mona -name 'Monaspace Neon Var.ttf' | head -1)" >> "$GITHUB_OUTPUT"

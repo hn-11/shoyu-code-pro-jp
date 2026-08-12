@@ -5,53 +5,42 @@ on:
   push:
     branches: [main]
   pull_request:
-env:
-  SHS_TAG: 2.005R
-  SCP_TAG: 2.042R-u%2F1.062R-i%2F1.026R-vf
-  SCP_VF_ZIP: VF-source-code-VF-1.026R.zip
-  MONA_TAG: v1.400
 jobs:
+  lint-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt ruff pytest fonttools
+      - run: ruff check scripts/
+      - run: python -m pytest tests/ -q
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
           cache: pip
       - run: pip install -r requirements.txt
-      - name: Fetch upstreams (cached)
-        uses: actions/cache@v4
-        id: up
-        with:
-          path: upstreams
-          key: upstreams-shs2.005-scp1.026-mona1.400-shcj2.012
-      - if: steps.up.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p upstreams
-          fetch() { echo "fetching $2"; curl -sSfL -o "$1" "$2" || { echo "FAILED: $2"; exit 22; }; }
-          fetch upstreams/shcj.ttc \
-            https://github.com/adobe-fonts/source-han-code-jp/releases/download/2.012R/SourceHanCodeJP.ttc
-          fetch /tmp/shs.zip \
-            "https://github.com/adobe-fonts/source-han-sans/releases/download/${SHS_TAG}/17_SourceHanSansJP.zip"
-          unzip -qo /tmp/shs.zip -d upstreams/shs
-          fetch /tmp/scp.zip \
-            "https://github.com/adobe-fonts/source-code-pro/releases/download/${SCP_TAG}/${SCP_VF_ZIP}"
-          unzip -qo /tmp/scp.zip -d upstreams/scp
-          fetch /tmp/mona.zip \
-            "https://github.com/githubnext/monaspace/releases/download/${MONA_TAG}/monaspace-variable-${MONA_TAG}.zip"
-          unzip -qo /tmp/mona.zip -d upstreams/mona
+      - name: Fetch upstreams
+        id: upstreams
+        uses: ./.github/actions/fetch-upstreams
       - name: Export upstream paths
         run: |
-          echo "SHCJ_TTC=upstreams/shcj.ttc" >> "$GITHUB_ENV"
-          echo "SHS_DIR=$(dirname "$(find upstreams/shs -name 'SourceHanSansJP-Regular.otf' | head -1)")" >> "$GITHUB_ENV"
-          echo "SCP_VF_U=$(find upstreams/scp -name 'SourceCodeVF-Upright.otf' | head -1)" >> "$GITHUB_ENV"
-          echo "SCP_VF_I=$(find upstreams/scp -name 'SourceCodeVF-Italic.otf' | head -1)" >> "$GITHUB_ENV"
-          echo "MONA_VF=$(find upstreams/mona -name 'Monaspace Neon Var.ttf' | head -1)" >> "$GITHUB_ENV"
+          echo "SHCJ_TTC=${{ steps.upstreams.outputs.shcj_ttc }}" >> "$GITHUB_ENV"
+          echo "SHS_DIR=${{ steps.upstreams.outputs.shs_dir }}" >> "$GITHUB_ENV"
+          echo "SCP_VF_U=${{ steps.upstreams.outputs.scp_vf_u }}" >> "$GITHUB_ENV"
+          echo "SCP_VF_I=${{ steps.upstreams.outputs.scp_vf_i }}" >> "$GITHUB_ENV"
+          echo "MONA_VF=${{ steps.upstreams.outputs.mona_vf }}" >> "$GITHUB_ENV"
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq fontforge python3-fontforge
       - name: Fetch FontPatcher (cached)
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         id: fp
         with:
           path: FontPatcher
@@ -64,5 +53,11 @@ jobs:
       - run: python scripts/build.py "Regular"
       - run: python scripts/verify.py dist/ShoyuCodeProJP-Regular.otf
       - run: python scripts/verify.py dist/ShoyuCodeProJP35-Regular.otf
+      - run: python scripts/verify.py dist/ShoyuCodeProJP-RegularItalic.otf
       - name: Nerd-patch smoke test (one font)
         run: python scripts/nerdpatch.py FontPatcher ShoyuCodeProJP35-Regular
+      - name: Verify NF-patched font
+        run: |
+          nf_font=$(find dist/nerd -name '*.otf' | head -1)
+          echo "verifying: $nf_font"
+          python scripts/verify.py "$nf_font"
