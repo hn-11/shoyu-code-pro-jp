@@ -166,6 +166,47 @@ def main():
         failed |= not ok
         assert ok, f"{FONT}: 4-cell ligature {seq!r} did not shape as expected"
 
+    # every declared ligature must actually fire, at its declared cell width.
+    # Sequences are embedded as "a <seq> b" (the same robust padding used by
+    # CASES above) so calt's contextual rules see real neighbors/boundaries.
+    # "a" and " " never participate in these ligature rules, so the shaped
+    # output is: [a][space][<ligature glyph(s)>][space][b]. Most entries
+    # collapse the whole sequence into a single ligature glyph (5 glyphs
+    # total, ligature at index 2), but a few (":=", "::") are declared as
+    # multi-glyph substitutions ("glyphs" lists more than one component) and
+    # may shape to more than one output glyph in that middle span. Rather
+    # than hard-coding "exactly 5", sum the advances of whatever sits
+    # between the fixed 2-glyph prefix ("a ") and 2-glyph suffix (" b") and
+    # compare that to cells * half_width_cell -- this covers both the
+    # single-glyph and multi-glyph-component cases without special-casing.
+    lig_checked = 0
+    lig_failed = 0
+    lig_fail_lines = []
+    for seq, spec in LIGATURES.items():
+        lig_checked += 1
+        text = f"a {seq} b"
+        infos, positions = shape_infos(text, {"calt": True, "liga": True})
+        want_adv = spec["cells"] * a_adv
+        n = len(infos)
+        mid = positions[2:-2] if n > 4 else []
+        got_adv = sum(p.x_advance for p in mid) if mid else None
+        ok = n > 4 and got_adv == want_adv
+        if not ok:
+            lig_failed += 1
+            lig_fail_lines.append(
+                f"FAIL ligature {seq!r} ({spec['cells']} cells): "
+                f"{n} glyphs total, mid_advance={got_adv} (want {want_adv})")
+    if lig_checked != len(LIGATURES):
+        print(f"FAIL ligature sweep only checked {lig_checked}/{len(LIGATURES)} "
+              f"entries in mona_ligs.json")
+        failed = True
+    if lig_failed:
+        for line in lig_fail_lines:
+            print(line)
+        failed = True
+    else:
+        print(f"ok   all {lig_checked} ligatures shape at declared widths")
+
     # imported outlines must be overlap-free (VF instancing leaves seams)
     import pathops
     gs = tf.getGlyphSet()

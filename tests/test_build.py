@@ -126,6 +126,39 @@ def test_ligature_schema():
         assert len(spec["glyphs"]) <= spec["cells"], seq
 
 
+def test_every_group_has_a_ui_name():
+    groups = {spec["group"] for spec in build.load_ligatures().values()}
+    assert groups <= set(build.GROUP_NAMES), "group without a UI name"
+    # cv99 is authored too, and no name goes unused
+    assert set(build.GROUP_NAMES) == groups | {"cv99"}
+
+
+def test_ui_names_are_nonempty_ascii():
+    for tag, name in build.GROUP_NAMES.items():
+        assert tag in KNOWN_GROUPS or tag.startswith("cv"), tag
+        assert name and name.strip() == name, tag
+        assert name.isascii(), tag
+
+
+def test_feature_params_only_for_our_own_features():
+    class Feat:
+        FeatureParams = None
+
+    class Rec:
+        Feature = Feat()
+
+    class GSUB:
+        class FeatureList:
+            FeatureRecord = [Rec()]
+
+    # merged into an existing record (index None) -> untouched
+    build._set_feature_params(None, GSUB, None, "ss01")
+    assert GSUB.FeatureList.FeatureRecord[0].Feature.FeatureParams is None
+    # a tag we do not author (e.g. SCP-remapped ss11) -> untouched
+    build._set_feature_params(None, GSUB, 0, "ss11")
+    assert GSUB.FeatureList.FeatureRecord[0].Feature.FeatureParams is None
+
+
 def test_ligature_module_constant_matches_loader():
     assert build.load_ligatures() == build.LIGATURES
 
