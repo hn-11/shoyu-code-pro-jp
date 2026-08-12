@@ -89,15 +89,16 @@ python scripts/nerdpatch.py <FontPatcher dir>
 
 ## 上流のバージョンピンを更新する
 
-上流の固定タグは `.github/workflows/ci.yml` と `.github/workflows/release.yml`
-の `env:`（`SHS_TAG` / `SCP_TAG` / `SCP_VF_ZIP` / `MONA_TAG`）、および
-`SHCJ_TTC` の取得 URL 内のタグ（`2.012R` 部分）に直書きされています。
+上流の固定タグは `.github/actions/fetch-upstreams/action.yml` の
+「Pin upstream releases」ステップ（`SHS_TAG` / `SCP_TAG` / `SCP_VF_ZIP` /
+`MONA_TAG` / `SHCJ_TAG`）に一元化されており、`ci.yml` / `release.yml` は
+このアクションを共有しています。
 
 `check-upstream.yml`（毎週月曜 実行）が各上流の最新リリースをピン留め
 タグと比較し、ずれていれば自動で Issue を起票します。Issue が来たら:
 
-1. `ci.yml` / `release.yml` の該当 `env` とダウンロード URL のタグを
-   新しいバージョンに更新する。
+1. `.github/actions/fetch-upstreams/action.yml` のピンを新しいバージョンに
+   更新する（キャッシュキーはピンから自動導出されるので他に触る場所はない）。
 2. ローカルまたは CI でビルドし、`scripts/verify.py` が通ることを確認する。
 3. 見た目に影響しうる変更（合字・ウェイトマッチング・グリフ形状など）が
    あれば README の該当箇所（`=`バーの実測値など）も見直す。

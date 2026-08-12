@@ -11,7 +11,8 @@ ROOT = Path(__file__).resolve().parent.parent
 FONT = Path(sys.argv[1]) if len(sys.argv) > 1 else (
     ROOT / "dist" / "ShoyuCodeProJP-Regular.otf"
 )
-LIGATURES = json.load(open(ROOT / "data" / "mona_ligs.json"))
+with open(ROOT / "data" / "mona_ligs.json") as _f:
+    LIGATURES = json.load(_f)
 
 # (text, expected glyph count after shaping)
 CASES = [
@@ -59,9 +60,7 @@ def is_italic(tf):
         return True
     if tf["post"].italicAngle:
         return True
-    if tf["head"].macStyle & 0x2:
-        return True
-    return False
+    return bool(tf["head"].macStyle & 0x2)
 
 
 def expected_metrics(tf):

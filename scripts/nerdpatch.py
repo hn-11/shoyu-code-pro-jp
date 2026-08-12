@@ -97,7 +97,7 @@ def main():
             r = subprocess.run(
                 ["fontforge", "-script", str(patcher_dir / "font-patcher"),
                  "--complete", "--quiet", "--outputdir", str(OUT), str(flat)],
-                capture_output=True, text=True, env=ff_env())
+                check=False, capture_output=True, text=True, env=ff_env())
             if r.returncode != 0:
                 print(r.stdout)
                 print(r.stderr)
@@ -109,9 +109,9 @@ def main():
                 raise SystemExit(
                     f"no faces parsed from font-patcher output for {src.name} "
                     "(check font-patcher's \"===> '...'\" output format for changes)")
-            for p in produced:
-                p = ROOT / p if not Path(p).is_absolute() else Path(p)
-                final = fix_names(Path(p), src)
+            for prod in produced:
+                path = Path(prod) if Path(prod).is_absolute() else ROOT / prod
+                final = fix_names(path, src)
                 print(f"  -> {final.name}")
 
 

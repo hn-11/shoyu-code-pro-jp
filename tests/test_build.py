@@ -10,7 +10,6 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import build  # noqa: E402
 
-
 # --- SCP feature tag remapping -------------------------------------------
 
 @pytest.mark.parametrize("tag, want", [
@@ -128,7 +127,7 @@ def test_ligature_schema():
 
 
 def test_ligature_module_constant_matches_loader():
-    assert build.LIGATURES == build.load_ligatures()
+    assert build.load_ligatures() == build.LIGATURES
 
 
 # --- per-contour bounds (the '=' bar probe) ------------------------------

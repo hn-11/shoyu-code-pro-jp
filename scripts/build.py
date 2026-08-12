@@ -40,6 +40,7 @@ Env (all required):
 """
 
 import concurrent.futures
+import contextlib
 import copy
 import json
 import math
@@ -49,15 +50,15 @@ import unicodedata
 from pathlib import Path
 from typing import NamedTuple
 
-from fontTools.ttLib import TTCollection, TTFont
-from fontTools.varLib.instancer import instantiateVariableFont
+import pathops
+from fontTools.otlLib import builder as otl
 from fontTools.pens.boundsPen import BoundsPen
 from fontTools.pens.recordingPen import RecordingPen
 from fontTools.pens.t2CharStringPen import T2CharStringPen
 from fontTools.pens.transformPen import TransformPen
-import pathops
-from fontTools.otlLib import builder as otl
+from fontTools.ttLib import TTCollection, TTFont
 from fontTools.ttLib.tables import otTables
+from fontTools.varLib.instancer import instantiateVariableFont
 
 ROOT = Path(__file__).resolve().parent.parent
 CELL = 667          # half-width advance of the 2:3 metrics
@@ -121,8 +122,8 @@ def _contour_bounds(contours):
     out = []
     for segs in contours:
         xs, ys = [], []
-        for kind, pts, start in segs:
-            pts = [p for p in pts if p is not None]  # all-offcurve TT contour
+        for kind, raw_pts, start in segs:
+            pts = [p for p in raw_pts if p is not None]  # all-offcurve TT contour
             if not pts or start is None:
                 continue
             for axis, acc in ((0, xs), (1, ys)):
@@ -310,10 +311,8 @@ def draw_clean(draws, pen):
     path = pathops.Path()
     for gs, gname, t in draws:
         gs[gname].draw(TransformPen(path.getPen(), t))
-    try:
-        path = pathops.simplify(path, clockwise=path.clockwise)
-    except pathops.PathOpsError:
-        pass  # degenerate outline: keep as drawn
+    with contextlib.suppress(pathops.PathOpsError):
+        path = pathops.simplify(path, clockwise=path.clockwise)  # degenerate outline: keep as drawn
     path.draw(pen)
 
 

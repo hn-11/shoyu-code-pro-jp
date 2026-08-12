@@ -44,7 +44,8 @@ runs:
       id: up
       with:
         path: upstreams
-        key: upstreams-shs2.005-scp1.026-mona1.400-shcj2.012
+        # Key derives from the pins above so a bump busts the cache automatically.
+        key: upstreams-${{ env.SHS_TAG }}-${{ env.SCP_VF_ZIP }}-${{ env.MONA_TAG }}-${{ env.SHCJ_TAG }}
     - if: inputs.cache != 'true' || steps.up.outputs.cache-hit != 'true'
       shell: bash
       run: |
