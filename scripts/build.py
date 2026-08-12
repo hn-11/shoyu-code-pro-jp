@@ -928,7 +928,10 @@ def build_face(job):
     n_scp, n_ref, default_map = graft_halfwidth(base, scp, ref)
     variant_maps = import_scp_variants(base, scp, default_map)
     copy_line_metrics(base, ref)
-    ref_angle = ref["post"].italicAngle if italic else None
+    # the outlines' real slant lives in the SCP Italic instance; SHCJ's
+    # italic faces declare italicAngle=0, so they can't be the source
+    ref_angle = (scp["post"].italicAngle or ref["post"].italicAngle or -12.0) \
+        if italic else None
     mona = mona_src.matched(target, ref_angle)
     alts = {}
     added = add_glyphs(base, mona, alts, LIGATURES)
