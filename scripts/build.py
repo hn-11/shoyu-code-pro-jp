@@ -111,6 +111,22 @@ def load_ligatures(path=None):
 
 LIGATURES = load_ligatures()   # module-level default; passed explicitly
 
+# UI names shown by font-feature pickers, one per feature we author.
+# English by convention (the OT name records these land in are 3/1/0x409);
+# they mirror README's ss table. Every ligature group in mona_ligs.json
+# must appear here — tests/test_build.py enforces that.
+GROUP_NAMES = {
+    "ss01": "Comparison & equality",
+    "ss02": "Arrows",
+    "ss03": "Markup",
+    "ss04": "Pipes",
+    "ss05": "Colons",
+    "ss06": "Dots",
+    "ss07": "Comments",
+    "ss08": "Repetition, logic & misc",
+    "cv99": "Alternate ligature designs",
+}
+
 
 def _contour_bounds(contours):
     """Per-contour (xMin, yMin, xMax, yMax) from recorded segments.
@@ -771,6 +787,51 @@ def _add_feature(gsub, tag, lookup_indices):
     return gsub.FeatureList.FeatureCount - 1
 
 
+def _alloc_name_id(font):
+    """An unused nameID in the user range (>= 256)."""
+    used = {rec.nameID for rec in font["name"].names}
+    n = 256
+    while n in used:
+        n += 1
+    return n
+
+
+def _add_ui_name(font, text):
+    """Add `text` as a Windows/Unicode BMP/en-US (3/1/0x409) name record,
+    the platform triple every shaper UI reads, and return its nameID."""
+    nid = _alloc_name_id(font)
+    font["name"].setName(text, nid, 3, 1, 0x409)
+    return nid
+
+
+def _set_feature_params(font, gsub, index, tag):
+    """Attach a UI name to the feature we just authored at `index`.
+
+    Only for our own ss01-ss08 / cv99: features merged into a record that
+    already existed (index is None) belong to the base font or the
+    SCP-remapped ss11+ set and keep whatever FeatureParams they had.
+    """
+    if index is None or tag not in GROUP_NAMES:
+        return
+    nid = _add_ui_name(font, GROUP_NAMES[tag])
+    feat = gsub.FeatureList.FeatureRecord[index].Feature
+    if tag.startswith("cv"):
+        params = otTables.FeatureParamsCharacterVariants()
+        params.Format = 0
+        params.FeatUILabelNameID = nid
+        params.FeatUITooltipTextNameID = 0
+        params.SampleTextNameID = 0
+        params.NumNamedParameters = 0
+        params.FirstParamUILabelNameID = 0
+        params.CharCount = 0
+        params.Character = []
+    else:
+        params = otTables.FeatureParamsStylisticSet()
+        params.Version = 0
+        params.UINameID = nid
+    feat.FeatureParams = params
+
+
 def sort_feature_list(gsub):
     """OpenType requires FeatureList sorted by tag; re-sort and remap every
     LangSys FeatureIndex through the old->new table."""
@@ -817,10 +878,14 @@ def add_gsub(font, added, alts, variant_maps=None, ligatures=None):
     for tag in ("calt", "liga"):
         feature_indices.append(_add_feature(gsub, tag, [combined_lookup]))
     for grp in sorted(group_lookups):
-        feature_indices.append(_add_feature(gsub, grp, [group_lookups[grp]]))
+        i = _add_feature(gsub, grp, [group_lookups[grp]])
+        _set_feature_params(font, gsub, i, grp)
+        feature_indices.append(i)
     if alts:
         alt_lookup = _new_lookup(gsub, otl.buildSingleSubstSubtable(alts))
-        feature_indices.append(_add_feature(gsub, "cv99", [alt_lookup]))
+        i = _add_feature(gsub, "cv99", [alt_lookup])
+        _set_feature_params(font, gsub, i, "cv99")
+        feature_indices.append(i)
     for tag in sorted(variant_maps or {}):
         vlookup = _new_lookup(
             gsub, otl.buildSingleSubstSubtable(variant_maps[tag]))
