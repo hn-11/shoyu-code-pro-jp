@@ -212,21 +212,28 @@ def main():
     # xAvgCharWidth=977 at the 667 cell) — the contract is continuity, and
     # xAvgCharWidth is rescaled with the half-width cell by rescale().
     SHCJ_XAVG = 977  # declared value in SHCJ 2.012R
-    fixed = tf["post"].isFixedPitch
-    ok = fixed == 0
-    print(f"{'ok  ' if ok else 'FAIL'} post.isFixedPitch == 0 (SHCJ declaration), got {fixed}")
-    failed |= not ok
+    if " NF" in fam:
+        # font-patcher rewrites PANOSE to monospaced and recalculates
+        # xAvgCharWidth on the flattened font; those are its own to set
+        print("ok   width metadata checks skipped (Nerd Fonts variant)")
+        fixed = None
+    else:
+        fixed = tf["post"].isFixedPitch
+    if fixed is not None:
+        ok = fixed == 0
+        print(f"{'ok  ' if ok else 'FAIL'} post.isFixedPitch == 0 (SHCJ declaration), got {fixed}")
+        failed |= not ok
 
-    panose_prop = tf["OS/2"].panose.bProportion
-    ok = panose_prop == 0
-    print(f"{'ok  ' if ok else 'FAIL'} OS/2 PANOSE proportion == 0 (SHCJ declaration), got {panose_prop}")
-    failed |= not ok
+        panose_prop = tf["OS/2"].panose.bProportion
+        ok = panose_prop == 0
+        print(f"{'ok  ' if ok else 'FAIL'} OS/2 PANOSE proportion == 0 (SHCJ declaration), got {panose_prop}")
+        failed |= not ok
 
-    avg_w = tf["OS/2"].xAvgCharWidth
-    want_avg = round(SHCJ_XAVG * a_adv / 667)
-    ok = avg_w == want_avg
-    print(f"{'ok  ' if ok else 'FAIL'} OS/2.xAvgCharWidth scales with cell ({avg_w} vs {want_avg})")
-    failed |= not ok
+        avg_w = tf["OS/2"].xAvgCharWidth
+        want_avg = round(SHCJ_XAVG * a_adv / 667)
+        ok = avg_w == want_avg
+        print(f"{'ok  ' if ok else 'FAIL'} OS/2.xAvgCharWidth scales with cell ({avg_w} vs {want_avg})")
+        failed |= not ok
 
     # line-metrics sanity: hhea and OS/2 vertical metrics must be nonzero
     # and internally consistent
