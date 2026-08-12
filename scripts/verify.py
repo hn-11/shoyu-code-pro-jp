@@ -207,20 +207,25 @@ def main():
                       f"{seq!r} glyph {gname!r}")
                 failed |= not ok
 
-    # monospace metadata: post/OS2 must declare a fixed-pitch, PANOSE-9 font
-    # whose xAvgCharWidth matches the half-width cell
-    ok = bool(tf["post"].isFixedPitch)
-    print(f"{'ok  ' if ok else 'FAIL'} post.isFixedPitch")
+    # width metadata follows SHCJ's declarations (dual-width, so NOT pure
+    # monospace: SHCJ 2.012R declares isFixedPitch=0, PANOSE proportion=0,
+    # xAvgCharWidth=977 at the 667 cell) — the contract is continuity, and
+    # xAvgCharWidth is rescaled with the half-width cell by rescale().
+    SHCJ_XAVG = 977  # declared value in SHCJ 2.012R
+    fixed = tf["post"].isFixedPitch
+    ok = fixed == 0
+    print(f"{'ok  ' if ok else 'FAIL'} post.isFixedPitch == 0 (SHCJ declaration), got {fixed}")
     failed |= not ok
 
     panose_prop = tf["OS/2"].panose.bProportion
-    ok = panose_prop == 9
-    print(f"{'ok  ' if ok else 'FAIL'} OS/2 PANOSE proportion == 9 (monospaced), got {panose_prop}")
+    ok = panose_prop == 0
+    print(f"{'ok  ' if ok else 'FAIL'} OS/2 PANOSE proportion == 0 (SHCJ declaration), got {panose_prop}")
     failed |= not ok
 
     avg_w = tf["OS/2"].xAvgCharWidth
-    ok = avg_w == a_adv
-    print(f"{'ok  ' if ok else 'FAIL'} OS/2.xAvgCharWidth == half-width cell ({avg_w} vs {a_adv})")
+    want_avg = round(SHCJ_XAVG * a_adv / 667)
+    ok = avg_w == want_avg
+    print(f"{'ok  ' if ok else 'FAIL'} OS/2.xAvgCharWidth scales with cell ({avg_w} vs {want_avg})")
     failed |= not ok
 
     # line-metrics sanity: hhea and OS/2 vertical metrics must be nonzero
