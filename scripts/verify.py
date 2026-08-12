@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 """Shaping regression test: every ligature fires, == stays untouched."""
 
+import json
 import sys
 from pathlib import Path
 
 import uharfbuzz as hb
 
-CELL = 667
+ROOT = Path(__file__).resolve().parent.parent
 FONT = Path(sys.argv[1]) if len(sys.argv) > 1 else (
-    Path(__file__).resolve().parent.parent / "dist" / "ShoyuCodeProJP-Regular.otf"
+    ROOT / "dist" / "ShoyuCodeProJP-Regular.otf"
 )
+with open(ROOT / "data" / "mona_ligs.json") as _f:
+    LIGATURES = json.load(_f)
 
 # (text, expected glyph count after shaping)
 CASES = [
@@ -20,14 +23,78 @@ CASES = [
     ("日本語 != x", 7),
 ]
 
+# suffix in the base family name -> expected (half-width, full-width) advances
+FAMILY_METRICS = {
+    "Term": (600, 1200),
+    "35": (600, 1000),
+}
+DEFAULT_METRICS = (667, 1000)
+
+# a few ligature sequences (rendered text -> glyph to probe) and CJK
+# codepoints, checked for self-intersecting outlines alongside the Latin set
+OVERLAP_LIG_SEQS = ["!=", ":=", "->"]
+OVERLAP_CJK = "日永"
+
+
+def family_name(tf):
+    name = tf["name"]
+    for nid in (16, 1):
+        n = name.getDebugName(nid)
+        if n:
+            return n
+    return ""
+
+
+def subfamily_name(tf):
+    name = tf["name"]
+    for nid in (17, 2):
+        n = name.getDebugName(nid)
+        if n:
+            return n
+    return ""
+
+
+def is_italic(tf):
+    sub = subfamily_name(tf)
+    if "Italic" in sub:
+        return True
+    if tf["post"].italicAngle:
+        return True
+    return bool(tf["head"].macStyle & 0x2)
+
+
+def expected_metrics(tf):
+    fam = family_name(tf)
+    # longest/most-specific suffix match first ("Term" and "35" are both
+    # substrings that could otherwise collide with unrelated family text)
+    for suffix, pair in FAMILY_METRICS.items():
+        if suffix in fam.split(" "):
+            return pair
+    return DEFAULT_METRICS
+
 
 def main():
     from fontTools.ttLib import TTFont
     tf = TTFont(str(FONT))
-    a_adv = tf["hmtx"][tf.getBestCmap()[ord("a")]][0]
-    cjk_adv = tf["hmtx"][tf.getBestCmap()[0x65E5]][0]
-    print(f"half={a_adv} full={cjk_adv} ratio={cjk_adv/a_adv:.3f}")
-    assert cjk_adv in (1000, 1200) and a_adv in (500, 600, 667), "unexpected metrics"
+    cmap = tf.getBestCmap()
+    hmtx = tf["hmtx"]
+    a_adv = hmtx[cmap[ord("a")]][0]
+    cjk_adv = hmtx[cmap[0x65E5]][0]
+    fam = family_name(tf)
+    italic = is_italic(tf)
+    exp_half, exp_full = expected_metrics(tf)
+    print(f"family={fam!r} italic={italic} half={a_adv} full={cjk_adv} "
+          f"ratio={cjk_adv/a_adv:.3f}")
+    assert (a_adv, cjk_adv) == (exp_half, exp_full), (
+        f"{FONT}: expected (half,full)=({exp_half},{exp_full}) for family "
+        f"{fam!r}, got ({a_adv},{cjk_adv})")
+
+    angle = tf["post"].italicAngle
+    if italic:
+        assert angle != 0, f"{FONT}: italic face but post.italicAngle == 0"
+    else:
+        assert angle == 0, f"{FONT}: upright face but post.italicAngle == {angle}"
+
     blob = hb.Blob.from_file_path(str(FONT))
     font = hb.Font(hb.Face(blob))
     failed = False
@@ -38,6 +105,13 @@ def main():
         buf.guess_segment_properties()
         hb.shape(font, buf, feats)
         return len(buf.glyph_infos)
+
+    def shape_infos(text, feats):
+        buf = hb.Buffer()
+        buf.add_str(text)
+        buf.guess_segment_properties()
+        hb.shape(font, buf, feats)
+        return list(buf.glyph_infos), list(buf.glyph_positions)
 
     for text, nglyphs in CASES:
         got = shape_len(text, {"calt": True, "liga": True})
@@ -79,20 +153,104 @@ def main():
     print(f"{'ok  ' if ok else 'FAIL'} cv99 swaps ligature design")
     failed |= not ok
 
+    # 4-cell ligature: any spec whose "cells" == 4 must shape to a single
+    # glyph whose advance is exactly 4x the half-width cell
+    wide_seqs = [seq for seq, spec in LIGATURES.items() if spec["cells"] == 4]
+    for seq in wide_seqs:
+        infos, positions = shape_infos(seq, {"calt": True, "liga": True})
+        ok = len(infos) == 1 and positions[0].x_advance == 4 * a_adv
+        got_adv = positions[0].x_advance if positions else None
+        got_n = len(infos)
+        print(f"{'ok  ' if ok else 'FAIL'} {seq!r} 4-cell ligature: "
+              f"{got_n} glyph(s), advance={got_adv} (want 1 glyph, {4 * a_adv})")
+        failed |= not ok
+        assert ok, f"{FONT}: 4-cell ligature {seq!r} did not shape as expected"
+
     # imported outlines must be overlap-free (VF instancing leaves seams)
     import pathops
     gs = tf.getGlyphSet()
-    cm = tf.getBestCmap()
-    for ch in "AKkxRvw&ag":
+    glyph_order = tf.getGlyphOrder()
+
+    def overlap_ok(gname):
         p = pathops.Path()
-        gs[cm[ord(ch)]].draw(p.getPen())
+        gs[gname].draw(p.getPen())
         eo = pathops.Path(p)
         eo.fillType = pathops.FillType.EVEN_ODD
         x = pathops.op(pathops.simplify(p, clockwise=p.clockwise),
                        pathops.simplify(eo), pathops.PathOp.XOR)
-        ok = not list(x.segments)
+        return not list(x.segments)
+
+    for ch in "AKkxRvw&ag":
+        gname = cmap[ord(ch)]
+        ok = overlap_ok(gname)
         print(f"{'ok  ' if ok else 'FAIL'} no overlap in {ch!r}")
         failed |= not ok
+
+    for ch in OVERLAP_CJK:
+        cp = ord(ch)
+        if cp not in cmap:
+            continue
+        gname = cmap[cp]
+        ok = overlap_ok(gname)
+        print(f"{'ok  ' if ok else 'FAIL'} no overlap in CJK {ch!r}")
+        failed |= not ok
+
+    for seq in OVERLAP_LIG_SEQS:
+        infos, _ = shape_infos(seq, {"calt": True, "liga": True})
+        for info in infos:
+            gname = glyph_order[info.codepoint]
+            # only check glyphs actually produced by the ligature subst,
+            # i.e. glyphs not reachable from a single input codepoint
+            if len(infos) == 1 or gname not in (cmap.get(ord(c)) for c in seq):
+                ok = overlap_ok(gname)
+                print(f"{'ok  ' if ok else 'FAIL'} no overlap in ligature "
+                      f"{seq!r} glyph {gname!r}")
+                failed |= not ok
+
+    # width metadata follows SHCJ's declarations (dual-width, so NOT pure
+    # monospace: SHCJ 2.012R declares isFixedPitch=0, PANOSE proportion=0,
+    # xAvgCharWidth=977 at the 667 cell) — the contract is continuity, and
+    # xAvgCharWidth is rescaled with the half-width cell by rescale().
+    SHCJ_XAVG = 977  # declared value in SHCJ 2.012R
+    if " NF" in fam:
+        # font-patcher rewrites PANOSE to monospaced and recalculates
+        # xAvgCharWidth on the flattened font; those are its own to set
+        print("ok   width metadata checks skipped (Nerd Fonts variant)")
+        fixed = None
+    else:
+        fixed = tf["post"].isFixedPitch
+    if fixed is not None:
+        ok = fixed == 0
+        print(f"{'ok  ' if ok else 'FAIL'} post.isFixedPitch == 0 (SHCJ declaration), got {fixed}")
+        failed |= not ok
+
+        panose_prop = tf["OS/2"].panose.bProportion
+        ok = panose_prop == 0
+        print(f"{'ok  ' if ok else 'FAIL'} OS/2 PANOSE proportion == 0 (SHCJ declaration), got {panose_prop}")
+        failed |= not ok
+
+        avg_w = tf["OS/2"].xAvgCharWidth
+        want_avg = round(SHCJ_XAVG * a_adv / 667)
+        ok = avg_w == want_avg
+        print(f"{'ok  ' if ok else 'FAIL'} OS/2.xAvgCharWidth scales with cell ({avg_w} vs {want_avg})")
+        failed |= not ok
+
+    # line-metrics sanity: hhea and OS/2 vertical metrics must be nonzero
+    # and internally consistent
+    hhea = tf["hhea"]
+    os2 = tf["OS/2"]
+    ok = hhea.ascent > 0 and hhea.descent < 0
+    print(f"{'ok  ' if ok else 'FAIL'} hhea ascent/descent sane "
+          f"(ascent={hhea.ascent}, descent={hhea.descent})")
+    failed |= not ok
+
+    ok = (os2.sTypoAscender > 0 and os2.sTypoDescender < 0
+          and os2.usWinAscent > 0 and os2.usWinDescent > 0)
+    print(f"{'ok  ' if ok else 'FAIL'} OS/2 typo/win metrics sane "
+          f"(typoAsc={os2.sTypoAscender}, typoDesc={os2.sTypoDescender}, "
+          f"winAsc={os2.usWinAscent}, winDesc={os2.usWinDescent})")
+    failed |= not ok
+
     sys.exit(1 if failed else 0)
 
 

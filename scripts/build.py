@@ -25,45 +25,70 @@ skeleton into a 500 cell loses too much (25% smaller Latin isotropically,
 or ~17% condensation + stroke-contrast skew anisotropically). The
 narrow_ambiguous/rescale machinery stays for anyone who wants it back.
 
+Usage:
+  python scripts/build.py [FILTER]
+  FILTER matches a face when it equals the weight name ("Light"), the full
+  face label ("Light Italic"), the variant suffix ("35" / "Term" / "" for
+  the base family), or is a leading word-run of the label ("Regular" also
+  takes "Regular Italic"). It is NOT a substring match — "Light" no longer
+  drags in "ExtraLight".
+
 Env (all required):
   SHS_DIR  = dir with SourceHanSansJP-<Weight>.otf
   SCP_VF_U = SourceCodeVF-Upright.otf   SCP_VF_I = SourceCodeVF-Italic.otf
   SHCJ_TTC = upstream/SourceHanCodeJP.ttc (default)   MONA_VF = Monaspace VF
 """
 
+import concurrent.futures
+import contextlib
+import copy
 import json
+import math
 import os
 import sys
 import unicodedata
 from pathlib import Path
+from typing import NamedTuple
 
-from fontTools.ttLib import TTCollection, TTFont
-from fontTools.varLib.instancer import instantiateVariableFont
+import pathops
+from fontTools.otlLib import builder as otl
 from fontTools.pens.boundsPen import BoundsPen
 from fontTools.pens.recordingPen import RecordingPen
 from fontTools.pens.t2CharStringPen import T2CharStringPen
 from fontTools.pens.transformPen import TransformPen
-import pathops
-from fontTools.otlLib import builder as otl
+from fontTools.ttLib import TTCollection, TTFont
 from fontTools.ttLib.tables import otTables
+from fontTools.varLib.instancer import instantiateVariableFont
 
 ROOT = Path(__file__).resolve().parent.parent
 CELL = 667          # half-width advance of the 2:3 metrics
+FULLWIDTH = 1000    # full-width advance of the CJK layer (upm 1000)
 MONA_CELL = 1240    # Monaspace advance (upm 2000)
 MONA_K = CELL / MONA_CELL
 SCP_CELL = 600      # Source Code Pro advance (upm 1000)
 SCP_K = CELL / SCP_CELL  # 10/9, Adobe's SHCJ scale factor
 
-# suffix -> (half-width cell, weight-compensate, terminal-grid mode)
-# comp: re-match stroke weight AFTER rescale so Latin keeps SHCJ's CJK
-#   pairing (69/1000em bar). Without comp, a rescaled Latin keeps Source
-#   Code Pro's native weight instead (the "faithful" reading).
-# term: widen full-width advances to 2 cells (centered) + one-cell copies
-#   for East-Asian-Width-ambiguous codepoints.
+# Adobe-Japan1-7 defines CIDs 0..23057; a PDF consumer that assumes the
+# ROS is really Adobe-Japan1 decodes those CIDs as their standard
+# characters. Our appended glyphs are NOT Adobe-Japan1 characters, so
+# allocation starts above the defined range (still < 65535).
+CID_ALLOC_START = 23058
+CID_MAX = 65534
+
+
+class Variant(NamedTuple):
+    cell: int    # half-width advance
+    comp: bool   # re-match stroke weight AFTER rescale so Latin keeps
+                 # SHCJ's CJK pairing (69/1000em bar). Without comp a
+                 # rescaled Latin keeps Source Code Pro's native weight.
+    term: bool   # widen full-width advances to 2 cells (centered) + one-cell
+                 # copies for East-Asian-Width-ambiguous codepoints.
+
+
 VARIANTS = {
-    "": (667, False, False),      # 2:3, the SHCJ look — editor
-    "35": (600, False, False),    # SCP native size AND native weight
-    "Term": (600, True, True),    # 1:2 terminal grid (600:1200)
+    "": Variant(667, False, False),      # 2:3, the SHCJ look — editor
+    "35": Variant(600, False, False),    # SCP native size AND native weight
+    "Term": Variant(600, True, True),    # 1:2 terminal grid (600:1200)
 }
 
 # (output weight name, SHCJ reference face, Source Han Sans static file)
@@ -77,24 +102,129 @@ FACES = [
     ("Heavy", "Source Han Code JP H", "SourceHanSansJP-Heavy.otf"),
 ]
 
-LIGATURES = json.load(open(ROOT / "data" / "mona_ligs.json"))
+
+def load_ligatures(path=None):
+    """data/mona_ligs.json -> {sequence: {cells, glyphs, group}}."""
+    with open(path or ROOT / "data" / "mona_ligs.json") as fp:
+        return json.load(fp)
+
+
+LIGATURES = load_ligatures()   # module-level default; passed explicitly
+
+
+def _contour_bounds(contours):
+    """Per-contour (xMin, yMin, xMax, yMax) from recorded segments.
+
+    Curve control points are NOT treated as extremes — a cubic's real
+    bounds come from the segment solve, otherwise a '=' bar with rounded
+    ends measures thicker than it is.
+    """
+    out = []
+    for segs in contours:
+        xs, ys = [], []
+        for kind, raw_pts, start in segs:
+            pts = [p for p in raw_pts if p is not None]  # all-offcurve TT contour
+            if not pts or start is None:
+                continue
+            for axis, acc in ((0, xs), (1, ys)):
+                coords = [start[axis]] + [p[axis] for p in pts]
+                if kind == "lineTo":
+                    acc.extend((coords[0], coords[-1]))
+                elif kind == "curveTo":
+                    acc.extend(_cubic_extremes(coords))
+                else:               # qCurveTo
+                    acc.extend(_quad_extremes(coords))
+        if xs:
+            out.append((min(xs), min(ys), max(xs), max(ys)))
+    return out
+
+
+def _cubic_extremes(c):
+    """Extreme values of a cubic bezier on one axis (start + 2 controls +
+    end). CFF charstrings never emit longer chains."""
+    if len(c) != 4:
+        return list(c)
+    p0, p1, p2, p3 = c
+    vals = [p0, p3]
+    # derivative roots: 3(-p0+3p1-3p2+p3)t^2 + 6(p0-2p1+p2)t + 3(p1-p0) = 0
+    for t in _quad_roots(3 * (-p0 + 3 * p1 - 3 * p2 + p3),
+                         6 * (p0 - 2 * p1 + p2), 3 * (p1 - p0)):
+        if 0 < t < 1:
+            mt = 1 - t
+            vals.append(mt ** 3 * p0 + 3 * mt * mt * t * p1
+                        + 3 * mt * t * t * p2 + t ** 3 * p3)
+    return vals
+
+
+def _quad_extremes(c):
+    """Extremes of a TrueType quadratic run on one axis: start, then N
+    off-curve points and the final on-curve point. Consecutive off-curve
+    pairs imply an on-curve point at their midpoint — split there."""
+    if len(c) < 3:
+        return list(c)
+    start, offs, end = c[0], c[1:-1], c[-1]
+    vals = [start, end]
+    cur = start
+    for i, ctrl in enumerate(offs):
+        last = i == len(offs) - 1
+        seg_end = end if last else (ctrl + offs[i + 1]) / 2
+        den = cur - 2 * ctrl + seg_end
+        if den:
+            t = (cur - ctrl) / den
+            if 0 < t < 1:
+                mt = 1 - t
+                vals.append(mt * mt * cur + 2 * mt * t * ctrl
+                            + t * t * seg_end)
+        vals.append(seg_end)
+        cur = seg_end
+    return vals
+
+
+def _quad_roots(a, b, c):
+    if abs(a) < 1e-12:
+        return [] if abs(b) < 1e-12 else [-c / b]
+    d = b * b - 4 * a * c
+    if d < 0:
+        return []
+    r = math.sqrt(d)
+    return [(-b + r) / (2 * a), (-b - r) / (2 * a)]
+
+
+def _record_contours(font, glyph_name):
+    """[(kind, points, start_point), ...] per closed OR open contour."""
+    pen = RecordingPen()
+    font.getGlyphSet()[glyph_name].draw(pen)
+    contours, cur, cursor, start = [], [], None, None
+    for op, args in pen.value:
+        if op == "moveTo":
+            if cur:
+                contours.append(cur)
+            cur = []
+            cursor = start = args[0]
+        elif op in ("lineTo", "curveTo", "qCurveTo"):
+            cur.append((op, list(args), cursor))
+            if args[-1] is not None:   # None = all-offcurve TrueType contour
+                cursor = args[-1]
+        elif op in ("closePath", "endPath"):
+            if cursor is not None and start is not None and cursor != start:
+                cur.append(("lineTo", [start], cursor))  # implied closing line
+            if cur:
+                contours.append(cur)
+            cur, cursor, start = [], None, None
+    if cur:  # unterminated (open) contour: keep it, don't drop it
+        contours.append(cur)
+    return contours
 
 
 def bar_thickness(font, glyph_name):
-    """Height of the top contour of '=' — our stroke-weight probe."""
-    pen = RecordingPen()
-    font.getGlyphSet()[glyph_name].draw(pen)
-    contours, cur = [], []
-    for op, args in pen.value:
-        if op == "moveTo":
-            cur = [args[0]]
-        elif op == "closePath":
-            contours.append(cur)
-            cur = []
-        else:
-            cur.extend(list(args))
-    ys = [p[1] for p in contours[0]]
-    return max(ys) - min(ys)
+    """Thickness of '=' — our stroke-weight probe.
+
+    The minimum contour height over all contours: both bars of '=' have the
+    same thickness, so min-height is robust against contour order (and
+    against a font whose '=' carries extra bits)."""
+    heights = [b[3] - b[1] for b in _contour_bounds(
+        _record_contours(font, glyph_name))]
+    return min(heights) if heights else 0
 
 
 class VFSource:
@@ -110,27 +240,59 @@ class VFSource:
         self.scale = scale        # em scale applied when the glyphs are used
         self.axes = axes          # template; wght filled by the search
         self._cache = {}
+        self._vf = None
+        self._ranges = None
+
+    def _source(self):
+        """Load (and fully decompile) the VF once; iterations deepcopy it."""
+        if self._vf is None:
+            vf = TTFont(self.vf_path)
+            vf.ensureDecompiled()
+            self._vf = vf
+            self._ranges = {a.axisTag: (a.minValue, a.maxValue)
+                            for a in vf["fvar"].axes}
+        return self._vf
+
+    def axis_range(self, tag, default):
+        self._source()
+        return self._ranges.get(tag, default)
+
+    def _instance(self, axes):
+        inst = copy.deepcopy(self._source())
+        instantiateVariableFont(inst, axes, inplace=True)
+        return inst
 
     def matched(self, target_units, slant=None):
         key = (round(target_units), slant if slant is None else round(slant))
         if key in self._cache:
             return self._cache[key]
         pre_scale_target = target_units / self.scale
-        lo, hi = 200.0, 800.0
-        inst = None
+        lo, hi = self.axis_range("wght", (200.0, 800.0))
+        lo, hi = float(lo), float(hi)
+        axes = dict(self.axes)
+        if slant is not None and "slnt" in axes:
+            smin, smax = self.axis_range("slnt", (-11.0, 0.0))
+            clamped = max(smin, min(smax, slant))
+            if abs(clamped - slant) > 1e-6:
+                print(f"  slnt {slant:.2f} clamped to {clamped:.2f} "
+                      f"(axis {smin}..{smax})")
+            axes["slnt"] = clamped
         for _ in range(9):
             mid = (lo + hi) / 2
-            inst = TTFont(self.vf_path)
-            axes = dict(self.axes, wght=mid)
-            if slant is not None and "slnt" in axes:
-                axes["slnt"] = max(-11.0, min(0.0, slant))
-            instantiateVariableFont(inst, axes, inplace=True)
-            t = bar_thickness(inst, inst.getBestCmap()[ord("=")])
+            probe = self._instance(dict(axes, wght=mid))
+            t = bar_thickness(probe, probe.getBestCmap()[ord("=")])
             if t < pre_scale_target:
                 lo = mid
             else:
                 hi = mid
-        self._cache[key] = inst
+        wght = (lo + hi) / 2
+        inst = self._instance(dict(axes, wght=wght))
+        t = bar_thickness(inst, inst.getBestCmap()[ord("=")])
+        if abs(t - pre_scale_target) > 1.0:
+            print(f"  WARNING: wght search off by {t - pre_scale_target:+.1f}u "
+                  f"(target {pre_scale_target:.1f}, wght={wght:.1f}) in "
+                  f"{Path(self.vf_path).name}")
+        self._cache[key] = inst   # only the converged instance is kept
         return inst
 
 
@@ -149,10 +311,8 @@ def draw_clean(draws, pen):
     path = pathops.Path()
     for gs, gname, t in draws:
         gs[gname].draw(TransformPen(path.getPen(), t))
-    try:
-        path = pathops.simplify(path, clockwise=path.clockwise)
-    except pathops.PathOpsError:
-        pass  # degenerate outline: keep as drawn
+    with contextlib.suppress(pathops.PathOpsError):
+        path = pathops.simplify(path, clockwise=path.clockwise)  # degenerate outline: keep as drawn
     path.draw(pen)
 
 
@@ -167,22 +327,49 @@ def pen_width(private, advance):
 def alloc_glyph_name(font):
     """Allocate an unused CID. Subset OTFs have sparse CIDs (SHS JP tops
     out at 65497 with only ~18k glyphs), so len(order) collides with real
-    names and max+1 overflows 65534 — walk the gaps instead."""
+    names and max+1 overflows 65534 — walk the gaps instead, starting
+    above the Adobe-Japan1-7 defined range (see CID_ALLOC_START)."""
     used = getattr(font, "_used_cids", None)
     if used is None:
         used = {int(g[3:]) for g in font.getGlyphOrder()
                 if g.startswith("cid") and g[3:].isdigit()}
         font._used_cids = used
-        font._next_cid = 1
+        font._next_cid = CID_ALLOC_START
     n = font._next_cid
     while n in used:
         n += 1
+    if n > CID_MAX:
+        raise RuntimeError("CID space exhausted")
     used.add(n)
     font._next_cid = n + 1
     return f"cid{n:05d}"
 
 
-def append_glyph(font, td, name, cs, fd_index, width, lsb=0):
+def charstring_lsb(cs):
+    """xMin of a freshly built charstring — appended glyphs used to get
+    lsb=0, which lies to anything that trusts hmtx over the outline."""
+    try:
+        bounds = cs.calcBounds(None)
+    except Exception:
+        return 0
+    return round(bounds[0]) if bounds else 0
+
+
+def vmtx_donor(font, fullwidth=True):
+    """Glyph whose vertical metrics the appended glyphs inherit. Resolve
+    once per call site — getBestCmap() per glyph was the hot spot."""
+    if "vmtx" not in font:
+        return None
+    cmap = font.getBestCmap()
+    order = (0x65E5,) if fullwidth else (0xFF61, 0xFF9F, 0x0041, 0x65E5)
+    for cp in order:
+        g = cmap.get(cp)
+        if g is not None and g in font["vmtx"].metrics:
+            return g
+    return None
+
+
+def append_glyph(font, td, name, cs, fd_index, width, lsb=None, vdonor=None):
     order = font.getGlyphOrder()
     order.append(name)
     if td.charset is not order:  # same list object for CFF fonts
@@ -191,10 +378,10 @@ def append_glyph(font, td, name, cs, fd_index, width, lsb=0):
     i = len(td.CharStrings.charStringsIndex.items)
     td.CharStrings.charStringsIndex.append(cs)
     td.CharStrings.charStrings[name] = i
-    font["hmtx"].metrics[name] = (width, lsb)
-    if "vmtx" in font:
-        cmap = font.getBestCmap()
-        font["vmtx"].metrics[name] = font["vmtx"].metrics[cmap[0x65E5]]
+    font["hmtx"].metrics[name] = (
+        width, charstring_lsb(cs) if lsb is None else lsb)
+    if "vmtx" in font and vdonor is not None:
+        font["vmtx"].metrics[name] = font["vmtx"].metrics[vdonor]
     font.setGlyphOrder(order)
     if hasattr(font, "_reverseGlyphOrderDict"):
         del font._reverseGlyphOrderDict
@@ -217,28 +404,36 @@ def graft_halfwidth(base, scp, ref):
     bcm = base.getBestCmap()
     fd_index = td.FDSelect[base.getGlyphID(bcm[ord("A")])]
     private = td.FDArray[fd_index].Private
+    vdon = vmtx_donor(base, fullwidth=False)
 
     new_map = {}
     default_map = {}  # scp glyph name -> our glyph name (for variant wiring)
+    made = {}         # source glyph -> our glyph (dedup shared sources)
     from_scp = from_ref = 0
     for cp, g in sorted(ref_cm.items()):
         if ref_hm[g][0] != CELL:
             continue
-        pen = T2CharStringPen(pen_width(private, CELL), scp_gs)
-        if cp in scp_cm:
-            draw_clean([(scp_gs, scp_cm[cp], (SCP_K, 0, 0, SCP_K, 0, 0))], pen)
-            lsb = round(scp["hmtx"][scp_cm[cp]][1] * SCP_K)
-            from_scp += 1
-        else:
-            draw_clean([(ref_gs, g, (1, 0, 0, 1, 0, 0))], pen)
-            lsb = ref_hm[g][1]
-            from_ref += 1
-        name = alloc_glyph_name(base)
-        append_glyph(base, td, name, pen.getCharString(private=private),
-                     fd_index, CELL, lsb)
-        new_map[cp] = name
-        if cp in scp_cm:
-            default_map[scp_cm[cp]] = name
+        # several codepoints often share one source glyph (SCP's own cmap
+        # aliases, SHCJ's kana forms) — one grafted glyph per source keeps
+        # default_map 1:1 so zero/cv/salt wiring survives for all of them
+        src = ("scp", scp_cm[cp]) if cp in scp_cm else ("ref", g)
+        if src not in made:
+            pen = T2CharStringPen(pen_width(private, CELL), scp_gs)
+            if src[0] == "scp":
+                draw_clean([(scp_gs, src[1], (SCP_K, 0, 0, SCP_K, 0, 0))], pen)
+                lsb = round(scp["hmtx"][src[1]][1] * SCP_K)
+                from_scp += 1
+            else:
+                draw_clean([(ref_gs, g, (1, 0, 0, 1, 0, 0))], pen)
+                lsb = ref_hm[g][1]
+                from_ref += 1
+            name = alloc_glyph_name(base)
+            append_glyph(base, td, name, pen.getCharString(private=private),
+                         fd_index, CELL, lsb, vdon)
+            made[src] = name
+            if src[0] == "scp":
+                default_map[src[1]] = name
+        new_map[cp] = made[src]
 
     # Drop legacy non-Unicode subtables (Mac (1,0) format 6): they still
     # point at the old proportional Latin, and FontForge unifies subtables
@@ -262,6 +457,29 @@ def _remap_scp_tag(tag):
     return None
 
 
+def _unwrap(lookup):
+    """(LookupType, [subtables]) with Extension (type 7) unwrapped."""
+    if lookup.LookupType != 7:
+        return lookup.LookupType, lookup.SubTable
+    subs = [st.ExtSubTable for st in lookup.SubTable]
+    kind = subs[0].LookupType if subs else None
+    return kind, subs
+
+
+def _subst_pairs(kind, subtables, tag):
+    """(src, dst) pairs from a Single (1) or Alternate (3) subst lookup."""
+    if kind == 1:
+        for st in subtables:
+            yield from st.mapping.items()
+    elif kind == 3:
+        for st in subtables:
+            for src, alts in st.alternates.items():
+                if alts:
+                    yield src, alts[0]
+    else:
+        print(f"  warning: {tag}: unsupported GSUB LookupType {kind}, skipped")
+
+
 def import_scp_variants(base, scp, default_map):
     """Carry SCP's own character variants (dotted/slashed zero bodies,
     one/two-story a, g shapes, salt...) through the graft. Returns
@@ -273,6 +491,7 @@ def import_scp_variants(base, scp, default_map):
     fd_index = td.FDSelect[base.getGlyphID(bcm[ord("A")])]
     private = td.FDArray[fd_index].Private
     scp_gs = scp.getGlyphSet()
+    vdon = vmtx_donor(base, fullwidth=False)
 
     imported = {}   # scp variant glyph -> our glyph name
     tag_maps = {}
@@ -281,26 +500,22 @@ def import_scp_variants(base, scp, default_map):
         if tag is None:
             continue
         for li in fr.Feature.LookupListIndex:
-            lookup = gsub.LookupList.Lookup[li]
-            if lookup.LookupType != 1:
-                continue
-            for st in lookup.SubTable:
-                for src, dst in st.mapping.items():
-                    if src not in default_map:
-                        continue
-                    if dst not in imported:
-                        pen = T2CharStringPen(
-                            pen_width(private, CELL), scp_gs)
-                        draw_clean(
-                            [(scp_gs, dst, (SCP_K, 0, 0, SCP_K, 0, 0))], pen)
-                        name = alloc_glyph_name(base)
-                        append_glyph(
-                            base, td, name,
-                            pen.getCharString(private=private),
-                            fd_index, CELL,
-                            round(scp["hmtx"][dst][1] * SCP_K))
-                        imported[dst] = name
-                    tag_maps.setdefault(tag, {})[default_map[src]] = imported[dst]
+            kind, subtables = _unwrap(gsub.LookupList.Lookup[li])
+            for src, dst in _subst_pairs(kind, subtables, fr.FeatureTag):
+                if src not in default_map:
+                    continue
+                if dst not in imported:
+                    pen = T2CharStringPen(pen_width(private, CELL), scp_gs)
+                    draw_clean(
+                        [(scp_gs, dst, (SCP_K, 0, 0, SCP_K, 0, 0))], pen)
+                    name = alloc_glyph_name(base)
+                    append_glyph(
+                        base, td, name,
+                        pen.getCharString(private=private),
+                        fd_index, CELL,
+                        round(scp["hmtx"][dst][1] * SCP_K), vdon)
+                    imported[dst] = name
+                tag_maps.setdefault(tag, {})[default_map[src]] = imported[dst]
     return tag_maps
 
 
@@ -318,28 +533,29 @@ def copy_line_metrics(base, ref):
     base["OS/2"].panose = ref["OS/2"].panose
 
 
-def narrow_ambiguous(font, cell=500):
-    """Console (1:2) only: East-Asian-Width Ambiguous/Narrow codepoints that
-    carry full-width (1000) glyphs — … → ≠ Greek etc. — get a half-width
-    (500) scaled copy, because terminals allocate them ONE cell by default
-    and the full-width ink bleeds into the neighbour (Sarasa Term does the
+def narrow_ambiguous(font, cell):
+    """Term (1:2) only: East-Asian-Width Ambiguous/Narrow codepoints that
+    carry full-width (1000) glyphs — … → ≠ Greek etc. — get a one-cell
+    scaled copy, because terminals allocate them ONE cell by default and
+    the full-width ink bleeds into the neighbour (Sarasa Term does the
     same). CJK (W/F) stays two cells; the original glyphs are untouched.
-    Must run AFTER rescale, on the 500-cell font."""
+    Must run BEFORE widen_fullwidth, i.e. while full-width is still 1000."""
     cff = font["CFF "].cff
     td = cff[cff.fontNames[0]]
     cmap = font.getBestCmap()
     gs = font.getGlyphSet()
     fd_index = td.FDSelect[font.getGlyphID(cmap[ord("A")])]
     private = td.FDArray[fd_index].Private
+    vdon = vmtx_donor(font, fullwidth=False)
     new_map = {}
     made = {}  # source glyph -> scaled glyph (dedup shared glyphs)
     for cp, g in sorted(cmap.items()):
-        if font["hmtx"][g][0] != 1000:
+        if font["hmtx"][g][0] != FULLWIDTH:
             continue
         if unicodedata.east_asian_width(chr(cp)) in ("W", "F"):
             continue
         if g not in made:
-            k = cell / 1000
+            k = cell / FULLWIDTH
             pen = T2CharStringPen(pen_width(private, cell), gs)
             bp = BoundsPen(gs)
             gs[g].draw(bp)
@@ -348,7 +564,7 @@ def narrow_ambiguous(font, cell=500):
             gs[g].draw(TransformPen(pen, (k, 0, 0, k, 0, round(cy * (1 - k)))))
             name = alloc_glyph_name(font)
             append_glyph(font, td, name, pen.getCharString(private=private),
-                         fd_index, cell)
+                         fd_index, cell, None, vdon)
             made[g] = name
         new_map[cp] = made[g]
     for table in font["cmap"].tables:
@@ -365,7 +581,7 @@ def widen_fullwidth(font, cell):
     is untouched by this pass; the terminal grid becomes exact (CJK = two
     cells, symmetric padding instead of a right-side gap)."""
     full = 2 * cell
-    shift = (full - 1000) // 2
+    shift = (full - FULLWIDTH) // 2
     cff = font["CFF "].cff
     td = cff.topDictIndex.items[0]
     gs = font.getGlyphSet()
@@ -373,7 +589,7 @@ def widen_fullwidth(font, cell):
     new_cs = {}
     for name in font.getGlyphOrder():
         adv, lsb = hmtx.metrics[name]
-        if adv != 1000:
+        if adv != FULLWIDTH:
             continue
         gid = font.getGlyphID(name)
         private = td.FDArray[td.FDSelect[gid]].Private
@@ -385,8 +601,14 @@ def widen_fullwidth(font, cell):
         td.CharStrings.charStringsIndex[td.CharStrings.charStrings[name]] = cs
 
 
-def set_names(font, suffix, weight, italic):
-    """Fresh name table: standard family-per-weight scheme."""
+# name IDs we own; everything else (0 Copyright, 5 Version, 7 Trademark,
+# 13/14 License) is inherited from the base font — dropping those would
+# strip the OFL notice the fonts are distributed under.
+OWNED_NAME_IDS = (1, 2, 3, 4, 6, 16, 17)
+
+
+def set_names(font, suffix, weight, italic, italic_angle=-12.0):
+    """Rewrite the family-identifying names, preserve the legal ones."""
     base_family = ("Shoyu Code Pro JP " + suffix).strip()
     ribbi = weight in ("Regular", "Bold")
     family = base_family if ribbi else f"{base_family} {weight}"
@@ -396,13 +618,19 @@ def set_names(font, suffix, weight, italic):
     ps = f"{psfam}-{weight}{'Italic' if italic else ''}"
     full = f"{family} {sub}".replace(" Regular", "").strip()
     name = font["name"]
-    name.names = []
+    # drop stale records for the IDs we own (every platform/encoding), so
+    # the base font's Source Han Sans strings can't survive alongside ours
+    name.names = [n for n in name.names if n.nameID not in OWNED_NAME_IDS]
     for nid, val in ((1, family), (2, sub), (3, f"{ps};shoyu-code-pro-jp"),
                      (4, full), (6, ps),
                      (16, base_family),
                      (17, (weight + (" Italic" if italic else ""))
                           .replace("Regular Italic", "Italic"))):
         name.setName(val, nid, 3, 1, 0x409)
+    # version: keep the base font's revision, note the derivation
+    rev = font["head"].fontRevision
+    version = f"Version {rev:.3f};Shoyu Code Pro JP"
+    name.setName(version, 5, 3, 1, 0x409)
     cff = font["CFF "].cff
     cff.fontNames[0] = ps
     td = cff.topDictIndex.items[0]
@@ -410,22 +638,33 @@ def set_names(font, suffix, weight, italic):
         td.FamilyName = family
     if hasattr(td, "FullName"):
         td.FullName = full
+    if hasattr(td, "version"):
+        td.version = f"{rev:.3f}"
     if italic:
-        font["post"].italicAngle = -12
+        font["post"].italicAngle = italic_angle
         font["head"].macStyle |= 0x2
         font["OS/2"].fsSelection = (font["OS/2"].fsSelection & ~0x40) | 0x1
+        # caret follows the same angle the outlines actually carry
+        font["hhea"].caretSlopeRise = 1000
+        font["hhea"].caretSlopeRun = round(
+            1000 * math.tan(math.radians(-italic_angle)))
+    else:
+        font["post"].italicAngle = 0
+        font["hhea"].caretSlopeRise = 1
+        font["hhea"].caretSlopeRun = 0
     return ps
 
 
-def add_glyphs(font, mona, alts):
+def add_glyphs(font, mona, alts, ligatures=None):
     """Append the imported ligature glyphs; return {seq: glyph name}.
     Alternate (.alt) designs are appended too and recorded in `alts`."""
+    ligatures = LIGATURES if ligatures is None else ligatures
     cff = font["CFF "].cff
     td = cff[cff.fontNames[0]]
-    order = font.getGlyphOrder()
     cmap = font.getBestCmap()
     mona_gs = mona.getGlyphSet()
     mona_names = set(mona.getGlyphOrder())
+    vdon = vmtx_donor(font, fullwidth=False)
 
     # baseline correction: align the two fonts' '=' vertical centers
     dy = round(
@@ -436,7 +675,8 @@ def add_glyphs(font, mona, alts):
     private = td.FDArray[fd_index].Private
 
     added = {}
-    for seq, spec in LIGATURES.items():
+    n_alt = 0
+    for seq, spec in ligatures.items():
         if any(g not in mona_names for g in spec["glyphs"]):
             print(f"  skip {seq!r}: donor glyph missing")
             continue
@@ -445,32 +685,39 @@ def add_glyphs(font, mona, alts):
             continue
         cells = spec["cells"]
         width = CELL * cells
-        pen = T2CharStringPen(pen_width(private, width), font.getGlyphSet())
         if len(spec["glyphs"]) == 1:
             # a single spanning glyph is drawn in its final cell; shift right
             offsets = [(cells - 1) * MONA_CELL * MONA_K]
         else:
             offsets = [i * MONA_CELL * MONA_K for i in range(len(spec["glyphs"]))]
-        for gname, dx in zip(spec["glyphs"], offsets):
-            mona_gs[gname].draw(
-                TransformPen(pen, (MONA_K, 0, 0, MONA_K, dx, dy)))
+        pen = T2CharStringPen(pen_width(private, width), font.getGlyphSet())
+        # composed sequences (':=' etc.) overlap by construction — the same
+        # pathops pass the .alt path uses removes the seams
+        draw_clean([(mona_gs, gname, (MONA_K, 0, 0, MONA_K, dx, dy))
+                    for gname, dx in zip(spec["glyphs"], offsets)], pen)
         name = alloc_glyph_name(font)
         append_glyph(font, td, name, pen.getCharString(private=private),
-                     fd_index, width)
+                     fd_index, width, None, vdon)
         added[seq] = name
 
-        # alternate design, if Monaspace ships one (cv01 toggles to it)
-        alt_src = spec["glyphs"][0] + ".alt"
-        if len(spec["glyphs"]) == 1 and alt_src in mona_names:
+        # alternate design, if Monaspace ships one (cv99 toggles to it);
+        # composed sequences take each component's .alt where it exists
+        alt_glyphs = [g + ".alt" if g + ".alt" in mona_names else g
+                      for g in spec["glyphs"]]
+        if any(g.endswith(".alt") for g in alt_glyphs):
             pen = T2CharStringPen(pen_width(private, width), font.getGlyphSet())
-            draw_clean([(mona_gs, alt_src,
-                         (MONA_K, 0, 0, MONA_K,
-                          (cells - 1) * MONA_CELL * MONA_K, dy))], pen)
+            draw_clean([(mona_gs, gname, (MONA_K, 0, 0, MONA_K, dx, dy))
+                        for gname, dx in zip(alt_glyphs, offsets)], pen)
             alt_name = alloc_glyph_name(font)
             append_glyph(font, td, alt_name, pen.getCharString(private=private),
-                         fd_index, width)
+                         fd_index, width, None, vdon)
             alts[name] = alt_name
+            n_alt += 1
 
+    print(f"  cv99 alternates: {n_alt}")
+    if n_alt == 0:
+        print("  WARNING: no .alt designs found — Monaspace may have renamed "
+              "its alternate glyphs; cv99 will be empty")
     return added
 
 
@@ -481,7 +728,38 @@ def _new_lookup(gsub, subtable):
     return gsub.LookupList.LookupCount - 1
 
 
-def _new_feature(gsub, tag, lookup_indices):
+def _langsys_list(gsub):
+    for script in gsub.ScriptList.ScriptRecord:
+        for ls in [script.Script.DefaultLangSys] + [
+                r.LangSys for r in script.Script.LangSysRecord]:
+            if ls is not None:
+                yield ls
+
+
+def _existing_feature_index(gsub, tag):
+    """Index of a FeatureRecord with `tag` that some LangSys already uses —
+    merging into it beats appending a second record with the same tag
+    (shapers take the first match and the rest is dead weight)."""
+    used = set()
+    for ls in _langsys_list(gsub):
+        used.update(ls.FeatureIndex)
+    for i, fr in enumerate(gsub.FeatureList.FeatureRecord):
+        if fr.FeatureTag == tag and i in used:
+            return i
+    return None
+
+
+def _add_feature(gsub, tag, lookup_indices):
+    """Merge into an existing feature of the same tag, or append a new one.
+    Returns the feature index, or None when merged (already referenced)."""
+    i = _existing_feature_index(gsub, tag)
+    if i is not None:
+        feat = gsub.FeatureList.FeatureRecord[i].Feature
+        for li in lookup_indices:
+            if li not in feat.LookupListIndex:
+                feat.LookupListIndex.append(li)
+        feat.LookupCount = len(feat.LookupListIndex)
+        return None
     fr = otTables.FeatureRecord()
     fr.FeatureTag = tag
     fr.Feature = otTables.Feature()
@@ -493,16 +771,32 @@ def _new_feature(gsub, tag, lookup_indices):
     return gsub.FeatureList.FeatureCount - 1
 
 
-def add_gsub(font, added, alts, variant_maps=None):
+def sort_feature_list(gsub):
+    """OpenType requires FeatureList sorted by tag; re-sort and remap every
+    LangSys FeatureIndex through the old->new table."""
+    records = gsub.FeatureList.FeatureRecord
+    order = sorted(range(len(records)), key=lambda i: records[i].FeatureTag)
+    remap = {old: new for new, old in enumerate(order)}
+    gsub.FeatureList.FeatureRecord = [records[i] for i in order]
+    gsub.FeatureList.FeatureCount = len(records)
+    for ls in _langsys_list(gsub):
+        ls.FeatureIndex = sorted(remap[i] for i in ls.FeatureIndex
+                                 if i in remap)
+        ls.FeatureCount = len(ls.FeatureIndex)
+    return remap
+
+
+def add_gsub(font, added, alts, variant_maps=None, ligatures=None):
     """calt/liga carry every ligature (default on); each Monaspace-style
     group is additionally exposed as ssNN so users can toggle selectively
-    (calt off + ssNN on). cv01 switches to the .alt operator designs."""
+    (calt off + ssNN on). cv99 switches to the .alt operator designs."""
+    ligatures = LIGATURES if ligatures is None else ligatures
     cmap = font.getBestCmap()
     gsub = font["GSUB"].table
 
     groups = {}
     for seq, g in added.items():
-        grp = LIGATURES[seq]["group"]
+        grp = ligatures[seq]["group"]
         groups.setdefault(grp, {})[tuple(cmap[ord(c)] for c in seq)] = g
 
     # calt/liga use ONE combined lookup: LigatureSubst is longest-match only
@@ -521,26 +815,33 @@ def add_gsub(font, added, alts, variant_maps=None):
 
     feature_indices = []
     for tag in ("calt", "liga"):
-        feature_indices.append(_new_feature(gsub, tag, [combined_lookup]))
+        feature_indices.append(_add_feature(gsub, tag, [combined_lookup]))
     for grp in sorted(group_lookups):
-        feature_indices.append(_new_feature(gsub, grp, [group_lookups[grp]]))
+        feature_indices.append(_add_feature(gsub, grp, [group_lookups[grp]]))
     if alts:
         alt_lookup = _new_lookup(gsub, otl.buildSingleSubstSubtable(alts))
-        feature_indices.append(_new_feature(gsub, "cv99", [alt_lookup]))
+        feature_indices.append(_add_feature(gsub, "cv99", [alt_lookup]))
     for tag in sorted(variant_maps or {}):
         vlookup = _new_lookup(
             gsub, otl.buildSingleSubstSubtable(variant_maps[tag]))
-        feature_indices.append(_new_feature(gsub, tag, [vlookup]))
+        feature_indices.append(_add_feature(gsub, tag, [vlookup]))
+    feature_indices = [i for i in feature_indices if i is not None]
 
-    for script in gsub.ScriptList.ScriptRecord:
-        langsys_list = [script.Script.DefaultLangSys] + [
-            ls.LangSys for ls in script.Script.LangSysRecord
-        ]
-        for ls in langsys_list:
-            if ls is None:
-                continue
-            ls.FeatureIndex.extend(feature_indices)
-            ls.FeatureCount = len(ls.FeatureIndex)
+    for ls in _langsys_list(gsub):
+        ls.FeatureIndex.extend(i for i in feature_indices
+                               if i not in ls.FeatureIndex)
+        ls.FeatureCount = len(ls.FeatureIndex)
+    sort_feature_list(gsub)
+
+
+def rescaled_advance(adv, cell):
+    """New advance for `adv` under a 667 -> `cell` rescale, or None when the
+    glyph is left alone. Every whole number of half-width cells rescales —
+    the old hardcoded {667, 1334, 2001} map silently skipped the 4-cell
+    ligatures (2668, e.g. '<-->')."""
+    if adv > 0 and adv % CELL == 0:
+        return (adv // CELL) * cell
+    return None
 
 
 def rescale(font, cell, ky=None):
@@ -548,77 +849,179 @@ def rescale(font, cell, ky=None):
     Isotropic by default — Adobe's own SHCJ recipe. Pass `ky` to keep a
     taller vertical scale (condensed experiment: terminal fonts like
     HackGen/PlemolJP run cap/half ~1.3 vs SCP's roomy 1.09)."""
-    scale_map = {667: cell, 1334: 2 * cell, 2001: 3 * cell}
     cff = font["CFF "].cff
     td = cff.topDictIndex.items[0]
     gs = font.getGlyphSet()
     hmtx = font["hmtx"]
-    k = cell / 667
+    k = cell / CELL
     ky = k if ky is None else ky
     new_cs = {}
     for name in font.getGlyphOrder():
         adv, lsb = hmtx.metrics[name]
-        if adv not in scale_map:
+        new_adv = rescaled_advance(adv, cell)
+        if new_adv is None:
             continue
         gid = font.getGlyphID(name)
         private = td.FDArray[td.FDSelect[gid]].Private
-        pen = T2CharStringPen(pen_width(private, scale_map[adv]), gs)
+        pen = T2CharStringPen(pen_width(private, new_adv), gs)
         gs[name].draw(TransformPen(pen, (k, 0, 0, ky, 0, 0)))
         new_cs[name] = pen.getCharString(private=private)
-        hmtx.metrics[name] = (scale_map[adv], round(lsb * k))
+        hmtx.metrics[name] = (new_adv, round(lsb * k))
     for name, cs in new_cs.items():  # swap after drawing everything
         td.CharStrings.charStringsIndex[td.CharStrings.charStrings[name]] = cs
     # the average follows the half-width layer it describes
     font["OS/2"].xAvgCharWidth = round(font["OS/2"].xAvgCharWidth * k)
 
 
+def update_bbox(font):
+    """Recompute the font bounding box. Grafting, widening and rescaling all
+    move ink around, and nothing else rewrites CFF FontBBox / head — a stale
+    box makes rasterizers clip or mis-cache glyphs."""
+    gs = font.getGlyphSet()
+    xmin = ymin = xmax = ymax = None
+    for name in font.getGlyphOrder():
+        pen = BoundsPen(gs)
+        gs[name].draw(pen)
+        if pen.bounds is None:
+            continue
+        x0, y0, x1, y1 = pen.bounds
+        xmin = x0 if xmin is None else min(xmin, x0)
+        ymin = y0 if ymin is None else min(ymin, y0)
+        xmax = x1 if xmax is None else max(xmax, x1)
+        ymax = y1 if ymax is None else max(ymax, y1)
+    if xmin is None:
+        return None
+    box = [math.floor(xmin), math.floor(ymin), math.ceil(xmax), math.ceil(ymax)]
+    cff = font["CFF "].cff
+    cff.topDictIndex.items[0].FontBBox = box
+    head = font["head"]
+    head.xMin, head.yMin, head.xMax, head.yMax = box
+    return box
+
+
+def face_matches(only, weight, face_label, suffix):
+    """Command-line filter. Exact on the weight, the full face label or the
+    variant suffix, plus a word-boundary prefix so "Regular" still takes
+    "Regular Italic" — but "Light" no longer matches "ExtraLight"."""
+    if only is None:
+        return True   # "" is a real filter: the base (suffix-less) family
+    return (face_label == only or weight == only or suffix == only
+            or face_label.startswith(only + " "))
+
+
+def build_face(job):
+    """Build one output face. Runs in its own process under the pool, so it
+    takes plain data and returns plain data."""
+    (suffix, cell, comp, term, weight, ref_name, shs_file, italic,
+     env, shcj_ttc, out_dir) = job
+    face_label = f"{weight}{' Italic' if italic else ''}"
+    mona_src = _vf_source(env["MONA_VF"], MONA_K,
+                          {"wght": 0, "wdth": 100, "slnt": 0})
+    scp_src = _vf_source(env["SCP_VF_I" if italic else "SCP_VF_U"], SCP_K,
+                         {"wght": 0})
+    ref = _shcj_ref(shcj_ttc, ref_name + (" Italic" if italic else ""))
+    target = bar_thickness(ref, ref.getBestCmap()[ord("=")])
+    if comp:
+        target *= CELL / cell  # pre-inflate; rescale undoes it
+    scp = scp_src.matched(target)
+    base = TTFont(Path(env["SHS_DIR"]) / shs_file)
+    n_scp, n_ref, default_map = graft_halfwidth(base, scp, ref)
+    variant_maps = import_scp_variants(base, scp, default_map)
+    copy_line_metrics(base, ref)
+    # the outlines' real slant lives in the SCP Italic instance; SHCJ's
+    # italic faces declare italicAngle=0, so they can't be the source
+    ref_angle = (scp["post"].italicAngle or ref["post"].italicAngle or -12.0) \
+        if italic else None
+    mona = mona_src.matched(target, ref_angle)
+    alts = {}
+    added = add_glyphs(base, mona, alts, LIGATURES)
+    add_gsub(base, added, alts, variant_maps, LIGATURES)
+    if cell != CELL:
+        rescale(base, cell)
+    if term:
+        # ambiguous-width first (adv==1000 probe), then widen CJK
+        narrow_ambiguous(base, cell)
+        widen_fullwidth(base, cell)
+    ps = set_names(base, suffix, weight, italic,
+                   ref_angle if ref_angle is not None else -12.0)
+    update_bbox(base)
+    out = Path(out_dir) / f"{ps}.otf"
+    base.save(out)
+    return (f"{face_label}{f' [{suffix}]' if suffix else ''}: "
+            f"scp={n_scp} shcj={n_ref} ligs={len(added)} -> {out.name}")
+
+
+_VF_CACHE = {}      # per-process: VFSource keeps its loaded VF + instances
+_REF_CACHE = {}
+
+
+def _vf_source(path, scale, axes):
+    key = (str(path), scale, tuple(sorted(axes.items())))
+    if key not in _VF_CACHE:
+        _VF_CACHE[key] = VFSource(path, scale, axes)
+    return _VF_CACHE[key]
+
+
+def _shcj_ref(ttc_path, name):
+    key = str(ttc_path)
+    if key not in _REF_CACHE:
+        _REF_CACHE[key] = {f["name"].getDebugName(4): f
+                           for f in TTCollection(ttc_path).fonts}
+    refs = _REF_CACHE[key]
+    try:
+        return refs[name]
+    except KeyError:
+        print(f"reference face not found: {name!r}", file=sys.stderr)
+        print("available: " + ", ".join(sorted(refs)), file=sys.stderr)
+        sys.exit(1)
+
+
 def main():
     only = sys.argv[1] if len(sys.argv) > 1 else None
     env = {k: os.environ.get(k) for k in
            ("SHS_DIR", "SCP_VF_U", "SCP_VF_I", "MONA_VF")}
+    env["SHCJ_TTC"] = os.environ.get(
+        "SHCJ_TTC", str(ROOT / "upstream" / "SourceHanCodeJP.ttc"))
     missing = [k for k, v in env.items() if not v or not Path(v).exists()]
     if missing:
         sys.exit(f"missing env: {missing}")
-    shcj_ttc = os.environ.get("SHCJ_TTC", ROOT / "upstream" / "SourceHanCodeJP.ttc")
-    mona_src = VFSource(env["MONA_VF"], MONA_K, {"wght": 0, "wdth": 100, "slnt": 0})
-    scp_u = VFSource(env["SCP_VF_U"], SCP_K, {"wght": 0})
-    scp_i = VFSource(env["SCP_VF_I"], SCP_K, {"wght": 0})
-
-    refs = {f["name"].getDebugName(4): f for f in TTCollection(shcj_ttc).fonts}
     out_dir = ROOT / "dist"
     out_dir.mkdir(exist_ok=True)
 
-    for suffix, (cell, comp, term) in VARIANTS.items():
+    jobs = []
+    for suffix, var in VARIANTS.items():
         for weight, ref_name, shs_file in FACES:
             for italic in (False, True):
                 face_label = f"{weight}{' Italic' if italic else ''}"
-                if only and only not in face_label:
+                if not face_matches(only, weight, face_label, suffix):
                     continue
-                ref = refs[ref_name + (" Italic" if italic else "")]
-                target = bar_thickness(ref, ref.getBestCmap()[ord("=")])
-                if comp:
-                    target *= CELL / cell  # pre-inflate; rescale undoes it
-                scp = (scp_i if italic else scp_u).matched(target)
-                base = TTFont(Path(env["SHS_DIR"]) / shs_file)
-                n_scp, n_ref, default_map = graft_halfwidth(base, scp, ref)
-                variant_maps = import_scp_variants(base, scp, default_map)
-                copy_line_metrics(base, ref)
-                mona = mona_src.matched(
-                    target, ref["post"].italicAngle if italic else None)
-                alts = {}
-                added = add_glyphs(base, mona, alts)
-                add_gsub(base, added, alts, variant_maps)
-                if cell != CELL:
-                    rescale(base, cell)
-                if term:
-                    # ambiguous-width first (adv==1000 probe), then widen CJK
-                    narrow_ambiguous(base, cell)
-                    widen_fullwidth(base, cell)
-                ps = set_names(base, suffix, weight, italic)
-                out = out_dir / f"{ps}.otf"
-                base.save(out)
-                print(f"{face_label}{f' [{suffix}]' if suffix else ''}: "
-                      f"scp={n_scp} shcj={n_ref} ligs={len(added)} -> {out.name}")
+                jobs.append((suffix, var.cell, var.comp, var.term, weight,
+                             ref_name, shs_file, italic, env,
+                             env["SHCJ_TTC"], str(out_dir)))
+    if not jobs:
+        sys.exit(f"no face matches {only!r}")
+
+    failures = []
+    if only:   # a filtered run is usually one or two faces: keep it simple
+        for job in jobs:
+            try:
+                print(build_face(job))
+            except Exception as exc:
+                failures.append((job[4], job[0], exc))
+    else:
+        with concurrent.futures.ProcessPoolExecutor() as pool:
+            futures = {pool.submit(build_face, j): j for j in jobs}
+            for fut in concurrent.futures.as_completed(futures):
+                job = futures[fut]
+                try:
+                    print(fut.result())
+                except Exception as exc:
+                    failures.append((job[4], job[0], exc))
+    if failures:
+        for weight, suffix, exc in failures:
+            print(f"FAILED {weight} [{suffix or 'base'}]: {exc!r}",
+                  file=sys.stderr)
+        sys.exit(f"{len(failures)}/{len(jobs)} faces failed")
 
 
 if __name__ == "__main__":

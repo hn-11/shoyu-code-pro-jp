@@ -86,22 +86,32 @@ def main():
                 continue
             print(f"patching: {src.name}")
             flat = Path(tmp) / src.name
-            subprocess.run(
-                ["fontforge", "-script", str(flatten_script), str(src), str(flat)],
-                check=True, capture_output=True, env=ff_env())
+            try:
+                subprocess.run(
+                    ["fontforge", "-script", str(flatten_script), str(src), str(flat)],
+                    check=True, capture_output=True, text=True, env=ff_env())
+            except subprocess.CalledProcessError as e:
+                print(e.stdout)
+                print(e.stderr)
+                raise
             r = subprocess.run(
                 ["fontforge", "-script", str(patcher_dir / "font-patcher"),
                  "--complete", "--quiet", "--outputdir", str(OUT), str(flat)],
-                capture_output=True, text=True, env=ff_env())
+                check=False, capture_output=True, text=True, env=ff_env())
             if r.returncode != 0:
                 print(r.stdout)
                 print(r.stderr)
                 raise SystemExit(f"font-patcher failed on {src.name}")
-            produced = [l.split("'")[1] for l in r.stdout.splitlines()
-                        if "===>" in l and "'" in l]
-            for p in produced:
-                p = ROOT / p if not Path(p).is_absolute() else Path(p)
-                final = fix_names(Path(p), src)
+            produced = [ln.split("'")[1] for ln in r.stdout.splitlines()
+                        if "===>" in ln and "'" in ln]
+            if not produced:
+                print(r.stdout)
+                raise SystemExit(
+                    f"no faces parsed from font-patcher output for {src.name} "
+                    "(check font-patcher's \"===> '...'\" output format for changes)")
+            for prod in produced:
+                path = Path(prod) if Path(prod).is_absolute() else ROOT / prod
+                final = fix_names(path, src)
                 print(f"  -> {final.name}")
 
 

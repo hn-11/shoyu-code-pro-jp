@@ -17,7 +17,7 @@ SHCJ ユーザーの見た目の連続性が保たれる。
 
 **Monaspace 由来の50種**を収録（[githubnext/monaspace](https://github.com/githubnext/monaspace) v1.400、OFL）。
 主要どころ: `!=` `==` `===` `!==` `<=` `>=` `->` `<-` `=>` `~>` `:=` `::`
-`<<=` `>>=` `=<<` `|>` `<|` `<>` `</>` `//` `#[` `...` `&&` `||` ほか（全50種）。
+`<<=` `>>=` `=<<` `|>` `<|` `<>` `</>` `//` `#[` `...` `&=` `||` ほか（全50種）。
 全リストは `data/mona_ligs.json` を参照。
 
 移植するのは演算子グリフのみで、英数字は SHCJ（= Source Code Pro）のまま。
@@ -35,8 +35,8 @@ GSUB は `calt` / `liga` 両登録（全合字が既定で有効）。加えて 
 | ss04 | パイプ | `\|>` `<\|` |
 | ss05 | コロン | `::` `:=` |
 | ss06 | ドット | `..` `...` |
-| ss07 | コメント | `//` `#!` |
-| ss08 | 反復・論理 | `&&` `\|\|` `<<` `>>` |
+| ss07 | コメント | `//` `///` |
+| ss08 | 反復・論理・その他 | `\|\|` `<<` `>>` `#[` `#(` `&=` |
 | cv99 | 演算子の代替デザイン（Monaspace の .alt） | |
 
 さらに **Source Code Pro 自身の字形バリアントを貫通**させている:
@@ -61,6 +61,9 @@ SCP 純正の文字変異）、`salt`、SCP の stylistic set は ss11〜ss17 �
 | Shoyu Code Pro JP | 667:1000 (2:3) | 69 | エディタ用（SHCJ の見た目） |
 | Shoyu Code Pro JP Term | 600:1200 (1:2) | 69 | ターミナル用 |
 | Shoyu Code Pro JP 35 | 600:1000 (3:5) | 62 | SCP 原寸・原太（本家忠実） |
+
+`=`バーの値は現在ピン留めしている上流タグでの実測値（目安）。上流が
+更新されビルドし直すと、各面の太さマッチングの結果として多少前後しうる。
 
 **Term** は発想を逆にした 1:2: 欧文を縮めず、**全角の送りを 1200
 （=600×2）に広げてグリフを中央配置**する。欧文は SCP 原寸（600）に
@@ -104,6 +107,15 @@ font-patcher がグリフを Unicode で引けないため、パッチ前に Fon
 ファミリー名を `Shoyu Code Pro JP` にリネームしてあるので、
 オリジナルと共存できる。
 
+- **macOS**: OTF をダブルクリックして「フォントブック」でインストール、または
+  `~/Library/Fonts/` にコピー。
+- **Windows**: OTF を右クリックして「インストール」を選択（全ユーザー適用は
+  「すべてのユーザー用にインストール」）。
+- **Linux**: `~/.local/share/fonts/`（ユーザー単位）または
+  `/usr/local/share/fonts/`（全ユーザー）にコピーし、`fc-cache -f` を実行。
+
+ビルドやリガチャの追加・改造に興味がある場合は [CONTRIBUTING.md](CONTRIBUTING.md) を参照。
+
 ## ビルド
 
 4つの上流（Source Han Sans JP / Source Code Pro VF / Monaspace VF /
@@ -112,13 +124,19 @@ Source Han Code JP）を取得して環境変数で場所を渡す。具体的�
 
 ```sh
 pip install -r requirements.txt
-SHS_DIR=... SCP_VF_U=... SCP_VF_I=... MONA_VF=... \
+SHS_DIR=... SCP_VF_U=... SCP_VF_I=... MONA_VF=... SHCJ_TTC=upstream/SourceHanCodeJP.ttc \
   python scripts/build.py            # 全ファミリー（2:3 / 35 × 14面）
   python scripts/build.py "Regular"  # Regular系のみ（動作確認用）
 python scripts/verify.py dist/ShoyuCodeProJP-Regular.otf   # 回帰テスト
 python scripts/nerdpatch.py <FontPatcher dir>              # NF 変種
 python scripts/makeotc.py                                  # .ttc 化
 ```
+
+`SHCJ_TTC` は [Source Han Code JP の GitHub Releases](https://github.com/adobe-fonts/source-han-code-jp/releases)
+から `SourceHanCodeJP.ttc` をダウンロードして指すパス（`.github/workflows/ci.yml`
+と同じ取得元・同じ手順）。他の3変数（`SHS_DIR` / `SCP_VF_U` / `SCP_VF_I` /
+`MONA_VF`）も同様に、それぞれ Source Han Sans JP / Source Code Pro VF /
+Monaspace VF の Releases から取得する。
 
 ## 仕組み
 
