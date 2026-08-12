@@ -13,15 +13,31 @@ from fontTools.ttLib import TTCollection, TTFont
 DIST = Path(__file__).resolve().parent.parent / "dist"
 FAMILIES = ["ShoyuCodeProJP", "ShoyuCodeProJP35", "ShoyuCodeProJPTerm"]
 
+WEIGHT_ORDER = ["ExtraLight", "Light", "Normal", "Regular", "Medium", "Bold", "Heavy"]
+EXPECTED = len(WEIGHT_ORDER) * 2  # weights x (upright, italic)
+
+
+def face_key(p, fam):
+    stem = p.stem[len(fam) + 1:]  # strip "{fam}-"
+    italic = stem.endswith("Italic")
+    weight = stem[: -len("Italic")] if italic else stem
+    w = WEIGHT_ORDER.index(weight) if weight in WEIGHT_ORDER else len(WEIGHT_ORDER)
+    return (w, italic)
+
 
 def main():
     for fam in FAMILIES:
-        faces = sorted(
-            p for p in DIST.glob(f"{fam}-*.otf")
-        )
+        faces = sorted(DIST.glob(f"{fam}-*.otf"), key=lambda p: face_key(p, fam))
         if not faces:
             print(f"skip {fam}: no faces")
             continue
+        if len(faces) != EXPECTED:
+            present = sorted(p.stem[len(fam) + 1:] for p in faces)
+            wanted = [w + s for w in WEIGHT_ORDER for s in ("", "Italic")]
+            missing = sorted(set(wanted) - set(present))
+            raise SystemExit(
+                f"{fam}: expected {EXPECTED} faces, found {len(faces)}\n"
+                f"  present: {present}\n  missing: {missing}")
         tc = TTCollection()
         tc.fonts = [TTFont(p) for p in faces]
         out = DIST / f"{fam}.ttc"
