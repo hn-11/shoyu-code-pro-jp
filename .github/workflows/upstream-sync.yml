@@ -165,7 +165,9 @@ jobs:
 
       - name: Merge
         if: steps.pr.outputs.pull-request-number != ''
-        run: gh pr merge --squash --delete-branch "${{ steps.pr.outputs.pull-request-number }}"
+        # -R keeps gh in API-only mode: without it, --delete-branch also tries to
+        # delete the local branch and check out main inside the runner checkout.
+        run: gh pr merge -R "${{ github.repository }}" --squash --delete-branch "${{ steps.pr.outputs.pull-request-number }}"
 
       # A tag pushed with GITHUB_TOKEN would not start release.yml (GitHub
       # suppresses workflow triggers from the default token), so the release is
