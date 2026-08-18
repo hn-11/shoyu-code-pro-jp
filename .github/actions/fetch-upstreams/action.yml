@@ -1,6 +1,6 @@
 # Single source of truth for the pinned upstream font releases used by both
 # ci.yml and release.yml. To bump a pin: edit the `env:` defaults below,
-# nowhere else (see check-upstream.yml for the automated staleness check).
+# nowhere else - upstream-sync.yml rewrites exactly this block weekly.
 name: Fetch upstreams
 description: >
   Download and cache the pinned Source Han Sans / Source Code Pro /

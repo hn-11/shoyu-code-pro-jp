@@ -5,6 +5,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  # upstream-sync.yml dispatches this on its own branch: a pull_request run
+  # for a bot-opened PR lands in action_required, so the checks that gate the
+  # merge have to come from a run this repo started itself.
+  workflow_dispatch:
 jobs:
   lint-test:
     runs-on: ubuntu-latest

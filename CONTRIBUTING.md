@@ -94,19 +94,33 @@ python scripts/nerdpatch.py <FontPatcher dir>
 `MONA_TAG` / `SHCJ_TAG`）に一元化されており、`ci.yml` / `release.yml` は
 このアクションを共有しています。
 
-`check-upstream.yml`（毎週月曜 実行）が各上流の最新リリースをピン留め
-タグと比較し、ずれていれば自動で Issue を起票します。Issue が来たら:
+通常は手で更新する必要はありません。`upstream-sync.yml`（毎週月曜 実行、
+`workflow_dispatch` でも起動可）が検知から出荷までを通しで回します:
 
-1. `.github/actions/fetch-upstreams/action.yml` のピンを新しいバージョンに
-   更新する（キャッシュキーはピンから自動導出されるので他に触る場所はない）。
-2. ローカルまたは CI でビルドし、`scripts/verify.py` が通ることを確認する。
-3. 見た目に影響しうる変更（合字・ウェイトマッチング・グリフ形状など）が
-   あれば README の該当箇所（`=`バーの実測値など）も見直す。
-4. 問題なければ新しいタグでリリースを切る（`v*` タグを push すると
-   `release.yml` が起動する）。
+1. `scripts/bump_pins.py` が各上流の `releases/latest` を引き、ピンを書き
+   換える（ダウンロード URL を事前に HEAD で検証するので、上流がアセット
+   名を変えた場合はここで落ちる）。
+2. `chore/upstream-sync` ブランチに PR を作成する。
+3. CI（`lint-test` / `build`）が緑になるのを待って squash マージする。
+4. パッチを 1 つ上げたタグで `release.yml` を dispatch する。
+
+Issue は起票しません。PR 自体が同じ情報に加えて「そのピンでビルドが通る」
+証拠を持っているためです。
+
+新しい上流が字形を劣化させている場合は **PR を閉じてください**。ピンは
+据え置かれ、翌週の実行で PR が開き直ります。恒久的に追従したくない場合は
+`scripts/bump_pins.py` の対象から外します。
+
+見た目に影響しうる変更（合字・ウェイトマッチング・グリフ形状など）が
+あった場合は、README の該当箇所（`=`バーの実測値など）も見直してください。
+これは自動化の対象外です。
+
+手で追従する場合は `.github/actions/fetch-upstreams/action.yml` のピンを
+書き換えるだけで済みます（キャッシュキーはピンから自動導出される）。
 
 ## Issue / Pull Request
 
-バグ報告や上流更新報告には `.github/ISSUE_TEMPLATE/` のテンプレートを
-利用してください。Pull Request は変更内容と動作確認方法（実行した
+バグ報告には `.github/ISSUE_TEMPLATE/` のテンプレートを利用して
+ください（上流更新は `upstream-sync.yml` が PR で扱うため、Issue の
+テンプレートはありません）。Pull Request は変更内容と動作確認方法（実行した
 `verify.py` の対象面など）を簡潔に記載してください。

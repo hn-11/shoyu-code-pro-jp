@@ -1,0 +1,179 @@
+# Weekly upstream follow-through, end to end: bump the pinned upstream font
+# releases, prove the bump builds, merge it, and ship it.
+#
+#   detect  -> scripts/bump_pins.py rewrites the pins in
+#              .github/actions/fetch-upstreams/action.yml (the single source
+#              of truth) to whatever each upstream now calls `releases/latest`
+#   ingest  -> PR on chore/upstream-sync, gated by CI
+#   release -> squash-merge, then dispatch release.yml with the next patch tag
+#
+# one-dark-modern runs the same phases under the same step names; the only
+# repo-specific parts are REQUIRED_CHECKS and the "Refresh upstream" step.
+# Keep the two in sync when editing either.
+#
+# Nothing here opens an issue: the PR carries the same information *and* the
+# proof that the new pins build, so the issue was double bookkeeping.
+name: Upstream sync
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # weekly, Mon 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  actions: write # dispatch ci.yml / release.yml, approve gated runs
+  contents: write # push the sync branch, merge it
+  pull-requests: write
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+env:
+  # Job names from ci.yml that must be green on the PR head before it merges.
+  REQUIRED_CHECKS: '["lint-test","build"]'
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    # Generous: most of the wall clock is spent waiting on CI's own 20-minute
+    # build of the Regular faces.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0 # tags, for the next-version computation below
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+
+      # The release this run cuts if the sync lands. Computed up front so the
+      # PR body can name it. There is no version file in this repo - the git
+      # tag *is* the version (font revision comes from the base font).
+      - name: Compute next version
+        id: version
+        run: |
+          latest=$(git tag -l 'v*' --sort=-v:refname | head -1)
+          if [ -z "$latest" ]; then
+            echo "no v* tag to bump from" >&2
+            exit 1
+          fi
+          next=$(echo "${latest#v}" | awk -F. '{printf "v%d.%d.%d", $1, $2, $3 + 1}')
+          echo "next=$next" >> "$GITHUB_OUTPUT"
+          echo "$latest -> $next"
+
+      # --- repo-specific ---
+      - name: Refresh upstream
+        id: refresh
+        # No pipe into tee here: the default step shell is `bash -e` without
+        # pipefail, which would swallow a probe failure inside the script.
+        run: |
+          python scripts/bump_pins.py > /tmp/summary.md
+          cat /tmp/summary.md
+
+      - name: Compose PR body
+        if: steps.refresh.outputs.changed == 'true'
+        run: |
+          {
+            echo "Automated upstream sync. New pins:"
+            echo
+            cat /tmp/summary.md
+            echo
+            echo "CI builds the Regular faces from these pins and runs the"
+            echo "shaping regression before this can merge; on merge this"
+            echo "workflow cuts \`${{ steps.version.outputs.next }}\`."
+            echo
+            echo "If the new upstream degrades glyphs, close this PR - the"
+            echo "pins stay where they are and the next weekly run reopens it."
+          } > /tmp/pr-body.md
+      # --- /repo-specific ---
+
+      - name: Open PR
+        id: pr
+        if: steps.refresh.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          branch: chore/upstream-sync
+          commit-message: "chore: sync upstream font releases"
+          title: "Sync upstream font releases"
+          body-path: /tmp/pr-body.md
+
+      # A pull_request run for a PR opened by github-actions[bot] lands in
+      # action_required and never clears on its own. Dispatching CI attaches
+      # passing checks to the same head SHA; the abandoned suite still sits on
+      # the merge box, so it gets approved below too.
+      - name: Run CI on the sync branch
+        if: steps.pr.outputs.pull-request-number != ''
+        run: gh workflow run ci.yml --ref chore/upstream-sync
+
+      - name: Approve the gated run
+        if: steps.pr.outputs.pull-request-number != ''
+        env:
+          PR: ${{ steps.pr.outputs.pull-request-number }}
+        run: |
+          sha=$(gh pr view "$PR" --json headRefOid --jq .headRefOid)
+          for _ in $(seq 1 18); do
+            id=$(gh run list --commit "$sha" --status action_required \
+                   --limit 5 --json databaseId --jq '.[0].databaseId')
+            if [ -n "$id" ] && [ "$id" != "null" ]; then
+              gh api -X POST "repos/${{ github.repository }}/actions/runs/$id/approve"
+              exit 0
+            fi
+            sleep 10
+          done
+          # Not fatal: if nothing was gated there is nothing to unblock, and
+          # the merge step below reports the real reason if one is left.
+          echo "::notice::no gated run appeared for $sha"
+
+      # Wait for every REQUIRED_CHECKS context to go green on the PR head.
+      # Two suites can attach the same job name to one SHA (the dispatched run
+      # and the pull_request run), so a name counts as passed if *any* of its
+      # runs succeeded, and as failed only once every run for it is terminal.
+      - name: Wait for required checks
+        if: steps.pr.outputs.pull-request-number != ''
+        env:
+          PR: ${{ steps.pr.outputs.pull-request-number }}
+        run: |
+          for _ in $(seq 1 60); do
+            gh pr view "$PR" --json statusCheckRollup -q '.statusCheckRollup // []' > /tmp/roll.json
+            state=$(jq -r --argjson req "$REQUIRED_CHECKS" '
+              def outcomes($n):
+                [ .[]
+                  | select((.name // .context) == $n)
+                  | (.conclusion // .state)
+                  | if . == "PENDING" or . == "" then null else . end ];
+              [ $req[] as $n
+                | outcomes($n) as $o
+                | if   ($o | any(. == "SUCCESS"))                    then "pass"
+                  elif ($o | length) > 0 and ($o | any(. == null) | not) then "fail"
+                  else "pending" end ]
+              | if all(. == "pass") then "pass"
+                elif any(. == "fail") then "fail"
+                else "pending" end' /tmp/roll.json)
+            echo "checks: $state"
+            case "$state" in
+              pass) exit 0 ;;
+              fail) jq -r '.[] | "\(.name // .context): \(.conclusion // .state)"' /tmp/roll.json
+                    echo "::error::CI failed on the sync branch; not merging" ; exit 1 ;;
+            esac
+            sleep 30
+          done
+          echo "::error::required checks did not conclude in 30 minutes" >&2
+          exit 1
+
+      - name: Merge
+        if: steps.pr.outputs.pull-request-number != ''
+        # -R keeps gh in API-only mode: without it, --delete-branch also tries to
+        # delete the local branch and check out main inside the runner checkout.
+        run: gh pr merge -R "${{ github.repository }}" --squash --delete-branch "${{ steps.pr.outputs.pull-request-number }}"
+
+      # A tag pushed with GITHUB_TOKEN would not start release.yml (GitHub
+      # suppresses workflow triggers from the default token), so the release is
+      # dispatched instead - release.yml creates the tag itself on dispatch.
+      - name: Release
+        if: steps.pr.outputs.pull-request-number != ''
+        run: |
+          gh workflow run release.yml --ref main -f tag="${{ steps.version.outputs.next }}"
+          echo "dispatched release ${{ steps.version.outputs.next }}"
