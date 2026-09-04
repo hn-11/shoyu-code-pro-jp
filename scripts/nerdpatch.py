@@ -42,7 +42,7 @@ def ff_env():
 def fix_names(patched: Path, src: Path) -> Path:
     """Rebuild the patched font's name table from the source font.
 
-    font-patcher can't parse SHCJ's subfamily scheme (EL/L/N/R/M/H + Italic)
+    font-patcher can't parse SHCJ's subfamily scheme (N/R/M/B/H + Italic)
     and collapses every face to "Regular", colliding on disk and at install
     time. Take the source names verbatim and splice in the NF marker.
     """

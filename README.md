@@ -63,8 +63,6 @@ SCP 純正の文字変異）、`salt`、SCP の stylistic set は ss11〜ss17 �
 
 ## ファミリー構成
 
-| ファミリー | 半角:全角 | 用途 |
-|-----------|-----------|------|
 | ファミリー | 半角:全角 | `=`バー | 用途 |
 |-----------|-----------|--------|------|
 | Shoyu Code Pro JP | 667:1000 (2:3) | 69 | エディタ用（SHCJ の見た目） |
@@ -144,7 +142,7 @@ Source Han Code JP）を取得して環境変数で場所を渡す。具体的�
 ```sh
 pip install -r requirements.txt
 SHS_DIR=... SCP_VF_U=... SCP_VF_I=... MONA_VF=... SHCJ_TTC=upstream/SourceHanCodeJP.ttc \
-  python scripts/build.py            # 全ファミリー（2:3 / 35 × 14面）
+  python scripts/build.py            # 全ファミリー（2:3 / 35 / Term × 10面）
   python scripts/build.py "Regular"  # Regular系のみ（動作確認用）
 python scripts/verify.py dist/ShoyuCodeProJP-Regular.otf   # 回帰テスト
 python scripts/nerdpatch.py <FontPatcher dir>              # NF 変種
