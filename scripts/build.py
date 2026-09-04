@@ -754,6 +754,40 @@ def narrow_ambiguous(font, cell, scp, mona):
     return len(new_map)
 
 
+HALFWIDTH_FORMS = (0xFF61, 0xFFDC)   # U+FF61-FFDC: half-width kana, ￩ etc.
+
+
+def fit_halfwidth_forms(font, cell):
+    """600-cell families only: SHCJ draws the half-width forms (ｱ ｡ ｢ ...)
+    at 500 — half of its 1000 em, which lands on neither its own 667 cell
+    nor ours. The 2:3 family keeps that as SHCJ's look; here the glyph is
+    centered in one cell so the terminal grid holds. Runs after rescale
+    (the 500 glyphs are untouched by it: 500 % 667 != 0)."""
+    cmap = font.getBestCmap()
+    cff = font["CFF "].cff
+    td = cff.topDictIndex.items[0]
+    gs = font.getGlyphSet()
+    hmtx = font["hmtx"]
+    done = set()
+    for cp in range(HALFWIDTH_FORMS[0], HALFWIDTH_FORMS[1] + 1):
+        name = cmap.get(cp)
+        if name is None or name in done:
+            continue
+        adv, lsb = hmtx.metrics[name]
+        if adv == 0 or adv == cell:
+            continue
+        shift = (cell - adv) // 2
+        gid = font.getGlyphID(name)
+        private = td.FDArray[td.FDSelect[gid]].Private
+        pen = T2CharStringPen(pen_width(private, cell), gs)
+        gs[name].draw(TransformPen(pen, (1, 0, 0, 1, shift, 0)))
+        td.CharStrings.charStringsIndex[td.CharStrings.charStrings[name]] = \
+            pen.getCharString(private=private)
+        hmtx.metrics[name] = (cell, lsb + shift)
+        done.add(name)
+    return len(done)
+
+
 def widen_fullwidth(font, cell):
     """Term variant: widen every full-width glyph's advance to two cells
     (2 x cell) and center the unchanged 1000-unit outline. The Latin layer
@@ -1271,6 +1305,7 @@ def build_face(job):
     add_gsub(base, added, alts, variant_maps, LIGATURES, variant_names)
     if cell != CELL:
         rescale(base, cell)
+        fit_halfwidth_forms(base, cell)
     if term:
         # ambiguous-width first (adv==1000 probe), then widen CJK
         narrow_ambiguous(base, cell, scp, mona)

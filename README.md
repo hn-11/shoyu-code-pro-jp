@@ -115,7 +115,10 @@ iTerm2 / WezTerm なら相当の設定で 2 セル取らせれば JP と同じ�
 太さを合わせている。SHCJ の ExtraLight（31u）は片側 14u 削る必要があり
 `:=` `...` の点が痩せすぎるので作らない。
 
-35 は半角グリフを 600/667 に等方縮小したもの（= オリジナル SCP の原寸復元）。全出力に Nerd Fonts
+35 は半角グリフを 600/667 に等方縮小したもの（= オリジナル SCP の原寸復元）。
+半角カナ（`ｱ` `｡` `｢` など）は SHCJ が 500 幅（1000 の半分）で持っていて 667 にも
+600 にも乗らないため、35 / Term では 600 セルに中央配置してグリッドに乗せる
+（2:3 の JP は SHCJ の見た目を優先してそのまま）。全出力に Nerd Fonts
 パッチ済み変種も生成する。NF ファミリー名は日本語プログラミングフォントの
 慣習（HackGen / PlemolJP / UDEV Gothic と同じ）に合わせ**変種名の後ろ**に付く:
 `Shoyu Code Pro JP NF` / `Shoyu Code Pro JP Term NF` / `Shoyu Code Pro JP 35 NF`。CID-keyed CFF のままでは

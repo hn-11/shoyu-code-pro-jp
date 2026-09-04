@@ -295,8 +295,11 @@ def test_erode_path_shrinks_every_side():
     import pathops
     bar = pathops.Path()
     pen = bar.getPen()
-    pen.moveTo((0, 0)); pen.lineTo((100, 0)); pen.lineTo((100, 30))
-    pen.lineTo((0, 30)); pen.closePath()
+    pen.moveTo((0, 0))
+    pen.lineTo((100, 0))
+    pen.lineTo((100, 30))
+    pen.lineTo((0, 30))
+    pen.closePath()
     out = build.erode_path(bar, 5)
     assert tuple(round(v) for v in out.bounds) == (5, 5, 95, 25)
 

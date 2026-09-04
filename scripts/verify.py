@@ -100,6 +100,8 @@ def main():
                   "\u2500": exp_half, "\u2460": exp_full, "\u203b": exp_full}
     else:
         policy = {"\u2192": exp_full, "\u2460": exp_full}
+    # half-width kana: SHCJ's 500 in the 2:3 family, one cell in the 600 ones
+    policy["\uff71"] = 500 if exp_half == 667 else exp_half
     # SCP-only Latin (ł ğ ₽) is grafted half-width in every family; so is
     # SHS's proportional ς — upright only, SCP Italic has no Greek
     policy.update({"\u0142": exp_half, "\u011f": exp_half, "\u20bd": exp_half})
@@ -253,8 +255,14 @@ def main():
     # more cells, so only y is comparable). '==' '<<' '>>' '||' repeat the
     # glyph outright; '~' has no such ligature ('~>' is a fused wave-arrow)
     # and is not checked.
-    from build import (FACES, MONA_STANDALONE, _contour_bounds,
-                       _record_contours, _shcj_ref, bar_thickness)
+    from build import (
+        FACES,
+        MONA_STANDALONE,
+        _contour_bounds,
+        _record_contours,
+        _shcj_ref,
+        bar_thickness,
+    )
     glyph_order = tf.getGlyphOrder()
 
     def y_rows(gname):
