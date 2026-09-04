@@ -82,9 +82,11 @@ SCP 純正の文字変異）、`salt`、SCP の stylistic set は ss11〜ss17 �
 系（Sarasa）のような細身設計の欧文を使うフォントが素直（機構は
 `rescale(ky=)` / `narrow_ambiguous()` として残してある）。
 
-各ファミリー 7ウェイト（ExtraLight / Light / Normal / Regular / Medium /
-Bold / Heavy）× 2スタイル（Upright / Italic — Italic は SCP の本物の
-イタリック、和文は SHCJ と同じく直立のまま）。
+各ファミリー 5ウェイト（Normal / Regular / Medium / Bold / Heavy）× 2スタイル
+（Upright / Italic — Italic は SCP の本物の
+イタリック、和文は SHCJ と同じく直立のまま）。SHCJ にある ExtraLight / Light は
+作らない: Monaspace VF の wght 下限（200）では `=` のバー厚が両面の実測値
+（31u / 47u）まで細くならず、合字だけ約2倍太い状態になるため。
 
 35 は半角グリフを 600/667 に等方縮小したもの（= オリジナル SCP の原寸復元）。全出力に Nerd Fonts
 パッチ済み変種も生成する。NF ファミリー名は日本語プログラミングフォントの

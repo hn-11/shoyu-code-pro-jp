@@ -92,9 +92,11 @@ VARIANTS = {
 }
 
 # (output weight name, SHCJ reference face, Source Han Sans static file)
+# SHCJ's ExtraLight / Light are not built: Monaspace's wght axis bottoms out
+# at 200 (bar ~59u at our scale) while those faces measure 31u / 47u, so the
+# ligatures came out about twice as heavy as the Latin around them. Nobody
+# codes in Light anyway — editors and terminals pick Regular + Bold.
 FACES = [
-    ("ExtraLight", "Source Han Code JP EL", "SourceHanSansJP-ExtraLight.otf"),
-    ("Light", "Source Han Code JP L", "SourceHanSansJP-Light.otf"),
     ("Normal", "Source Han Code JP N", "SourceHanSansJP-Normal.otf"),
     ("Regular", "Source Han Code JP R", "SourceHanSansJP-Regular.otf"),
     ("Medium", "Source Han Code JP M", "SourceHanSansJP-Medium.otf"),
