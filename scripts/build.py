@@ -17,21 +17,23 @@ not by name. Italic faces take SCP Italic VF + upright Japanese, matching
 SHCJ's own behavior.
 
 Families (suffix -> half-width cell):
-  ""   667  2:3 (SHCJ metrics) — editor AND terminal, as SHCJ always was
-  "35"  600  Source Code Pro's native proportion
+  ""     667  2:3 (SHCJ metrics) — editor AND terminal, as SHCJ always was
+  "35"   600  Source Code Pro's native proportion
+  "Term" 600  1:2 terminal grid: full-width widened to 1200 (see VARIANTS)
 
-A 1:2 "Console" variant was built and retired: squeezing SCP's roomy
-skeleton into a 500 cell loses too much (25% smaller Latin isotropically,
-or ~17% condensation + stroke-contrast skew anisotropically). The
-narrow_ambiguous/rescale machinery stays for anyone who wants it back.
+A separate, narrower 1:2 "Console" experiment (a 500 cell, not Term's 600)
+was built and retired: squeezing SCP's roomy skeleton down that far loses
+too much (25% smaller Latin isotropically, or ~17% condensation +
+stroke-contrast skew anisotropically). The rescale(ky=) machinery stays
+for anyone who wants it back.
 
 Usage:
   python scripts/build.py [FILTER]
-  FILTER matches a face when it equals the weight name ("Light"), the full
-  face label ("Light Italic"), the variant suffix ("35" / "Term" / "" for
+  FILTER matches a face when it equals the weight name ("Bold"), the full
+  face label ("Bold Italic"), the variant suffix ("35" / "Term" / "" for
   the base family), or is a leading word-run of the label ("Regular" also
-  takes "Regular Italic"). It is NOT a substring match — "Light" no longer
-  drags in "ExtraLight".
+  takes "Regular Italic", and "Bold" likewise takes "Bold Italic"). It is
+  a whole-word match, not a substring one.
 
 Env (all required):
   SHS_DIR  = dir with SourceHanSansJP-<Weight>.otf
@@ -373,7 +375,8 @@ def charstring_lsb(cs):
     lsb=0, which lies to anything that trusts hmtx over the outline."""
     try:
         bounds = cs.calcBounds(None)
-    except Exception:
+    except Exception as exc:
+        print(f"  WARNING: calcBounds failed for appended glyph ({exc}); lsb=0")
         return 0
     return round(bounds[0]) if bounds else 0
 
@@ -444,15 +447,13 @@ def graft_halfwidth(base, scp, ref):
             pen = T2CharStringPen(pen_width(private, CELL), scp_gs)
             if src[0] == "scp":
                 draw_clean([(scp_gs, src[1], (SCP_K, 0, 0, SCP_K, 0, 0))], pen)
-                lsb = round(scp["hmtx"][src[1]][1] * SCP_K)
                 from_scp += 1
             else:
                 draw_clean([(ref_gs, g, (1, 0, 0, 1, 0, 0))], pen)
-                lsb = ref_hm[g][1]
                 from_ref += 1
             name = alloc_glyph_name(base)
             append_glyph(base, td, name, pen.getCharString(private=private),
-                         fd_index, CELL, lsb, vdon)
+                         fd_index, CELL, None, vdon)
             made[src] = name
             if src[0] == "scp":
                 default_map[src[1]] = name
@@ -535,8 +536,7 @@ def import_scp_variants(base, scp, default_map):
                     append_glyph(
                         base, td, name,
                         pen.getCharString(private=private),
-                        fd_index, CELL,
-                        round(scp["hmtx"][dst][1] * SCP_K), vdon)
+                        fd_index, CELL, None, vdon)
                     imported[dst] = name
                 tag_maps.setdefault(tag, {})[default_map[src]] = imported[dst]
     return tag_maps
@@ -743,7 +743,7 @@ def mona_baseline_shift(font, mona, k=MONA_K):
 MONA_STANDALONE = "=<>|~"
 
 
-def replace_from_mona(font, mona, chars=MONA_STANDALONE):
+def replace_from_mona(font, mona, chars=MONA_STANDALONE, dy=None):
     """Swap the outlines of `chars` for Monaspace's, keeping name, advance
     and cmap. Same instance, scale, shear and baseline as the ligatures."""
     cff = font["CFF "].cff
@@ -751,7 +751,8 @@ def replace_from_mona(font, mona, chars=MONA_STANDALONE):
     cmap = font.getBestCmap()
     mona_cmap = mona.getBestCmap()
     mona_gs = mona.getGlyphSet()
-    dy = mona_baseline_shift(font, mona)
+    if dy is None:
+        dy = mona_baseline_shift(font, mona)
     replaced = []
     for ch in chars:
         name = cmap.get(ord(ch))
@@ -771,7 +772,7 @@ def replace_from_mona(font, mona, chars=MONA_STANDALONE):
     return replaced
 
 
-def add_glyphs(font, mona, alts, ligatures=None):
+def add_glyphs(font, mona, alts, ligatures=None, dy=None):
     """Append the imported ligature glyphs; return {seq: glyph name}.
     Alternate (.alt) designs are appended too and recorded in `alts`."""
     ligatures = LIGATURES if ligatures is None else ligatures
@@ -782,7 +783,8 @@ def add_glyphs(font, mona, alts, ligatures=None):
     mona_names = set(mona.getGlyphOrder())
     vdon = vmtx_donor(font, fullwidth=False)
 
-    dy = mona_baseline_shift(font, mona)
+    if dy is None:
+        dy = mona_baseline_shift(font, mona)
     # FD assignment: reuse the FD of an existing symbol glyph
     fd_index = td.FDSelect[font.getGlyphID(cmap[0x2260])]
     private = td.FDArray[fd_index].Private
@@ -974,6 +976,12 @@ def add_gsub(font, added, alts, variant_maps=None, ligatures=None):
     combined_lookup = _new_lookup(
         gsub, otl.buildLigatureSubstSubtable(combined))
 
+    # each ssNN group below gets its OWN subtable, so that longest-match
+    # guarantee is per group only: with calt off, enabling ss01 + ss02
+    # together can let ss01's '>=' eat the prefix of ss02's '>>=' before
+    # the longer match is ever tried. Accepted — Monaspace's own
+    # stylistic sets have the same property; calt is the cross-group-safe
+    # way to get everything at once.
     group_lookups = {}
     for grp in sorted(groups):
         group_lookups[grp] = _new_lookup(
@@ -1063,7 +1071,7 @@ def update_bbox(font):
 def face_matches(only, weight, face_label, suffix):
     """Command-line filter. Exact on the weight, the full face label or the
     variant suffix, plus a word-boundary prefix so "Regular" still takes
-    "Regular Italic" — but "Light" no longer matches "ExtraLight"."""
+    "Regular Italic" — whole words only, never a substring match."""
     if only is None:
         return True   # "" is a real filter: the base (suffix-less) family
     return (face_label == only or weight == only or suffix == only
@@ -1094,9 +1102,11 @@ def build_face(job):
     ref_angle = (scp["post"].italicAngle or ref["post"].italicAngle or -12.0) \
         if italic else None
     mona = mona_src.matched(target, ref_angle)
+    # dy is measured once, on SCP's '=' before either import swaps it out
+    dy = mona_baseline_shift(base, mona)
     alts = {}
-    added = add_glyphs(base, mona, alts, LIGATURES)
-    replace_from_mona(base, mona)   # after add_glyphs: dy is measured on SCP's '='
+    added = add_glyphs(base, mona, alts, LIGATURES, dy)
+    replace_from_mona(base, mona, dy=dy)
     add_gsub(base, added, alts, variant_maps, LIGATURES)
     if cell != CELL:
         rescale(base, cell)
