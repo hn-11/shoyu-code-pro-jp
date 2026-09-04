@@ -1,5 +1,5 @@
-# Tag push (v*) -> full assembly from live upstreams (42 fonts x 3 families),
-# verify, Nerd-patch everything, zip, GitHub release.
+# Tag push (v*) -> full assembly from live upstreams (5 weights x 2 styles
+# x 3 families = 30 faces), verify, Nerd-patch everything, zip, GitHub release.
 name: Release
 on:
   push:
