@@ -556,16 +556,26 @@ def copy_line_metrics(base, ref):
     base["OS/2"].panose = ref["OS/2"].panose
 
 
-def narrow_ambiguous(font, cell, scp):
+# Term: ambiguous-width symbols that pair with a ligature take Monaspace's
+# one-cell glyph rather than SCP's, so '←' beside '<-' (and ≠ / !=, ≤ / <=,
+# … / ...) shares its stroke weight and arrowhead. Only in Term — in the
+# 2:3 families these are full-width Source Han Sans glyphs that fill the
+# em, which a 600-unit arrow centered in 1000 would not.
+MONA_AMBIGUOUS = "←→↑↓⇐⇒⇔≠≤≥…"
+
+
+def narrow_ambiguous(font, cell, scp, mona):
     """Term (1:2) only: settle the East-Asian-Width Ambiguous/Narrow
     codepoints that carry full-width (1000) glyphs, the way HackGen Console
     / PlemolJP Console / Moralerspace HW do:
 
-      - SCP has the character (… → ≠ ≤ × ÷ ° ■ Greek, accented Latin,
-        Cyrillic, and all 160 box-drawing / block elements): take SCP's own
-        one-cell glyph, already weight-matched — a real half-width design
-        instead of a shrunken full-width one. SCP's box drawing runs
-        -400..1000 so it tiles under any line spacing.
+      - MONA_AMBIGUOUS (arrows, ≠ ≤ ≥ …): Monaspace's one-cell glyph, from
+        the same instance as the ligatures they sit next to.
+      - SCP has the character (× ÷ ° ■ Greek, accented Latin, Cyrillic, and
+        all 160 box-drawing / block elements): SCP's own one-cell glyph,
+        already weight-matched — a real half-width design instead of a
+        shrunken full-width one. SCP's box drawing runs -400..1000 so it
+        tiles under any line spacing.
       - everything else (① ※ ⌘ ★ ...): left full-width. Terminals that
         count ambiguous as narrow overprint the next cell, exactly as they
         do with HackGen; `compatibility.ambiguousWidth: wide` (Windows
@@ -573,7 +583,7 @@ def narrow_ambiguous(font, cell, scp):
 
     CJK (W/F) stays two cells; the original glyphs are untouched. Must run
     BEFORE widen_fullwidth, i.e. while full-width is still 1000, and AFTER
-    rescale, so the SCP glyphs land at the final cell size."""
+    rescale, so the imported glyphs land at the final cell size."""
     cff = font["CFF "].cff
     td = cff[cff.fontNames[0]]
     cmap = font.getBestCmap()
@@ -582,25 +592,38 @@ def narrow_ambiguous(font, cell, scp):
     vdon = vmtx_donor(font, fullwidth=False)
     scp_cm, scp_gs = scp.getBestCmap(), scp.getGlyphSet()
     scp_k = cell / SCP_CELL
+    mona_cm, mona_gs = mona.getBestCmap(), mona.getGlyphSet()
+    # the ligature pass sized Monaspace for CELL; this font's cell may differ
+    mona_k = cell / MONA_CELL
+    mona_dy = mona_baseline_shift(font, mona, mona_k)
     new_map = {}
-    made = {}  # scp glyph -> one-cell glyph (dedup shared sources)
-    n_wide = 0
+    made = {}  # (source, glyph) -> one-cell glyph (dedup shared sources)
+    n_mona = n_scp = n_wide = 0
     for cp, g in sorted(cmap.items()):
         if font["hmtx"][g][0] != FULLWIDTH:
             continue
         if unicodedata.east_asian_width(chr(cp)) in ("W", "F"):
             continue
-        src = scp_cm.get(cp)
-        if src is None:
+        if chr(cp) in MONA_AMBIGUOUS and cp in mona_cm:
+            src = ("mona", mona_cm[cp])
+        elif cp in scp_cm:
+            src = ("scp", scp_cm[cp])
+        else:
             n_wide += 1
             continue
         if src not in made:
-            pen = T2CharStringPen(pen_width(private, cell), scp_gs)
-            draw_clean([(scp_gs, src, (scp_k, 0, 0, scp_k, 0, 0))], pen)
+            if src[0] == "mona":
+                pen = T2CharStringPen(pen_width(private, cell), mona_gs)
+                draw_clean([(mona_gs, src[1],
+                             mona_transform(mona, 0, mona_dy, mona_k))], pen)
+                n_mona += 1
+            else:
+                pen = T2CharStringPen(pen_width(private, cell), scp_gs)
+                draw_clean([(scp_gs, src[1], (scp_k, 0, 0, scp_k, 0, 0))], pen)
+                n_scp += 1
+            cs = pen.getCharString(private=private)
             name = alloc_glyph_name(font)
-            append_glyph(font, td, name, pen.getCharString(private=private),
-                         fd_index, cell, round(scp["hmtx"][src][1] * scp_k),
-                         vdon)
+            append_glyph(font, td, name, cs, fd_index, cell, None, vdon)
             made[src] = name
         new_map[cp] = made[src]
     for table in font["cmap"].tables:
@@ -608,7 +631,8 @@ def narrow_ambiguous(font, cell, scp):
             for cp, name in new_map.items():
                 if cp in table.cmap:
                     table.cmap[cp] = name
-    print(f"  ambiguous width: {len(made)} from SCP, {n_wide} left full-width")
+    print(f"  ambiguous width: {n_mona} from Monaspace, {n_scp} from SCP, "
+          f"{n_wide} left full-width")
     return len(new_map)
 
 
@@ -692,18 +716,18 @@ def set_names(font, suffix, weight, italic, italic_angle=-12.0):
     return ps
 
 
-def mona_transform(mona, dx, dy):
+def mona_transform(mona, dx, dy, k=MONA_K):
     """Affine for a Monaspace outline landing in our em: scale to the cell,
     shear in whatever slant the slnt axis clamped away, then offset."""
     shear = math.tan(math.radians(-getattr(mona, "residual_slant", 0.0)))
-    return (MONA_K, 0, MONA_K * shear, MONA_K, dx, dy)
+    return (k, 0, k * shear, k, dx, dy)
 
 
-def mona_baseline_shift(font, mona):
+def mona_baseline_shift(font, mona, k=MONA_K):
     """Baseline correction: align the two fonts' '=' vertical centers."""
     cmap = font.getBestCmap()
     return round(glyph_vcenter(font, cmap[ord("=")])
-                 - glyph_vcenter(mona, mona.getBestCmap()[ord("=")], MONA_K))
+                 - glyph_vcenter(mona, mona.getBestCmap()[ord("=")], k))
 
 
 # standalone operators redrawn from Monaspace so they match the ligatures
@@ -1079,7 +1103,7 @@ def build_face(job):
         rescale(base, cell)
     if term:
         # ambiguous-width first (adv==1000 probe), then widen CJK
-        narrow_ambiguous(base, cell, scp)
+        narrow_ambiguous(base, cell, scp, mona)
         widen_fullwidth(base, cell)
     ps = set_names(base, suffix, weight, italic,
                    ref_angle if ref_angle is not None else -12.0)

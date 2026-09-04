@@ -89,10 +89,11 @@ def main():
         f"{FONT}: expected (half,full)=({exp_half},{exp_full}) for family "
         f"{fam!r}, got ({a_adv},{cjk_adv})")
 
-    # Term settles ambiguous-width characters like HackGen Console: SCP's
-    # own one-cell glyph where SCP has the character (box drawing included)
-    # and the rest (①…) left at two cells rather than shrunk. JP / 35 keep
-    # SHCJ's full-width assignments throughout.
+    # Term settles ambiguous-width characters like HackGen Console: a
+    # one-cell glyph from Monaspace (ligature-paired arrows / ≠ ≤ …) or SCP
+    # (box drawing included) where either has the character, and the rest
+    # (①…) left at two cells rather than shrunk. JP / 35 keep SHCJ's
+    # full-width assignments throughout.
     if "Term" in fam.split(" "):
         policy = {"\u2192": exp_half, "\u2026": exp_half, "\u03b1": exp_half,
                   "\u2500": exp_half, "\u2460": exp_full, "\u203b": exp_full}
