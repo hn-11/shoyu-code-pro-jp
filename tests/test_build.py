@@ -303,11 +303,13 @@ def test_erode_path_shrinks_every_side():
 
 def test_mona_glyphset_only_erodes_when_floor_was_hit():
     class Mona:
+        gs = {"equal": object()}
+
         def getGlyphSet(self):
-            return {"equal": object()}
+            return self.gs
     m = Mona()
-    assert build.mona_glyphset(m) == m.getGlyphSet()   # no erode attr
+    assert build.mona_glyphset(m) is m.gs   # no erode attr
     m.erode = 0.2
-    assert build.mona_glyphset(m) == m.getGlyphSet()   # below threshold
+    assert build.mona_glyphset(m) is m.gs   # below threshold
     m.erode = 6.0
     assert isinstance(build.mona_glyphset(m), build._ErodedGlyphSet)
