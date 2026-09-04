@@ -7,11 +7,14 @@ those tags. Prints a markdown summary of what moved on stdout and writes
 already current.
 
 `releases/latest` deliberately ignores prereleases and drafts - source-code-pro
-in particular ships prerelease tags between VF drops that we don't chase.
+in particular ships prerelease tags between VF drops that we don't chase. It
+also, occasionally, ships a one-off hotfix release whose tag has no VF
+component at all; when that happens the SCP pins are left at their current
+values (a note goes to stderr) while the other upstreams still move.
 
-Every download URL is probed before anything is written. If an upstream renames
-an asset, this fails here with the URL in hand instead of opening a PR whose CI
-dies twenty minutes later at the fetch step.
+Every download URL is probed before anything is written. If an upstream
+renames an asset, this fails here with the URL in hand instead of opening a
+PR whose CI dies twenty minutes later at the fetch step.
 """
 
 import os
@@ -48,11 +51,14 @@ def scp_vf_zip(tag: str) -> str:
     The tag is a slash-joined triple, e.g. "2.042R-u/1.062R-i/1.026R-vf"; the
     VF zip is named after the third component alone:
     "VF-source-code-VF-1.026R.zip".
+
+    Raises ValueError when `tag` has no -vf component (a one-off hotfix
+    release cut between VF drops) - the caller decides what to do about it.
     """
     for part in tag.split("/"):
         if part.endswith("-vf"):
             return f"VF-source-code-VF-{part[: -len('-vf')]}.zip"
-    raise SystemExit(f"no -vf component in source-code-pro tag {tag!r}")
+    raise ValueError(f"no -vf component in source-code-pro tag {tag!r}")
 
 
 def download_urls(pins: dict[str, str]) -> list[str]:
@@ -94,10 +100,22 @@ def main() -> int:
         raise SystemExit(f"no pins found in {ACTION}")
 
     scp_tag = latest_tag(SCP_REPO)
+    try:
+        scp_pins = {
+            "SCP_TAG": scp_tag.replace("/", "%2F"),
+            "SCP_VF_ZIP": scp_vf_zip(scp_tag),
+        }
+    except ValueError:
+        print(
+            f"note: source-code-pro latest tag {scp_tag!r} has no -vf "
+            f"component; keeping SCP_TAG={current['SCP_TAG']}",
+            file=sys.stderr,
+        )
+        scp_pins = {"SCP_TAG": current["SCP_TAG"], "SCP_VF_ZIP": current["SCP_VF_ZIP"]}
+
     new = {
         "SHS_TAG": latest_tag(SHS_REPO),
-        "SCP_TAG": scp_tag.replace("/", "%2F"),
-        "SCP_VF_ZIP": scp_vf_zip(scp_tag),
+        **scp_pins,
         "MONA_TAG": latest_tag(MONA_REPO),
         "SHCJ_TAG": latest_tag(SHCJ_REPO),
     }

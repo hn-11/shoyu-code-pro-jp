@@ -159,6 +159,116 @@ def test_feature_params_only_for_our_own_features():
     assert GSUB.FeatureList.FeatureRecord[0].Feature.FeatureParams is None
 
 
+# --- GSUB feature-list plumbing (_add_feature / sort_feature_list) ------
+
+class FakeFeature:
+    def __init__(self, lookup_indices):
+        self.LookupListIndex = list(lookup_indices)
+        self.LookupCount = len(self.LookupListIndex)
+        self.FeatureParams = None
+
+
+class FakeFeatureRecord:
+    def __init__(self, tag, feature):
+        self.FeatureTag = tag
+        self.Feature = feature
+
+
+class FakeFeatureList:
+    def __init__(self, records):
+        self.FeatureRecord = list(records)
+        self.FeatureCount = len(self.FeatureRecord)
+
+
+class FakeLangSys:
+    def __init__(self, feature_index):
+        self.FeatureIndex = list(feature_index)
+        self.FeatureCount = len(self.FeatureIndex)
+
+
+class FakeScript:
+    def __init__(self, default_langsys, langsys_records=()):
+        self.DefaultLangSys = default_langsys
+        self.LangSysRecord = list(langsys_records)
+
+
+class FakeScriptRecord:
+    def __init__(self, script):
+        self.Script = script
+
+
+class FakeScriptList:
+    def __init__(self, script_records):
+        self.ScriptRecord = list(script_records)
+
+
+class FakeGSUB:
+    def __init__(self, feature_records, script_records):
+        self.FeatureList = FakeFeatureList(feature_records)
+        self.ScriptList = FakeScriptList(script_records)
+
+
+def test_add_feature_merges_into_every_langsys_and_creates_for_the_rest():
+    liga = FakeFeatureRecord("liga", FakeFeature([1, 2]))
+    gsub = FakeGSUB([liga], [])
+
+    has_liga = FakeLangSys([0])       # already lists the 'liga' record
+    lacks_liga = FakeLangSys([])      # has no 'liga' record at all
+    script_a = FakeScript(has_liga)
+    script_b = FakeScript(lacks_liga)
+    gsub.ScriptList.ScriptRecord = [
+        FakeScriptRecord(script_a), FakeScriptRecord(script_b)]
+
+    new_index = build._add_feature(gsub, "liga", [7])
+
+    # merged into the existing record reachable from every LangSys that had it
+    assert liga.Feature.LookupListIndex == [1, 2, 7]
+    assert liga.Feature.LookupCount == 3
+
+    # a fresh record was appended for the LangSys lacking the tag
+    assert new_index == 1
+    new_record = gsub.FeatureList.FeatureRecord[1]
+    assert new_record.FeatureTag == "liga"
+    assert new_record.Feature.LookupListIndex == [7]
+
+    # only the lacking LangSys got the new index wired in
+    assert has_liga.FeatureIndex == [0]
+    assert has_liga.FeatureCount == 1
+    assert lacks_liga.FeatureIndex == [1]
+    assert lacks_liga.FeatureCount == 1
+
+
+def test_add_feature_dedups_lookups():
+    liga = FakeFeatureRecord("liga", FakeFeature([7]))
+    gsub = FakeGSUB([liga], [])
+    ls = FakeLangSys([0])
+    gsub.ScriptList.ScriptRecord = [FakeScriptRecord(FakeScript(ls))]
+
+    first = build._add_feature(gsub, "liga", [7])
+    assert first is None
+    assert liga.Feature.LookupListIndex == [7]
+
+    second = build._add_feature(gsub, "liga", [7])
+    assert second is None
+    assert liga.Feature.LookupListIndex == [7]
+
+
+def test_sort_feature_list_remaps_langsys_indices():
+    records = [FakeFeatureRecord(tag, FakeFeature([]))
+               for tag in ("ss02", "calt", "liga")]
+    ls = FakeLangSys([0, 2])   # ss02 (0) and liga (2), unsorted by tag
+    gsub = FakeGSUB(records, [FakeScriptRecord(FakeScript(ls))])
+
+    build.sort_feature_list(gsub)
+
+    tags = [fr.FeatureTag for fr in gsub.FeatureList.FeatureRecord]
+    assert tags == sorted(tags)
+    kept = {gsub.FeatureList.FeatureRecord[i].FeatureTag
+            for i in ls.FeatureIndex}
+    assert kept == {"ss02", "liga"}
+    assert ls.FeatureCount == 2
+
+
 def test_ligature_module_constant_matches_loader():
     assert build.load_ligatures() == build.LIGATURES
 

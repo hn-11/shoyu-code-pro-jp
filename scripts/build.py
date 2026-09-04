@@ -34,6 +34,9 @@ Usage:
   the base family), or is a leading word-run of the label ("Regular" also
   takes "Regular Italic", and "Bold" likewise takes "Bold Italic"). It is
   a whole-word match, not a substring one.
+  With no FILTER, dist/ShoyuCodeProJP*.otf is cleared before building, so a
+  full build never leaves faces from an older roster behind. A filtered run
+  never deletes anything.
 
 Env (all required):
   SHS_DIR  = dir with SourceHanSansJP-<Weight>.otf
@@ -1159,6 +1162,15 @@ def main():
         sys.exit(f"missing env: {missing}")
     out_dir = ROOT / "dist"
     out_dir.mkdir(exist_ok=True)
+
+    if only is None:
+        # a full build must not leave faces from an older roster (e.g. the
+        # dropped ExtraLight/Light) for makeotc.py to bundle alongside these
+        stale = sorted(out_dir.glob("ShoyuCodeProJP*.otf"))
+        for f in stale:
+            f.unlink()
+        if stale:
+            print(f"removed {len(stale)} stale face(s) from {out_dir}")
 
     jobs = []
     for suffix, var in VARIANTS.items():
