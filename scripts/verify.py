@@ -2,6 +2,7 @@
 """Shaping regression test: every ligature fires, == stays untouched."""
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -99,6 +100,16 @@ def main():
                   "\u2500": exp_half, "\u2460": exp_full, "\u203b": exp_full}
     else:
         policy = {"\u2192": exp_full, "\u2460": exp_full}
+    # half-width kana: SHCJ's 500 in the 2:3 family, one cell in the 600 ones
+    policy["\uff71"] = 500 if exp_half == 667 else exp_half
+    # SCP-only Latin (ł ğ ₽) is grafted half-width in every family; so is
+    # SHS's proportional ς — upright only, SCP Italic has no Greek
+    policy.update({"\u0142": exp_half, "\u011f": exp_half, "\u20bd": exp_half})
+    if not italic:
+        policy["\u03c2"] = exp_half
+    # SHCJ's full-width '−' used to come through as SHS's proportional 555;
+    # Term then takes SCP's one-cell minus like any other ambiguous symbol
+    policy["\u2212"] = exp_half if "Term" in fam.split(" ") else exp_full
     for ch, want in policy.items():
         got = hmtx[cmap[ord(ch)]][0]
         assert got == want, (
@@ -244,7 +255,14 @@ def main():
     # more cells, so only y is comparable). '==' '<<' '>>' '||' repeat the
     # glyph outright; '~' has no such ligature ('~>' is a fused wave-arrow)
     # and is not checked.
-    from build import MONA_STANDALONE, _contour_bounds, _record_contours
+    from build import (
+        FACES,
+        MONA_STANDALONE,
+        _contour_bounds,
+        _record_contours,
+        _shcj_ref,
+        bar_thickness,
+    )
     glyph_order = tf.getGlyphOrder()
 
     def y_rows(gname):
@@ -266,6 +284,38 @@ def main():
         print(f"{'ok  ' if ok else 'FAIL'} {ch!r} rows {rows_ch} "
               f"found in {pairs[ch].split()[1]!r} {rows_lig}")
         failed |= not ok
+
+    # stroke weight vs the SHCJ reference: the '=' bar our Latin layer was
+    # weight-matched to should still measure the same after grafting,
+    # rescaling etc. Only meaningful for families that pair to SHCJ's
+    # weight at all — the "35" family deliberately keeps Source Code
+    # Pro's native weight instead (see VARIANTS' comp flag in build.py).
+    shcj_ttc = os.environ.get("SHCJ_TTC")
+    fam_tokens = [t for t in fam.split(" ") if t != "NF"]
+    if shcj_ttc is None:
+        print("skip  '=' bar vs SHCJ reference (SHCJ_TTC unset)")
+    elif "35" in fam_tokens:
+        print("skip  '=' bar vs SHCJ reference "
+              "(35 family keeps SCP's native weight)")
+    else:
+        weight = sub[:-len(" Italic")] if sub.endswith(" Italic") else sub
+        if weight == "Italic":   # "Regular Italic" collapses to "Italic"
+            weight = "Regular"
+        ref_names = {w: r for w, r, _ in FACES}
+        ref_name = ref_names.get(weight)
+        if ref_name is None:
+            print(f"skip  '=' bar vs SHCJ reference (unknown weight {weight!r})")
+        else:
+            if italic:
+                ref_name += " Italic"
+            ref = _shcj_ref(shcj_ttc, ref_name)
+            ref_cmap = ref.getBestCmap()
+            got = bar_thickness(tf, cmap[ord("=")])
+            want = bar_thickness(ref, ref_cmap[ord("=")])
+            ok = abs(got - want) <= 1.5
+            print(f"{'ok  ' if ok else 'FAIL'} '=' bar vs SHCJ reference "
+                  f"{ref_name!r}: {got:.1f}u (want {want:.1f}u)")
+            failed |= not ok
 
     # imported outlines must be overlap-free (VF instancing leaves seams)
     import pathops

@@ -42,6 +42,12 @@ Env (all required):
   SHS_DIR  = dir with SourceHanSansJP-<Weight>.otf
   SCP_VF_U = SourceCodeVF-Upright.otf   SCP_VF_I = SourceCodeVF-Italic.otf
   SHCJ_TTC = upstream/SourceHanCodeJP.ttc (default)   MONA_VF = Monaspace VF
+
+Env (optional):
+  SHOYU_VERSION = our own release version, e.g. "3.1.0" — stamps
+                  head.fontRevision (MAJOR.MINOR), nameID 5 and the CFF
+                  version. Unset keeps today's behaviour: the revision
+                  stays whatever Source Han Sans shipped.
 """
 
 import concurrent.futures
@@ -98,11 +104,12 @@ VARIANTS = {
 }
 
 # (output weight name, SHCJ reference face, Source Han Sans static file)
-# SHCJ's ExtraLight / Light are not built: Monaspace's wght axis bottoms out
-# at 200 (bar ~59u at our scale) while those faces measure 31u / 47u, so the
-# ligatures came out about twice as heavy as the Latin around them. Nobody
-# codes in Light anyway — editors and terminals pick Regular + Bold.
+# Monaspace's wght axis bottoms out at 200 (bar ~59u at our scale). SHCJ
+# Light measures 47u: the 6u/side surplus is eroded away (mona_glyphset).
+# ExtraLight would need 14u/side, which hollows out the dots of ':=' and
+# '...', so it is not built — nobody codes in a hairline anyway.
 FACES = [
+    ("Light", "Source Han Code JP L", "SourceHanSansJP-Light.otf"),
     ("Normal", "Source Han Code JP N", "SourceHanSansJP-Normal.otf"),
     ("Regular", "Source Han Code JP R", "SourceHanSansJP-Regular.otf"),
     ("Medium", "Source Han Code JP M", "SourceHanSansJP-Medium.otf"),
@@ -316,10 +323,19 @@ class VFSource:
         inst.residual_slant = (slant - axes["slnt"]
                                if slant is not None and "slnt" in axes else 0.0)
         t = bar_thickness(inst, inst.getBestCmap()[ord("=")])
-        if abs(t - pre_scale_target) > 1.0:
+        # the axis floor may stop short of a thin target (Monaspace's
+        # wght 200 is 59u at our scale; SHCJ Light measures 47u). Record
+        # the surplus per side, in this font's units, and mona_glyphset()
+        # erodes the outlines by it — see erode_path().
+        inst.erode = max(0.0, (t - pre_scale_target) / 2)
+        if abs(t - pre_scale_target) > 1.0 and not inst.erode:
             print(f"  WARNING: wght search off by {t - pre_scale_target:+.1f}u "
                   f"(target {pre_scale_target:.1f}, wght={wght:.1f}) in "
                   f"{Path(self.vf_path).name}")
+        elif inst.erode > 0.5:
+            print(f"  wght floor {wght:.0f} leaves {2 * inst.erode:.1f}u surplus "
+                  f"(donor units) in {Path(self.vf_path).name}; eroding "
+                  f"{inst.erode:.1f}u/side")
         self._cache[key] = inst   # only the converged instance is kept
         return inst
 
@@ -342,6 +358,47 @@ def draw_clean(draws, pen):
     with contextlib.suppress(pathops.PathOpsError):
         path = pathops.simplify(path, clockwise=path.clockwise)  # degenerate outline: keep as drawn
     path.draw(pen)
+
+
+def erode_path(path, d):
+    """Shrink a filled outline by `d` on every side: subtract a stroke of
+    width 2d run along the outline itself. Straight bars, arrowheads and
+    slashes keep their shape; only dots lose proportionally more."""
+    inner = pathops.Path(path)
+    inner.simplify()
+    band = pathops.Path(inner)
+    band.stroke(2 * d, pathops.LineCap.BUTT_CAP, pathops.LineJoin.MITER_JOIN, 4)
+    return pathops.op(inner, band, pathops.PathOp.DIFFERENCE)
+
+
+class _ErodedGlyph:
+    def __init__(self, gs, gname, d):
+        self._gs, self._gname, self._d = gs, gname, d
+
+    def draw(self, pen):
+        path = pathops.Path()
+        self._gs[self._gname].draw(path.getPen())
+        erode_path(path, self._d).draw(pen)
+
+
+class _ErodedGlyphSet:
+    """Glyph set view that hands out eroded outlines (see erode_path)."""
+    def __init__(self, gs, d):
+        self._gs, self._d = gs, d
+
+    def __getitem__(self, gname):
+        return _ErodedGlyph(self._gs, gname, self._d)
+
+    def __contains__(self, gname):
+        return gname in self._gs
+
+
+def mona_glyphset(mona):
+    """The glyph set every Monaspace import draws from: eroded when the
+    weight search hit the axis floor (matched() sets `erode`)."""
+    gs = mona.getGlyphSet()
+    d = getattr(mona, "erode", 0.0)
+    return _ErodedGlyphSet(gs, d) if d > 0.5 else gs
 
 
 def pen_width(private, advance):
@@ -420,10 +477,22 @@ def append_glyph(font, td, name, cs, fd_index, width, lsb=None, vdonor=None):
 def graft_halfwidth(base, scp, ref):
     """Give `base` (Source Han Sans JP) its half-width layer.
 
-    Every codepoint SHCJ maps to a 667-advance glyph is re-pointed to a new
-    glyph: outline from the SCP instance scaled 10/9 when SCP has it,
-    otherwise copied verbatim from the SHCJ reference face (half-width
-    kana and a handful of symbols SCP never had).
+    Three kinds of codepoint get a new 667-advance glyph:
+      - SHCJ maps it half-width: outline from the SCP instance scaled 10/9
+        when SCP has it, else copied verbatim from the SHCJ reference face
+        (half-width kana and a handful of symbols SCP never had);
+      - SHCJ lacks it but SCP has it (ł ğ ş ı ř ₽ ... — some 600 Latin
+        Extended / Cyrillic / symbol codepoints Polish, Turkish, Czech and
+        friends need): SCP, so those languages don't fall back to another
+        font mid-word;
+      - SHCJ maps it to an advance that is neither the cell nor full-width
+        (ς 482, ⁴ 411 ... proportional leftovers that break the grid) and
+        SCP has it: SCP.
+    Codepoints SHCJ keeps full-width (→, ①, ...) stay full-width — and
+    where Source Han Sans's own glyph for one of them is proportional
+    (− 555, ˇ 600, ˙ 500: SHS never made those monospaced), SHCJ's
+    full-width glyph is copied in, so the 2:3 grid holds everywhere SHCJ's
+    does.
     """
     ref_cm, ref_hm = ref.getBestCmap(), ref["hmtx"]
     scp_cm = scp.getBestCmap()
@@ -439,8 +508,29 @@ def graft_halfwidth(base, scp, ref):
     default_map = {}  # scp glyph name -> our glyph name (for variant wiring)
     made = {}         # source glyph -> our glyph (dedup shared sources)
     from_scp = from_ref = 0
-    for cp, g in sorted(ref_cm.items()):
-        if ref_hm[g][0] != CELL:
+    bhm = base["hmtx"]
+    for cp in sorted(set(ref_cm) | set(scp_cm)):
+        g = ref_cm.get(cp)
+        ref_adv = ref_hm[g][0] if g is not None else None
+        if ref_adv == CELL:
+            pass                                   # SHCJ's half-width set
+        elif cp in scp_cm and (ref_adv is None or ref_adv not in (0, FULLWIDTH)):
+            pass                                   # SCP-only, or off-grid
+        elif (ref_adv == FULLWIDTH and cp in bcm
+              and bhm[bcm[cp]][0] not in (0, FULLWIDTH)):
+            # SHCJ made it full-width; SHS's own glyph is proportional
+            src = ("ref", g)
+            if src not in made:
+                pen = T2CharStringPen(pen_width(private, FULLWIDTH), ref_gs)
+                draw_clean([(ref_gs, g, (1, 0, 0, 1, 0, 0))], pen)
+                name = alloc_glyph_name(base)
+                append_glyph(base, td, name, pen.getCharString(private=private),
+                             fd_index, FULLWIDTH, None, vmtx_donor(base))
+                made[src] = name
+                from_ref += 1
+            new_map[cp] = made[src]
+            continue
+        else:
             continue
         # several codepoints often share one source glyph (SCP's own cmap
         # aliases, SHCJ's kana forms) — one grafted glyph per source keeps
@@ -468,9 +558,10 @@ def graft_halfwidth(base, scp, ref):
     # cidFlatten, which is how the Nerd Font variants lost 'M' et al.
     base["cmap"].tables = [t for t in base["cmap"].tables if t.isUnicode()]
     for table in base["cmap"].tables:
+        bmp_only = table.format in (0, 4, 6)
         for cp, name in new_map.items():
-            if cp in table.cmap:
-                table.cmap[cp] = name
+            if cp in table.cmap or not (bmp_only and cp > 0xFFFF):
+                table.cmap[cp] = name   # SCP-only codepoints are new entries
     return from_scp, from_ref, default_map
 
 
@@ -619,7 +710,7 @@ def narrow_ambiguous(font, cell, scp, mona):
     vdon = vmtx_donor(font, fullwidth=False)
     scp_cm, scp_gs = scp.getBestCmap(), scp.getGlyphSet()
     scp_k = cell / SCP_CELL
-    mona_cm, mona_gs = mona.getBestCmap(), mona.getGlyphSet()
+    mona_cm, mona_gs = mona.getBestCmap(), mona_glyphset(mona)
     # the ligature pass sized Monaspace for CELL; this font's cell may differ
     mona_k = cell / MONA_CELL
     mona_dy = mona_baseline_shift(font, mona, mona_k)
@@ -663,6 +754,40 @@ def narrow_ambiguous(font, cell, scp, mona):
     return len(new_map)
 
 
+HALFWIDTH_FORMS = (0xFF61, 0xFFDC)   # U+FF61-FFDC: half-width kana, ￩ etc.
+
+
+def fit_halfwidth_forms(font, cell):
+    """600-cell families only: SHCJ draws the half-width forms (ｱ ｡ ｢ ...)
+    at 500 — half of its 1000 em, which lands on neither its own 667 cell
+    nor ours. The 2:3 family keeps that as SHCJ's look; here the glyph is
+    centered in one cell so the terminal grid holds. Runs after rescale
+    (the 500 glyphs are untouched by it: 500 % 667 != 0)."""
+    cmap = font.getBestCmap()
+    cff = font["CFF "].cff
+    td = cff.topDictIndex.items[0]
+    gs = font.getGlyphSet()
+    hmtx = font["hmtx"]
+    done = set()
+    for cp in range(HALFWIDTH_FORMS[0], HALFWIDTH_FORMS[1] + 1):
+        name = cmap.get(cp)
+        if name is None or name in done:
+            continue
+        adv, lsb = hmtx.metrics[name]
+        if adv == 0 or adv == cell:
+            continue
+        shift = (cell - adv) // 2
+        gid = font.getGlyphID(name)
+        private = td.FDArray[td.FDSelect[gid]].Private
+        pen = T2CharStringPen(pen_width(private, cell), gs)
+        gs[name].draw(TransformPen(pen, (1, 0, 0, 1, shift, 0)))
+        td.CharStrings.charStringsIndex[td.CharStrings.charStrings[name]] = \
+            pen.getCharString(private=private)
+        hmtx.metrics[name] = (cell, lsb + shift)
+        done.add(name)
+    return len(done)
+
+
 def widen_fullwidth(font, cell):
     """Term variant: widen every full-width glyph's advance to two cells
     (2 x cell) and center the unchanged 1000-unit outline. The Latin layer
@@ -695,8 +820,15 @@ def widen_fullwidth(font, cell):
 OWNED_NAME_IDS = (1, 2, 3, 4, 6, 16, 17)
 
 
-def set_names(font, suffix, weight, italic, italic_angle=-12.0):
-    """Rewrite the family-identifying names, preserve the legal ones."""
+def set_names(font, suffix, weight, italic, italic_angle=-12.0, version=None):
+    """Rewrite the family-identifying names, preserve the legal ones.
+
+    `version` (SHOYU_VERSION, e.g. "3.1.0") stamps our own release version
+    when set: head.fontRevision becomes MAJOR.MINOR, nameID 5 notes both
+    our version and the inherited Source Han Sans revision, and the CFF
+    version matches head. Left None (the default), the inherited SHS
+    revision is kept as-is — today's behaviour, used for CI builds.
+    """
     base_family = ("Shoyu Code Pro JP " + suffix).strip()
     ribbi = weight in ("Regular", "Bold")
     family = base_family if ribbi else f"{base_family} {weight}"
@@ -715,10 +847,20 @@ def set_names(font, suffix, weight, italic, italic_angle=-12.0):
                      (17, (weight + (" Italic" if italic else ""))
                           .replace("Regular Italic", "Italic"))):
         name.setName(val, nid, 3, 1, 0x409)
-    # version: keep the base font's revision, note the derivation
-    rev = font["head"].fontRevision
-    version = f"Version {rev:.3f};Shoyu Code Pro JP"
-    name.setName(version, 5, 3, 1, 0x409)
+    # version: SHOYU_VERSION (set) stamps our own release version and notes
+    # the inherited SHS revision alongside it; unset (CI builds) keeps that
+    # inherited revision as-is, as before.
+    shs_rev = font["head"].fontRevision
+    if version:
+        major, minor = version.split(".")[:2]
+        cff_version = f"{major}.{minor}"
+        font["head"].fontRevision = float(cff_version)
+        version_str = (f"Version {version};Shoyu Code Pro JP;"
+                       f"SHS {shs_rev:.3f}")
+    else:
+        cff_version = f"{shs_rev:.3f}"
+        version_str = f"Version {shs_rev:.3f};Shoyu Code Pro JP"
+    name.setName(version_str, 5, 3, 1, 0x409)
     cff = font["CFF "].cff
     cff.fontNames[0] = ps
     td = cff.topDictIndex.items[0]
@@ -727,7 +869,7 @@ def set_names(font, suffix, weight, italic, italic_angle=-12.0):
     if hasattr(td, "FullName"):
         td.FullName = full
     if hasattr(td, "version"):
-        td.version = f"{rev:.3f}"
+        td.version = cff_version
     # Windows' family-linking model reads *these* bits, not the name-table
     # text above, to decide which face is "the bold" / "the italic" of a
     # family — fsSelection/macStyle must always agree with nameID 2 (RIBBI
@@ -794,7 +936,7 @@ def replace_from_mona(font, mona, chars=MONA_STANDALONE, dy=None):
     td = cff[cff.fontNames[0]]
     cmap = font.getBestCmap()
     mona_cmap = mona.getBestCmap()
-    mona_gs = mona.getGlyphSet()
+    mona_gs = mona_glyphset(mona)
     if dy is None:
         dy = mona_baseline_shift(font, mona)
     replaced = []
@@ -823,7 +965,7 @@ def add_glyphs(font, mona, alts, ligatures=None, dy=None):
     cff = font["CFF "].cff
     td = cff[cff.fontNames[0]]
     cmap = font.getBestCmap()
-    mona_gs = mona.getGlyphSet()
+    mona_gs = mona_glyphset(mona)
     mona_names = set(mona.getGlyphOrder())
     vdon = vmtx_donor(font, fullwidth=False)
 
@@ -1163,12 +1305,14 @@ def build_face(job):
     add_gsub(base, added, alts, variant_maps, LIGATURES, variant_names)
     if cell != CELL:
         rescale(base, cell)
+        fit_halfwidth_forms(base, cell)
     if term:
         # ambiguous-width first (adv==1000 probe), then widen CJK
         narrow_ambiguous(base, cell, scp, mona)
         widen_fullwidth(base, cell)
     ps = set_names(base, suffix, weight, italic,
-                   ref_angle if ref_angle is not None else -12.0)
+                   ref_angle if ref_angle is not None else -12.0,
+                   version=env.get("SHOYU_VERSION"))
     update_bbox(base)
     out = Path(out_dir) / f"{ps}.otf"
     base.save(out)
@@ -1210,6 +1354,9 @@ def main():
     missing = [k for k, v in env.items() if not v or not Path(v).exists()]
     if missing:
         sys.exit(f"missing env: {missing}")
+    # optional: not a path, so checked (and added) after the missing-env
+    # gate above, not folded into it
+    env["SHOYU_VERSION"] = os.environ.get("SHOYU_VERSION")
     out_dir = ROOT / "dist"
     out_dir.mkdir(exist_ok=True)
 

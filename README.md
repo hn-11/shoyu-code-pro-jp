@@ -21,7 +21,11 @@ SHCJ ユーザーの見た目の連続性が保たれる。
 全リストは `data/mona_ligs.json` を参照。
 
 移植するのは合字グリフと、単独の `=` `<` `>` `|` `~` のみ。英数字や他の記号は
-SHCJ（= Source Code Pro）のまま。この 5 字は単独字と合字で見た目が食い違っていた
+SHCJ（= Source Code Pro）のまま。SHCJ に無い SCP の約 600 字（`ł` `ğ` `ş` `ı` `ř`
+`₽` などポーランド語・トルコ語・チェコ語等の文字）も SCP から半角で取り込み、
+SHCJ に無く SHS が比例幅で持っていた `ς` `⁴` などは SCP の半角版に差し替える。
+SHCJ が全角に割り当てている `→` `①` などはその方針を維持し、SHS 側のグリフが
+比例幅のもの（`−` `ˇ` `˙`）は SHCJ の全角グリフを写してグリッドに乗せる。この 5 字は単独字と合字で見た目が食い違っていた
 （`=` と `==` でバーの間隔が SCP 170u / Monaspace 219u、`<` と `<=` で大きさと角度、
 `|` と `||` で上下の伸び、`~` と `~>` で振幅）ため、合字と同じインスタンスから取り直している。
 幅と縦中心は SCP のものと数ユニット〜数十ユニットで一致し、セルに収まる。
@@ -103,13 +107,18 @@ iTerm2 / WezTerm なら相当の設定で 2 セル取らせれば JP と同じ�
 系（Sarasa）のような細身設計の欧文を使うフォントが素直（機構は
 `rescale(ky=)` / `narrow_ambiguous()` として残してある）。
 
-各ファミリー 5ウェイト（Normal / Regular / Medium / Bold / Heavy）× 2スタイル
+各ファミリー 6ウェイト（Light / Normal / Regular / Medium / Bold / Heavy）× 2スタイル
 （Upright / Italic — Italic は SCP の本物の
-イタリック、和文は SHCJ と同じく直立のまま）。SHCJ にある ExtraLight / Light は
-作らない: Monaspace VF の wght 下限（200）では `=` のバー厚が両面の実測値
-（31u / 47u）まで細くならず、合字だけ約2倍太い状態になるため。
+イタリック、和文は SHCJ と同じく直立のまま）。Monaspace VF の wght 下限（200）は
+`=` バー厚 59u で SHCJ Light の 47u に届かないため、Light では Monaspace 由来の
+アウトラインを片側 6u 内側に削って（pathops でストローク幅 2d を差し引く）
+太さを合わせている。SHCJ の ExtraLight（31u）は片側 14u 削る必要があり
+`:=` `...` の点が痩せすぎるので作らない。
 
-35 は半角グリフを 600/667 に等方縮小したもの（= オリジナル SCP の原寸復元）。全出力に Nerd Fonts
+35 は半角グリフを 600/667 に等方縮小したもの（= オリジナル SCP の原寸復元）。
+半角カナ（`ｱ` `｡` `｢` など）は SHCJ が 500 幅（1000 の半分）で持っていて 667 にも
+600 にも乗らないため、35 / Term では 600 セルに中央配置してグリッドに乗せる
+（2:3 の JP は SHCJ の見た目を優先してそのまま）。全出力に Nerd Fonts
 パッチ済み変種も生成する。NF ファミリー名は日本語プログラミングフォントの
 慣習（HackGen / PlemolJP / UDEV Gothic と同じ）に合わせ**変種名の後ろ**に付く:
 `Shoyu Code Pro JP NF` / `Shoyu Code Pro JP Term NF` / `Shoyu Code Pro JP 35 NF`。CID-keyed CFF のままでは
@@ -148,7 +157,7 @@ Source Han Code JP）を取得して環境変数で場所を渡す。具体的�
 ```sh
 pip install -r requirements.txt
 SHS_DIR=... SCP_VF_U=... SCP_VF_I=... MONA_VF=... SHCJ_TTC=upstream/SourceHanCodeJP.ttc \
-  python scripts/build.py            # 全ファミリー（2:3 / 35 / Term × 10面）
+  python scripts/build.py            # 全ファミリー（2:3 / 35 / Term × 12面）
   python scripts/build.py "Regular"  # Regular系のみ（動作確認用）
 python scripts/verify.py dist/ShoyuCodeProJP-Regular.otf   # 回帰テスト
 python scripts/nerdpatch.py <FontPatcher dir>              # NF 変種
