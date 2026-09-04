@@ -5,7 +5,7 @@ Recipe (Source Han Mono's approach, re-executed against latest releases):
   - Japanese / full-width layer: Source Han Sans JP (latest, per weight)
   - Half-width Latin layer:      Source Code Pro VF, scaled 10/9 to 667
                                  (Adobe's own SHCJ derivation, re-run)
-  - Ligatures (50):              Monaspace VF (data/mona_ligs.json)
+  - Ligatures (50), = < > | ~:   Monaspace VF (data/mona_ligs.json)
   - Source Han Code JP serves as the PAIRING REFERENCE — each face's '='
     bar thickness decides the SCP/Monaspace wght instance — and as the
     donor for half-width glyphs SCP lacks (half-width kana etc.), plus
@@ -81,8 +81,9 @@ class Variant(NamedTuple):
     comp: bool   # re-match stroke weight AFTER rescale so Latin keeps
                  # SHCJ's CJK pairing (69/1000em bar). Without comp a
                  # rescaled Latin keeps Source Code Pro's native weight.
-    term: bool   # widen full-width advances to 2 cells (centered) + one-cell
-                 # copies for East-Asian-Width-ambiguous codepoints.
+    term: bool   # widen full-width advances to 2 cells (centered); EAW-
+                 # ambiguous codepoints take a one-cell Monaspace / SCP glyph
+                 # where one exists, else stay full-width (narrow_ambiguous).
 
 
 VARIANTS = {
@@ -92,9 +93,11 @@ VARIANTS = {
 }
 
 # (output weight name, SHCJ reference face, Source Han Sans static file)
+# SHCJ's ExtraLight / Light are not built: Monaspace's wght axis bottoms out
+# at 200 (bar ~59u at our scale) while those faces measure 31u / 47u, so the
+# ligatures came out about twice as heavy as the Latin around them. Nobody
+# codes in Light anyway — editors and terminals pick Regular + Bold.
 FACES = [
-    ("ExtraLight", "Source Han Code JP EL", "SourceHanSansJP-ExtraLight.otf"),
-    ("Light", "Source Han Code JP L", "SourceHanSansJP-Light.otf"),
     ("Normal", "Source Han Code JP N", "SourceHanSansJP-Normal.otf"),
     ("Regular", "Source Han Code JP R", "SourceHanSansJP-Regular.otf"),
     ("Medium", "Source Han Code JP M", "SourceHanSansJP-Medium.otf"),
@@ -303,6 +306,10 @@ class VFSource:
                 hi = mid
         wght = (lo + hi) / 2
         inst = self._instance(dict(axes, wght=wght))
+        # slant the axis could not deliver (SCP Italic is -12, Monaspace's
+        # slnt floor is -11); mona_transform() shears the remainder in
+        inst.residual_slant = (slant - axes["slnt"]
+                               if slant is not None and "slnt" in axes else 0.0)
         t = bar_thickness(inst, inst.getBestCmap()[ord("=")])
         if abs(t - pre_scale_target) > 1.0:
             print(f"  WARNING: wght search off by {t - pre_scale_target:+.1f}u "
@@ -549,45 +556,83 @@ def copy_line_metrics(base, ref):
     base["OS/2"].panose = ref["OS/2"].panose
 
 
-def narrow_ambiguous(font, cell):
-    """Term (1:2) only: East-Asian-Width Ambiguous/Narrow codepoints that
-    carry full-width (1000) glyphs — … → ≠ Greek etc. — get a one-cell
-    scaled copy, because terminals allocate them ONE cell by default and
-    the full-width ink bleeds into the neighbour (Sarasa Term does the
-    same). CJK (W/F) stays two cells; the original glyphs are untouched.
-    Must run BEFORE widen_fullwidth, i.e. while full-width is still 1000."""
+# Term: ambiguous-width symbols that pair with a ligature take Monaspace's
+# one-cell glyph rather than SCP's, so '←' beside '<-' (and ≠ / !=, ≤ / <=,
+# … / ...) shares its stroke weight and arrowhead. Only in Term — in the
+# 2:3 families these are full-width Source Han Sans glyphs that fill the
+# em, which a 600-unit arrow centered in 1000 would not.
+MONA_AMBIGUOUS = "←→↑↓⇐⇒⇔≠≤≥…"
+
+
+def narrow_ambiguous(font, cell, scp, mona):
+    """Term (1:2) only: settle the East-Asian-Width Ambiguous/Narrow
+    codepoints that carry full-width (1000) glyphs, the way HackGen Console
+    / PlemolJP Console / Moralerspace HW do:
+
+      - MONA_AMBIGUOUS (arrows, ≠ ≤ ≥ …): Monaspace's one-cell glyph, from
+        the same instance as the ligatures they sit next to.
+      - SCP has the character (× ÷ ° ■ Greek, accented Latin, Cyrillic, and
+        all 160 box-drawing / block elements): SCP's own one-cell glyph,
+        already weight-matched — a real half-width design instead of a
+        shrunken full-width one. SCP's box drawing runs -400..1000 so it
+        tiles under any line spacing.
+      - everything else (① ※ ⌘ ★ ...): left full-width. Terminals that
+        count ambiguous as narrow overprint the next cell, exactly as they
+        do with HackGen; `compatibility.ambiguousWidth: wide` (Windows
+        Terminal) or the equivalent elsewhere gives them their two cells.
+
+    CJK (W/F) stays two cells; the original glyphs are untouched. Must run
+    BEFORE widen_fullwidth, i.e. while full-width is still 1000, and AFTER
+    rescale, so the imported glyphs land at the final cell size."""
     cff = font["CFF "].cff
     td = cff[cff.fontNames[0]]
     cmap = font.getBestCmap()
-    gs = font.getGlyphSet()
     fd_index = td.FDSelect[font.getGlyphID(cmap[ord("A")])]
     private = td.FDArray[fd_index].Private
     vdon = vmtx_donor(font, fullwidth=False)
+    scp_cm, scp_gs = scp.getBestCmap(), scp.getGlyphSet()
+    scp_k = cell / SCP_CELL
+    mona_cm, mona_gs = mona.getBestCmap(), mona.getGlyphSet()
+    # the ligature pass sized Monaspace for CELL; this font's cell may differ
+    mona_k = cell / MONA_CELL
+    mona_dy = mona_baseline_shift(font, mona, mona_k)
     new_map = {}
-    made = {}  # source glyph -> scaled glyph (dedup shared glyphs)
+    made = {}  # (source, glyph) -> one-cell glyph (dedup shared sources)
+    n_mona = n_scp = n_wide = 0
     for cp, g in sorted(cmap.items()):
         if font["hmtx"][g][0] != FULLWIDTH:
             continue
         if unicodedata.east_asian_width(chr(cp)) in ("W", "F"):
             continue
-        if g not in made:
-            k = cell / FULLWIDTH
-            pen = T2CharStringPen(pen_width(private, cell), gs)
-            bp = BoundsPen(gs)
-            gs[g].draw(bp)
-            cy = (bp.bounds[1] + bp.bounds[3]) / 2 if bp.bounds else 0
-            # shrink about the vertical center so marks don't sink
-            gs[g].draw(TransformPen(pen, (k, 0, 0, k, 0, round(cy * (1 - k)))))
+        if chr(cp) in MONA_AMBIGUOUS and cp in mona_cm:
+            src = ("mona", mona_cm[cp])
+        elif cp in scp_cm:
+            src = ("scp", scp_cm[cp])
+        else:
+            n_wide += 1
+            continue
+        if src not in made:
+            if src[0] == "mona":
+                pen = T2CharStringPen(pen_width(private, cell), mona_gs)
+                draw_clean([(mona_gs, src[1],
+                             mona_transform(mona, 0, mona_dy, mona_k))], pen)
+                n_mona += 1
+            else:
+                pen = T2CharStringPen(pen_width(private, cell), scp_gs)
+                draw_clean([(scp_gs, src[1], (scp_k, 0, 0, scp_k, 0, 0))], pen)
+                n_scp += 1
+            cs = pen.getCharString(private=private)
             name = alloc_glyph_name(font)
-            append_glyph(font, td, name, pen.getCharString(private=private),
-                         fd_index, cell, None, vdon)
-            made[g] = name
-        new_map[cp] = made[g]
+            append_glyph(font, td, name, cs, fd_index, cell, None, vdon)
+            made[src] = name
+        new_map[cp] = made[src]
     for table in font["cmap"].tables:
         if table.isUnicode():
             for cp, name in new_map.items():
                 if cp in table.cmap:
                     table.cmap[cp] = name
+    print(f"  ambiguous width: {n_mona} from Monaspace, {n_scp} from SCP, "
+          f"{n_wide} left full-width")
     return len(new_map)
 
 
@@ -671,6 +716,61 @@ def set_names(font, suffix, weight, italic, italic_angle=-12.0):
     return ps
 
 
+def mona_transform(mona, dx, dy, k=MONA_K):
+    """Affine for a Monaspace outline landing in our em: scale to the cell,
+    shear in whatever slant the slnt axis clamped away, then offset."""
+    shear = math.tan(math.radians(-getattr(mona, "residual_slant", 0.0)))
+    return (k, 0, k * shear, k, dx, dy)
+
+
+def mona_baseline_shift(font, mona, k=MONA_K):
+    """Baseline correction: align the two fonts' '=' vertical centers."""
+    cmap = font.getBestCmap()
+    return round(glyph_vcenter(font, cmap[ord("=")])
+                 - glyph_vcenter(mona, mona.getBestCmap()[ord("=")], k))
+
+
+# standalone operators redrawn from Monaspace so they match the ligatures
+# built from the same outlines. Each of these visibly disagreed with its
+# ligature: '=' vs '==' in bar gap (SCP 170u, Monaspace 219u), '<' '>' vs
+# '<=' '>=' in size and angle, '|' vs '||' in vertical extent (SCP's bar
+# hangs 80u lower), '~' vs '~>' in amplitude. All four fit SCP's cell and
+# vertical scheme within a few units. Left as SCP: '-' (Monaspace's is
+# 132u shorter than the '=' it now sits beside), '!' (Monaspace's cap
+# height overshoots SCP's capitals), ':' (the ligatures use the raised
+# colon.case, so a swap buys nothing), '/' (would need '\' too), and the
+# rest of the punctuation whose skeletons simply differ.
+MONA_STANDALONE = "=<>|~"
+
+
+def replace_from_mona(font, mona, chars=MONA_STANDALONE):
+    """Swap the outlines of `chars` for Monaspace's, keeping name, advance
+    and cmap. Same instance, scale, shear and baseline as the ligatures."""
+    cff = font["CFF "].cff
+    td = cff[cff.fontNames[0]]
+    cmap = font.getBestCmap()
+    mona_cmap = mona.getBestCmap()
+    mona_gs = mona.getGlyphSet()
+    dy = mona_baseline_shift(font, mona)
+    replaced = []
+    for ch in chars:
+        name = cmap.get(ord(ch))
+        src = mona_cmap.get(ord(ch))
+        if name is None or src is None:
+            print(f"  skip standalone {ch!r}: missing in target or donor")
+            continue
+        gid = font.getGlyphID(name)
+        private = td.FDArray[td.FDSelect[gid]].Private
+        adv = font["hmtx"].metrics[name][0]
+        pen = T2CharStringPen(pen_width(private, adv), font.getGlyphSet())
+        draw_clean([(mona_gs, src, mona_transform(mona, 0, dy))], pen)
+        cs = pen.getCharString(private=private)
+        td.CharStrings.charStringsIndex[td.CharStrings.charStrings[name]] = cs
+        font["hmtx"].metrics[name] = (adv, charstring_lsb(cs))
+        replaced.append(ch)
+    return replaced
+
+
 def add_glyphs(font, mona, alts, ligatures=None):
     """Append the imported ligature glyphs; return {seq: glyph name}.
     Alternate (.alt) designs are appended too and recorded in `alts`."""
@@ -682,10 +782,7 @@ def add_glyphs(font, mona, alts, ligatures=None):
     mona_names = set(mona.getGlyphOrder())
     vdon = vmtx_donor(font, fullwidth=False)
 
-    # baseline correction: align the two fonts' '=' vertical centers
-    dy = round(
-        glyph_vcenter(font, cmap[ord("=")])
-        - glyph_vcenter(mona, mona.getBestCmap()[ord("=")], MONA_K))
+    dy = mona_baseline_shift(font, mona)
     # FD assignment: reuse the FD of an existing symbol glyph
     fd_index = td.FDSelect[font.getGlyphID(cmap[0x2260])]
     private = td.FDArray[fd_index].Private
@@ -709,7 +806,7 @@ def add_glyphs(font, mona, alts, ligatures=None):
         pen = T2CharStringPen(pen_width(private, width), font.getGlyphSet())
         # composed sequences (':=' etc.) overlap by construction — the same
         # pathops pass the .alt path uses removes the seams
-        draw_clean([(mona_gs, gname, (MONA_K, 0, 0, MONA_K, dx, dy))
+        draw_clean([(mona_gs, gname, mona_transform(mona, dx, dy))
                     for gname, dx in zip(spec["glyphs"], offsets)], pen)
         name = alloc_glyph_name(font)
         append_glyph(font, td, name, pen.getCharString(private=private),
@@ -722,7 +819,7 @@ def add_glyphs(font, mona, alts, ligatures=None):
                       for g in spec["glyphs"]]
         if any(g.endswith(".alt") for g in alt_glyphs):
             pen = T2CharStringPen(pen_width(private, width), font.getGlyphSet())
-            draw_clean([(mona_gs, gname, (MONA_K, 0, 0, MONA_K, dx, dy))
+            draw_clean([(mona_gs, gname, mona_transform(mona, dx, dy))
                         for gname, dx in zip(alt_glyphs, offsets)], pen)
             alt_name = alloc_glyph_name(font)
             append_glyph(font, td, alt_name, pen.getCharString(private=private),
@@ -1000,12 +1097,13 @@ def build_face(job):
     mona = mona_src.matched(target, ref_angle)
     alts = {}
     added = add_glyphs(base, mona, alts, LIGATURES)
+    replace_from_mona(base, mona)   # after add_glyphs: dy is measured on SCP's '='
     add_gsub(base, added, alts, variant_maps, LIGATURES)
     if cell != CELL:
         rescale(base, cell)
     if term:
         # ambiguous-width first (adv==1000 probe), then widen CJK
-        narrow_ambiguous(base, cell)
+        narrow_ambiguous(base, cell, scp, mona)
         widen_fullwidth(base, cell)
     ps = set_names(base, suffix, weight, italic,
                    ref_angle if ref_angle is not None else -12.0)

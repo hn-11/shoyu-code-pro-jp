@@ -89,6 +89,22 @@ def main():
         f"{FONT}: expected (half,full)=({exp_half},{exp_full}) for family "
         f"{fam!r}, got ({a_adv},{cjk_adv})")
 
+    # Term settles ambiguous-width characters like HackGen Console: a
+    # one-cell glyph from Monaspace (ligature-paired arrows / ≠ ≤ …) or SCP
+    # (box drawing included) where either has the character, and the rest
+    # (①…) left at two cells rather than shrunk. JP / 35 keep SHCJ's
+    # full-width assignments throughout.
+    if "Term" in fam.split(" "):
+        policy = {"\u2192": exp_half, "\u2026": exp_half, "\u03b1": exp_half,
+                  "\u2500": exp_half, "\u2460": exp_full, "\u203b": exp_full}
+    else:
+        policy = {"\u2192": exp_full, "\u2460": exp_full}
+    for ch, want in policy.items():
+        got = hmtx[cmap[ord(ch)]][0]
+        assert got == want, (
+            f"{FONT}: U+{ord(ch):04X} {ch!r} advance {got}, want {want}")
+    print(f"ok   ambiguous-width policy ({len(policy)} probes)")
+
     angle = tf["post"].italicAngle
     if italic:
         assert angle != 0, f"{FONT}: italic face but post.italicAngle == 0"
@@ -206,6 +222,35 @@ def main():
         failed = True
     else:
         print(f"ok   all {lig_checked} ligatures shape at declared widths")
+
+    # standalone operators redrawn from Monaspace must match the ligatures
+    # cut from the same instance: every contour of the lone glyph has a
+    # counterpart in the ligature at the same y extent (ligatures span
+    # more cells, so only y is comparable). '==' '<<' '>>' '||' repeat the
+    # glyph outright; '~' has no such ligature ('~>' is a fused wave-arrow)
+    # and is not checked.
+    from build import MONA_STANDALONE, _contour_bounds, _record_contours
+    glyph_order = tf.getGlyphOrder()
+
+    def y_rows(gname):
+        return sorted((round(b[1]), round(b[3])) for b in
+                      _contour_bounds(_record_contours(tf, gname)))
+
+    def lig_glyph(text):
+        infos, _ = shape_infos(text, {"calt": True, "liga": True})
+        return glyph_order[infos[2].codepoint]
+
+    pairs = {"=": "a == b", "<": "a << b", ">": "a >> b", "|": "a || b"}
+    for ch in MONA_STANDALONE:
+        if ch not in pairs:
+            continue
+        rows_ch, rows_lig = y_rows(cmap[ord(ch)]), y_rows(lig_glyph(pairs[ch]))
+        ok = bool(rows_ch) and all(
+            any(abs(a - c) <= 1 and abs(b - d) <= 1 for c, d in rows_lig)
+            for a, b in rows_ch)
+        print(f"{'ok  ' if ok else 'FAIL'} {ch!r} rows {rows_ch} "
+              f"found in {pairs[ch].split()[1]!r} {rows_lig}")
+        failed |= not ok
 
     # imported outlines must be overlap-free (VF instancing leaves seams)
     import pathops
