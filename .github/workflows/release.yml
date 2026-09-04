@@ -41,6 +41,8 @@ jobs:
           echo "SCP_VF_U=${{ steps.upstreams.outputs.scp_vf_u }}" >> "$GITHUB_ENV"
           echo "SCP_VF_I=${{ steps.upstreams.outputs.scp_vf_i }}" >> "$GITHUB_ENV"
           echo "MONA_VF=${{ steps.upstreams.outputs.mona_vf }}" >> "$GITHUB_ENV"
+          TAG="${{ inputs.tag || github.ref_name }}"
+          echo "SHOYU_VERSION=${TAG#v}" >> "$GITHUB_ENV"
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq fontforge python3-fontforge
       - name: Fetch FontPatcher (cached)
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
@@ -55,6 +57,7 @@ jobs:
           unzip -qo /tmp/FontPatcher.zip -d FontPatcher
       - run: python scripts/build.py
       - run: python scripts/verify.py dist/ShoyuCodeProJP-Regular.otf
+      - run: python scripts/verify.py dist/ShoyuCodeProJP-Light.otf
       - run: python scripts/verify.py dist/ShoyuCodeProJP35-Heavy.otf
       - run: python scripts/verify.py dist/ShoyuCodeProJP-RegularItalic.otf
       - run: python scripts/verify.py dist/ShoyuCodeProJPTerm-Regular.otf

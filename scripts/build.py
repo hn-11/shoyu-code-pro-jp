@@ -42,6 +42,12 @@ Env (all required):
   SHS_DIR  = dir with SourceHanSansJP-<Weight>.otf
   SCP_VF_U = SourceCodeVF-Upright.otf   SCP_VF_I = SourceCodeVF-Italic.otf
   SHCJ_TTC = upstream/SourceHanCodeJP.ttc (default)   MONA_VF = Monaspace VF
+
+Env (optional):
+  SHOYU_VERSION = our own release version, e.g. "3.1.0" — stamps
+                  head.fontRevision (MAJOR.MINOR), nameID 5 and the CFF
+                  version. Unset keeps today's behaviour: the revision
+                  stays whatever Source Han Sans shipped.
 """
 
 import concurrent.futures
@@ -746,8 +752,15 @@ def widen_fullwidth(font, cell):
 OWNED_NAME_IDS = (1, 2, 3, 4, 6, 16, 17)
 
 
-def set_names(font, suffix, weight, italic, italic_angle=-12.0):
-    """Rewrite the family-identifying names, preserve the legal ones."""
+def set_names(font, suffix, weight, italic, italic_angle=-12.0, version=None):
+    """Rewrite the family-identifying names, preserve the legal ones.
+
+    `version` (SHOYU_VERSION, e.g. "3.1.0") stamps our own release version
+    when set: head.fontRevision becomes MAJOR.MINOR, nameID 5 notes both
+    our version and the inherited Source Han Sans revision, and the CFF
+    version matches head. Left None (the default), the inherited SHS
+    revision is kept as-is — today's behaviour, used for CI builds.
+    """
     base_family = ("Shoyu Code Pro JP " + suffix).strip()
     ribbi = weight in ("Regular", "Bold")
     family = base_family if ribbi else f"{base_family} {weight}"
@@ -766,10 +779,20 @@ def set_names(font, suffix, weight, italic, italic_angle=-12.0):
                      (17, (weight + (" Italic" if italic else ""))
                           .replace("Regular Italic", "Italic"))):
         name.setName(val, nid, 3, 1, 0x409)
-    # version: keep the base font's revision, note the derivation
-    rev = font["head"].fontRevision
-    version = f"Version {rev:.3f};Shoyu Code Pro JP"
-    name.setName(version, 5, 3, 1, 0x409)
+    # version: SHOYU_VERSION (set) stamps our own release version and notes
+    # the inherited SHS revision alongside it; unset (CI builds) keeps that
+    # inherited revision as-is, as before.
+    shs_rev = font["head"].fontRevision
+    if version:
+        major, minor = version.split(".")[:2]
+        cff_version = f"{major}.{minor}"
+        font["head"].fontRevision = float(cff_version)
+        version_str = (f"Version {version};Shoyu Code Pro JP;"
+                       f"SHS {shs_rev:.3f}")
+    else:
+        cff_version = f"{shs_rev:.3f}"
+        version_str = f"Version {shs_rev:.3f};Shoyu Code Pro JP"
+    name.setName(version_str, 5, 3, 1, 0x409)
     cff = font["CFF "].cff
     cff.fontNames[0] = ps
     td = cff.topDictIndex.items[0]
@@ -778,7 +801,7 @@ def set_names(font, suffix, weight, italic, italic_angle=-12.0):
     if hasattr(td, "FullName"):
         td.FullName = full
     if hasattr(td, "version"):
-        td.version = f"{rev:.3f}"
+        td.version = cff_version
     # Windows' family-linking model reads *these* bits, not the name-table
     # text above, to decide which face is "the bold" / "the italic" of a
     # family — fsSelection/macStyle must always agree with nameID 2 (RIBBI
@@ -1219,7 +1242,8 @@ def build_face(job):
         narrow_ambiguous(base, cell, scp, mona)
         widen_fullwidth(base, cell)
     ps = set_names(base, suffix, weight, italic,
-                   ref_angle if ref_angle is not None else -12.0)
+                   ref_angle if ref_angle is not None else -12.0,
+                   version=env.get("SHOYU_VERSION"))
     update_bbox(base)
     out = Path(out_dir) / f"{ps}.otf"
     base.save(out)
@@ -1261,6 +1285,9 @@ def main():
     missing = [k for k, v in env.items() if not v or not Path(v).exists()]
     if missing:
         sys.exit(f"missing env: {missing}")
+    # optional: not a path, so checked (and added) after the missing-env
+    # gate above, not folded into it
+    env["SHOYU_VERSION"] = os.environ.get("SHOYU_VERSION")
     out_dir = ROOT / "dist"
     out_dir.mkdir(exist_ok=True)
 
