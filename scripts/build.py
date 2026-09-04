@@ -82,8 +82,8 @@ class Variant(NamedTuple):
                  # SHCJ's CJK pairing (69/1000em bar). Without comp a
                  # rescaled Latin keeps Source Code Pro's native weight.
     term: bool   # widen full-width advances to 2 cells (centered); EAW-
-                 # ambiguous codepoints take SCP's one-cell glyph where SCP
-                 # has one, else stay full-width (see narrow_ambiguous).
+                 # ambiguous codepoints take a one-cell Monaspace / SCP glyph
+                 # where one exists, else stay full-width (narrow_ambiguous).
 
 
 VARIANTS = {
