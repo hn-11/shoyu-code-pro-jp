@@ -477,10 +477,22 @@ def append_glyph(font, td, name, cs, fd_index, width, lsb=None, vdonor=None):
 def graft_halfwidth(base, scp, ref):
     """Give `base` (Source Han Sans JP) its half-width layer.
 
-    Every codepoint SHCJ maps to a 667-advance glyph is re-pointed to a new
-    glyph: outline from the SCP instance scaled 10/9 when SCP has it,
-    otherwise copied verbatim from the SHCJ reference face (half-width
-    kana and a handful of symbols SCP never had).
+    Three kinds of codepoint get a new 667-advance glyph:
+      - SHCJ maps it half-width: outline from the SCP instance scaled 10/9
+        when SCP has it, else copied verbatim from the SHCJ reference face
+        (half-width kana and a handful of symbols SCP never had);
+      - SHCJ lacks it but SCP has it (ł ğ ş ı ř ₽ ... — some 600 Latin
+        Extended / Cyrillic / symbol codepoints Polish, Turkish, Czech and
+        friends need): SCP, so those languages don't fall back to another
+        font mid-word;
+      - SHCJ maps it to an advance that is neither the cell nor full-width
+        (ς 482, ⁴ 411 ... proportional leftovers that break the grid) and
+        SCP has it: SCP.
+    Codepoints SHCJ keeps full-width (→, ①, ...) stay full-width — and
+    where Source Han Sans's own glyph for one of them is proportional
+    (− 555, ˇ 600, ˙ 500: SHS never made those monospaced), SHCJ's
+    full-width glyph is copied in, so the 2:3 grid holds everywhere SHCJ's
+    does.
     """
     ref_cm, ref_hm = ref.getBestCmap(), ref["hmtx"]
     scp_cm = scp.getBestCmap()
@@ -496,8 +508,29 @@ def graft_halfwidth(base, scp, ref):
     default_map = {}  # scp glyph name -> our glyph name (for variant wiring)
     made = {}         # source glyph -> our glyph (dedup shared sources)
     from_scp = from_ref = 0
-    for cp, g in sorted(ref_cm.items()):
-        if ref_hm[g][0] != CELL:
+    bhm = base["hmtx"]
+    for cp in sorted(set(ref_cm) | set(scp_cm)):
+        g = ref_cm.get(cp)
+        ref_adv = ref_hm[g][0] if g is not None else None
+        if ref_adv == CELL:
+            pass                                   # SHCJ's half-width set
+        elif cp in scp_cm and (ref_adv is None or ref_adv not in (0, FULLWIDTH)):
+            pass                                   # SCP-only, or off-grid
+        elif (ref_adv == FULLWIDTH and cp in bcm
+              and bhm[bcm[cp]][0] not in (0, FULLWIDTH)):
+            # SHCJ made it full-width; SHS's own glyph is proportional
+            src = ("ref", g)
+            if src not in made:
+                pen = T2CharStringPen(pen_width(private, FULLWIDTH), ref_gs)
+                draw_clean([(ref_gs, g, (1, 0, 0, 1, 0, 0))], pen)
+                name = alloc_glyph_name(base)
+                append_glyph(base, td, name, pen.getCharString(private=private),
+                             fd_index, FULLWIDTH, None, vmtx_donor(base))
+                made[src] = name
+                from_ref += 1
+            new_map[cp] = made[src]
+            continue
+        else:
             continue
         # several codepoints often share one source glyph (SCP's own cmap
         # aliases, SHCJ's kana forms) — one grafted glyph per source keeps
@@ -525,9 +558,10 @@ def graft_halfwidth(base, scp, ref):
     # cidFlatten, which is how the Nerd Font variants lost 'M' et al.
     base["cmap"].tables = [t for t in base["cmap"].tables if t.isUnicode()]
     for table in base["cmap"].tables:
+        bmp_only = table.format in (0, 4, 6)
         for cp, name in new_map.items():
-            if cp in table.cmap:
-                table.cmap[cp] = name
+            if cp in table.cmap or not (bmp_only and cp > 0xFFFF):
+                table.cmap[cp] = name   # SCP-only codepoints are new entries
     return from_scp, from_ref, default_map
 
 

@@ -100,6 +100,14 @@ def main():
                   "\u2500": exp_half, "\u2460": exp_full, "\u203b": exp_full}
     else:
         policy = {"\u2192": exp_full, "\u2460": exp_full}
+    # SCP-only Latin (ł ğ ₽) is grafted half-width in every family; so is
+    # SHS's proportional ς — upright only, SCP Italic has no Greek
+    policy.update({"\u0142": exp_half, "\u011f": exp_half, "\u20bd": exp_half})
+    if not italic:
+        policy["\u03c2"] = exp_half
+    # SHCJ's full-width '−' used to come through as SHS's proportional 555;
+    # Term then takes SCP's one-cell minus like any other ambiguous symbol
+    policy["\u2212"] = exp_half if "Term" in fam.split(" ") else exp_full
     for ch, want in policy.items():
         got = hmtx[cmap[ord(ch)]][0]
         assert got == want, (
