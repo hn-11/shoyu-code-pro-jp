@@ -135,6 +135,7 @@ def main():
     off = {"calt": False, "liga": False}
     toggles = [
         ("a != b", dict(off), 6),
+        ("a == b", dict(off, liga=True), 5),   # liga alone, calt off
         ("a != b", dict(off, ss01=True), 5),
         ("a -> b", dict(off, ss01=True), 6),
         ("a -> b", dict(off, ss02=True), 5),

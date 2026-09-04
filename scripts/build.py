@@ -849,29 +849,33 @@ def _langsys_list(gsub):
                 yield ls
 
 
-def _existing_feature_index(gsub, tag):
-    """Index of a FeatureRecord with `tag` that some LangSys already uses —
-    merging into it beats appending a second record with the same tag
-    (shapers take the first match and the rest is dead weight)."""
-    used = set()
-    for ls in _langsys_list(gsub):
-        used.update(ls.FeatureIndex)
-    for i, fr in enumerate(gsub.FeatureList.FeatureRecord):
-        if fr.FeatureTag == tag and i in used:
-            return i
-    return None
-
-
 def _add_feature(gsub, tag, lookup_indices):
-    """Merge into an existing feature of the same tag, or append a new one.
-    Returns the feature index, or None when merged (already referenced)."""
-    i = _existing_feature_index(gsub, tag)
-    if i is not None:
-        feat = gsub.FeatureList.FeatureRecord[i].Feature
+    """Make `lookup_indices` reachable under `tag` from every LangSys.
+
+    A LangSys that already lists a `tag` record gets the lookups merged
+    into that record (shapers take the first matching tag and ignore a
+    second record, so appending one would be dead weight). Source Han
+    Sans carries one 'liga' record per script/langsys — eleven of them —
+    and merging into just the first left 'latn' without our ligatures.
+    LangSys that lack the tag share one new record. Returns that new
+    record's index, or None when every LangSys already had the tag."""
+    records = gsub.FeatureList.FeatureRecord
+    existing = {i for i, fr in enumerate(records) if fr.FeatureTag == tag}
+    merged = set()
+    lacking = []
+    for ls in _langsys_list(gsub):
+        mine = existing.intersection(ls.FeatureIndex)
+        if mine:
+            merged.update(mine)
+        else:
+            lacking.append(ls)
+    for i in merged:
+        feat = records[i].Feature
         for li in lookup_indices:
             if li not in feat.LookupListIndex:
                 feat.LookupListIndex.append(li)
         feat.LookupCount = len(feat.LookupListIndex)
+    if not lacking:
         return None
     fr = otTables.FeatureRecord()
     fr.FeatureTag = tag
@@ -879,9 +883,13 @@ def _add_feature(gsub, tag, lookup_indices):
     fr.Feature.FeatureParams = None
     fr.Feature.LookupListIndex = list(lookup_indices)
     fr.Feature.LookupCount = len(lookup_indices)
-    gsub.FeatureList.FeatureRecord.append(fr)
-    gsub.FeatureList.FeatureCount += 1
-    return gsub.FeatureList.FeatureCount - 1
+    records.append(fr)
+    gsub.FeatureList.FeatureCount = len(records)
+    new = len(records) - 1
+    for ls in lacking:
+        ls.FeatureIndex.append(new)
+        ls.FeatureCount = len(ls.FeatureIndex)
+    return new
 
 
 def _alloc_name_id(font):
@@ -971,28 +979,19 @@ def add_gsub(font, added, alts, variant_maps=None, ligatures=None):
         group_lookups[grp] = _new_lookup(
             gsub, otl.buildLigatureSubstSubtable(groups[grp]))
 
-    feature_indices = []
     for tag in ("calt", "liga"):
-        feature_indices.append(_add_feature(gsub, tag, [combined_lookup]))
+        _add_feature(gsub, tag, [combined_lookup])
     for grp in sorted(group_lookups):
-        i = _add_feature(gsub, grp, [group_lookups[grp]])
-        _set_feature_params(font, gsub, i, grp)
-        feature_indices.append(i)
+        _set_feature_params(
+            font, gsub, _add_feature(gsub, grp, [group_lookups[grp]]), grp)
     if alts:
         alt_lookup = _new_lookup(gsub, otl.buildSingleSubstSubtable(alts))
-        i = _add_feature(gsub, "cv99", [alt_lookup])
-        _set_feature_params(font, gsub, i, "cv99")
-        feature_indices.append(i)
+        _set_feature_params(
+            font, gsub, _add_feature(gsub, "cv99", [alt_lookup]), "cv99")
     for tag in sorted(variant_maps or {}):
         vlookup = _new_lookup(
             gsub, otl.buildSingleSubstSubtable(variant_maps[tag]))
-        feature_indices.append(_add_feature(gsub, tag, [vlookup]))
-    feature_indices = [i for i in feature_indices if i is not None]
-
-    for ls in _langsys_list(gsub):
-        ls.FeatureIndex.extend(i for i in feature_indices
-                               if i not in ls.FeatureIndex)
-        ls.FeatureCount = len(ls.FeatureIndex)
+        _add_feature(gsub, tag, [vlookup])
     sort_feature_list(gsub)
 
 
