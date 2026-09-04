@@ -98,11 +98,12 @@ VARIANTS = {
 }
 
 # (output weight name, SHCJ reference face, Source Han Sans static file)
-# SHCJ's ExtraLight / Light are not built: Monaspace's wght axis bottoms out
-# at 200 (bar ~59u at our scale) while those faces measure 31u / 47u, so the
-# ligatures came out about twice as heavy as the Latin around them. Nobody
-# codes in Light anyway — editors and terminals pick Regular + Bold.
+# Monaspace's wght axis bottoms out at 200 (bar ~59u at our scale). SHCJ
+# Light measures 47u: the 6u/side surplus is eroded away (mona_glyphset).
+# ExtraLight would need 14u/side, which hollows out the dots of ':=' and
+# '...', so it is not built — nobody codes in a hairline anyway.
 FACES = [
+    ("Light", "Source Han Code JP L", "SourceHanSansJP-Light.otf"),
     ("Normal", "Source Han Code JP N", "SourceHanSansJP-Normal.otf"),
     ("Regular", "Source Han Code JP R", "SourceHanSansJP-Regular.otf"),
     ("Medium", "Source Han Code JP M", "SourceHanSansJP-Medium.otf"),
@@ -316,10 +317,19 @@ class VFSource:
         inst.residual_slant = (slant - axes["slnt"]
                                if slant is not None and "slnt" in axes else 0.0)
         t = bar_thickness(inst, inst.getBestCmap()[ord("=")])
-        if abs(t - pre_scale_target) > 1.0:
+        # the axis floor may stop short of a thin target (Monaspace's
+        # wght 200 is 59u at our scale; SHCJ Light measures 47u). Record
+        # the surplus per side, in this font's units, and mona_glyphset()
+        # erodes the outlines by it — see erode_path().
+        inst.erode = max(0.0, (t - pre_scale_target) / 2)
+        if abs(t - pre_scale_target) > 1.0 and not inst.erode:
             print(f"  WARNING: wght search off by {t - pre_scale_target:+.1f}u "
                   f"(target {pre_scale_target:.1f}, wght={wght:.1f}) in "
                   f"{Path(self.vf_path).name}")
+        elif inst.erode > 0.5:
+            print(f"  wght floor {wght:.0f} leaves {2 * inst.erode:.1f}u surplus "
+                  f"(donor units) in {Path(self.vf_path).name}; eroding "
+                  f"{inst.erode:.1f}u/side")
         self._cache[key] = inst   # only the converged instance is kept
         return inst
 
@@ -342,6 +352,47 @@ def draw_clean(draws, pen):
     with contextlib.suppress(pathops.PathOpsError):
         path = pathops.simplify(path, clockwise=path.clockwise)  # degenerate outline: keep as drawn
     path.draw(pen)
+
+
+def erode_path(path, d):
+    """Shrink a filled outline by `d` on every side: subtract a stroke of
+    width 2d run along the outline itself. Straight bars, arrowheads and
+    slashes keep their shape; only dots lose proportionally more."""
+    inner = pathops.Path(path)
+    inner.simplify()
+    band = pathops.Path(inner)
+    band.stroke(2 * d, pathops.LineCap.BUTT_CAP, pathops.LineJoin.MITER_JOIN, 4)
+    return pathops.op(inner, band, pathops.PathOp.DIFFERENCE)
+
+
+class _ErodedGlyph:
+    def __init__(self, gs, gname, d):
+        self._gs, self._gname, self._d = gs, gname, d
+
+    def draw(self, pen):
+        path = pathops.Path()
+        self._gs[self._gname].draw(path.getPen())
+        erode_path(path, self._d).draw(pen)
+
+
+class _ErodedGlyphSet:
+    """Glyph set view that hands out eroded outlines (see erode_path)."""
+    def __init__(self, gs, d):
+        self._gs, self._d = gs, d
+
+    def __getitem__(self, gname):
+        return _ErodedGlyph(self._gs, gname, self._d)
+
+    def __contains__(self, gname):
+        return gname in self._gs
+
+
+def mona_glyphset(mona):
+    """The glyph set every Monaspace import draws from: eroded when the
+    weight search hit the axis floor (matched() sets `erode`)."""
+    gs = mona.getGlyphSet()
+    d = getattr(mona, "erode", 0.0)
+    return _ErodedGlyphSet(gs, d) if d > 0.5 else gs
 
 
 def pen_width(private, advance):
@@ -619,7 +670,7 @@ def narrow_ambiguous(font, cell, scp, mona):
     vdon = vmtx_donor(font, fullwidth=False)
     scp_cm, scp_gs = scp.getBestCmap(), scp.getGlyphSet()
     scp_k = cell / SCP_CELL
-    mona_cm, mona_gs = mona.getBestCmap(), mona.getGlyphSet()
+    mona_cm, mona_gs = mona.getBestCmap(), mona_glyphset(mona)
     # the ligature pass sized Monaspace for CELL; this font's cell may differ
     mona_k = cell / MONA_CELL
     mona_dy = mona_baseline_shift(font, mona, mona_k)
@@ -794,7 +845,7 @@ def replace_from_mona(font, mona, chars=MONA_STANDALONE, dy=None):
     td = cff[cff.fontNames[0]]
     cmap = font.getBestCmap()
     mona_cmap = mona.getBestCmap()
-    mona_gs = mona.getGlyphSet()
+    mona_gs = mona_glyphset(mona)
     if dy is None:
         dy = mona_baseline_shift(font, mona)
     replaced = []
@@ -823,7 +874,7 @@ def add_glyphs(font, mona, alts, ligatures=None, dy=None):
     cff = font["CFF "].cff
     td = cff[cff.fontNames[0]]
     cmap = font.getBestCmap()
-    mona_gs = mona.getGlyphSet()
+    mona_gs = mona_glyphset(mona)
     mona_names = set(mona.getGlyphOrder())
     vdon = vmtx_donor(font, fullwidth=False)
 

@@ -13,7 +13,7 @@ from fontTools.ttLib import TTCollection, TTFont
 DIST = Path(__file__).resolve().parent.parent / "dist"
 FAMILIES = ["ShoyuCodeProJP", "ShoyuCodeProJP35", "ShoyuCodeProJPTerm"]
 
-WEIGHT_ORDER = ["Normal", "Regular", "Medium", "Bold", "Heavy"]
+WEIGHT_ORDER = ["Light", "Normal", "Regular", "Medium", "Bold", "Heavy"]
 EXPECTED = len(WEIGHT_ORDER) * 2  # weights x (upright, italic)
 
 

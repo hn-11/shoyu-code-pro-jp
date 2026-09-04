@@ -287,3 +287,27 @@ def test_contour_bounds_ignores_curve_control_points():
 def test_contour_bounds_open_contour_kept():
     segs = [("lineTo", [(10, 20)], (0, 0))]
     assert build._contour_bounds([segs]) == [(0, 0, 10, 20)]
+
+
+# --- erosion for the Monaspace wght floor ---------------------------------
+
+def test_erode_path_shrinks_every_side():
+    import pathops
+    bar = pathops.Path()
+    pen = bar.getPen()
+    pen.moveTo((0, 0)); pen.lineTo((100, 0)); pen.lineTo((100, 30))
+    pen.lineTo((0, 30)); pen.closePath()
+    out = build.erode_path(bar, 5)
+    assert tuple(round(v) for v in out.bounds) == (5, 5, 95, 25)
+
+
+def test_mona_glyphset_only_erodes_when_floor_was_hit():
+    class Mona:
+        def getGlyphSet(self):
+            return {"equal": object()}
+    m = Mona()
+    assert build.mona_glyphset(m) == m.getGlyphSet()   # no erode attr
+    m.erode = 0.2
+    assert build.mona_glyphset(m) == m.getGlyphSet()   # below threshold
+    m.erode = 6.0
+    assert isinstance(build.mona_glyphset(m), build._ErodedGlyphSet)
