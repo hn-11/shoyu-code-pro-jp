@@ -5,7 +5,7 @@ Recipe (Source Han Mono's approach, re-executed against latest releases):
   - Japanese / full-width layer: Source Han Sans JP (latest, per weight)
   - Half-width Latin layer:      Source Code Pro VF, scaled 10/9 to 667
                                  (Adobe's own SHCJ derivation, re-run)
-  - Ligatures (50):              Monaspace VF (data/mona_ligs.json)
+  - Ligatures (50) and '=':      Monaspace VF (data/mona_ligs.json)
   - Source Han Code JP serves as the PAIRING REFERENCE — each face's '='
     bar thickness decides the SCP/Monaspace wght instance — and as the
     donor for half-width glyphs SCP lacks (half-width kana etc.), plus
@@ -305,6 +305,10 @@ class VFSource:
                 hi = mid
         wght = (lo + hi) / 2
         inst = self._instance(dict(axes, wght=wght))
+        # slant the axis could not deliver (SCP Italic is -12, Monaspace's
+        # slnt floor is -11); mona_transform() shears the remainder in
+        inst.residual_slant = (slant - axes["slnt"]
+                               if slant is not None and "slnt" in axes else 0.0)
         t = bar_thickness(inst, inst.getBestCmap()[ord("=")])
         if abs(t - pre_scale_target) > 1.0:
             print(f"  WARNING: wght search off by {t - pre_scale_target:+.1f}u "
@@ -673,6 +677,56 @@ def set_names(font, suffix, weight, italic, italic_angle=-12.0):
     return ps
 
 
+def mona_transform(mona, dx, dy):
+    """Affine for a Monaspace outline landing in our em: scale to the cell,
+    shear in whatever slant the slnt axis clamped away, then offset."""
+    shear = math.tan(math.radians(-getattr(mona, "residual_slant", 0.0)))
+    return (MONA_K, 0, MONA_K * shear, MONA_K, dx, dy)
+
+
+def mona_baseline_shift(font, mona):
+    """Baseline correction: align the two fonts' '=' vertical centers."""
+    cmap = font.getBestCmap()
+    return round(glyph_vcenter(font, cmap[ord("=")])
+                 - glyph_vcenter(mona, mona.getBestCmap()[ord("=")], MONA_K))
+
+
+# standalone operators redrawn from Monaspace so they match the ligatures
+# built from the same outlines: '=' alone vs '==' / '=>' / ':=' used to
+# differ in bar spacing (SCP 170u gap, Monaspace 219u). Only '=' — its box
+# and vertical center coincide with SCP's within 10u; '-' is 132u shorter
+# in Monaspace and '|' sits 60u higher, so those stay SCP.
+MONA_STANDALONE = "="
+
+
+def replace_from_mona(font, mona, chars=MONA_STANDALONE):
+    """Swap the outlines of `chars` for Monaspace's, keeping name, advance
+    and cmap. Same instance, scale, shear and baseline as the ligatures."""
+    cff = font["CFF "].cff
+    td = cff[cff.fontNames[0]]
+    cmap = font.getBestCmap()
+    mona_cmap = mona.getBestCmap()
+    mona_gs = mona.getGlyphSet()
+    dy = mona_baseline_shift(font, mona)
+    replaced = []
+    for ch in chars:
+        name = cmap.get(ord(ch))
+        src = mona_cmap.get(ord(ch))
+        if name is None or src is None:
+            print(f"  skip standalone {ch!r}: missing in target or donor")
+            continue
+        gid = font.getGlyphID(name)
+        private = td.FDArray[td.FDSelect[gid]].Private
+        adv = font["hmtx"].metrics[name][0]
+        pen = T2CharStringPen(pen_width(private, adv), font.getGlyphSet())
+        draw_clean([(mona_gs, src, mona_transform(mona, 0, dy))], pen)
+        cs = pen.getCharString(private=private)
+        td.CharStrings.charStringsIndex[td.CharStrings.charStrings[name]] = cs
+        font["hmtx"].metrics[name] = (adv, charstring_lsb(cs))
+        replaced.append(ch)
+    return replaced
+
+
 def add_glyphs(font, mona, alts, ligatures=None):
     """Append the imported ligature glyphs; return {seq: glyph name}.
     Alternate (.alt) designs are appended too and recorded in `alts`."""
@@ -684,10 +738,7 @@ def add_glyphs(font, mona, alts, ligatures=None):
     mona_names = set(mona.getGlyphOrder())
     vdon = vmtx_donor(font, fullwidth=False)
 
-    # baseline correction: align the two fonts' '=' vertical centers
-    dy = round(
-        glyph_vcenter(font, cmap[ord("=")])
-        - glyph_vcenter(mona, mona.getBestCmap()[ord("=")], MONA_K))
+    dy = mona_baseline_shift(font, mona)
     # FD assignment: reuse the FD of an existing symbol glyph
     fd_index = td.FDSelect[font.getGlyphID(cmap[0x2260])]
     private = td.FDArray[fd_index].Private
@@ -711,7 +762,7 @@ def add_glyphs(font, mona, alts, ligatures=None):
         pen = T2CharStringPen(pen_width(private, width), font.getGlyphSet())
         # composed sequences (':=' etc.) overlap by construction — the same
         # pathops pass the .alt path uses removes the seams
-        draw_clean([(mona_gs, gname, (MONA_K, 0, 0, MONA_K, dx, dy))
+        draw_clean([(mona_gs, gname, mona_transform(mona, dx, dy))
                     for gname, dx in zip(spec["glyphs"], offsets)], pen)
         name = alloc_glyph_name(font)
         append_glyph(font, td, name, pen.getCharString(private=private),
@@ -724,7 +775,7 @@ def add_glyphs(font, mona, alts, ligatures=None):
                       for g in spec["glyphs"]]
         if any(g.endswith(".alt") for g in alt_glyphs):
             pen = T2CharStringPen(pen_width(private, width), font.getGlyphSet())
-            draw_clean([(mona_gs, gname, (MONA_K, 0, 0, MONA_K, dx, dy))
+            draw_clean([(mona_gs, gname, mona_transform(mona, dx, dy))
                         for gname, dx in zip(alt_glyphs, offsets)], pen)
             alt_name = alloc_glyph_name(font)
             append_glyph(font, td, alt_name, pen.getCharString(private=private),
@@ -1002,6 +1053,7 @@ def build_face(job):
     mona = mona_src.matched(target, ref_angle)
     alts = {}
     added = add_glyphs(base, mona, alts, LIGATURES)
+    replace_from_mona(base, mona)   # after add_glyphs: dy is measured on SCP's '='
     add_gsub(base, added, alts, variant_maps, LIGATURES)
     if cell != CELL:
         rescale(base, cell)

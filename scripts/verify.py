@@ -207,6 +207,26 @@ def main():
     else:
         print(f"ok   all {lig_checked} ligatures shape at declared widths")
 
+    # the standalone '=' is redrawn from Monaspace so it matches the
+    # ligatures cut from the same instance: bar thickness and the bars'
+    # vertical placement must coincide with '==' (which is one glyph
+    # spanning two cells, so only the y extents are comparable)
+    from build import _contour_bounds, _record_contours
+    glyph_order = tf.getGlyphOrder()
+
+    def bar_rows(gname):
+        return sorted((round(b[1]), round(b[3])) for b in
+                      _contour_bounds(_record_contours(tf, gname)))
+
+    infos, _ = shape_infos("a == b", {"calt": True, "liga": True})
+    eq_lig = glyph_order[infos[2].codepoint]
+    rows_eq, rows_lig = bar_rows(cmap[ord("=")]), bar_rows(eq_lig)
+    ok = (len(rows_eq) == len(rows_lig) == 2 and all(
+        abs(a - b) <= 1 for ra, rb in zip(rows_eq, rows_lig)
+        for a, b in zip(ra, rb)))
+    print(f"{'ok  ' if ok else 'FAIL'} '=' bars {rows_eq} match '==' {rows_lig}")
+    failed |= not ok
+
     # imported outlines must be overlap-free (VF instancing leaves seams)
     import pathops
     gs = tf.getGlyphSet()
