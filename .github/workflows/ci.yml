@@ -9,6 +9,8 @@ on:
   # for a bot-opened PR lands in action_required, so the checks that gate the
   # merge have to come from a run this repo started itself.
   workflow_dispatch:
+env:
+  FONTPATCHER_TAG: v3.4.0
 jobs:
   lint-test:
     runs-on: ubuntu-latest
@@ -48,20 +50,18 @@ jobs:
         id: fp
         with:
           path: FontPatcher
-          key: fontpatcher-v3.4.0
+          key: fontpatcher-${{ env.FONTPATCHER_TAG }}
       - if: steps.fp.outputs.cache-hit != 'true'
         run: |
           curl -sSfL -o /tmp/FontPatcher.zip \
-            https://github.com/ryanoasis/nerd-fonts/releases/download/v3.4.0/FontPatcher.zip
+            https://github.com/ryanoasis/nerd-fonts/releases/download/${FONTPATCHER_TAG}/FontPatcher.zip
           unzip -qo /tmp/FontPatcher.zip -d FontPatcher
       - run: python scripts/build.py "Regular"
       - run: python scripts/verify.py dist/ShoyuCodeProJP-Regular.otf
       - run: python scripts/verify.py dist/ShoyuCodeProJP35-Regular.otf
       - run: python scripts/verify.py dist/ShoyuCodeProJP-RegularItalic.otf
+      - run: python scripts/verify.py dist/ShoyuCodeProJPTerm-Regular.otf
       - name: Nerd-patch smoke test (one font)
-        run: python scripts/nerdpatch.py FontPatcher ShoyuCodeProJP35-Regular
+        run: python scripts/nerdpatch.py FontPatcher ShoyuCodeProJPTerm-Regular
       - name: Verify NF-patched font
-        run: |
-          nf_font=$(find dist/nerd -name '*.otf' | head -1)
-          echo "verifying: $nf_font"
-          python scripts/verify.py "$nf_font"
+        run: python scripts/verify.py dist/nerd/ShoyuCodeProJPTermNF-Regular.otf

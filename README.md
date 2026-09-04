@@ -58,13 +58,17 @@ SCP 純正の文字変異）、`salt`、SCP の stylistic set は ss11〜ss17 �
 // 例: !== の一体化が読みにくい場合、比較系だけ切って矢印は残す
 "editor.fontLigatures": "'calt' off, 'ss02', 'ss03', 'ss05', 'ss06', 'ss07', 'ss08'"
 ```
+ss01〜08 はグループごとに別のルックアップなので、`calt` を切ったまま複数
+グループを同時に有効にすると、片方の短い列（ss01 の `>=`）がもう片方の
+長い列（ss02 の `>>=`）の頭を食ってしまうことがある。Monaspace 本家の
+stylistic set も同じ挙動なので許容している。グループを跨いだ安全性が
+欲しい場合は `calt` を使うこと。
+
 `:=` と `::` は Monaspace 内でも文脈変異（`colon.case`）で実現されているため、
 同グリフの合成として取り込んでいる（実レンダリングと誤差1ユニット未満で一致）。
 
 ## ファミリー構成
 
-| ファミリー | 半角:全角 | 用途 |
-|-----------|-----------|------|
 | ファミリー | 半角:全角 | `=`バー | 用途 |
 |-----------|-----------|--------|------|
 | Shoyu Code Pro JP | 667:1000 (2:3) | 69 | エディタ用（SHCJ の見た目） |
@@ -144,7 +148,7 @@ Source Han Code JP）を取得して環境変数で場所を渡す。具体的�
 ```sh
 pip install -r requirements.txt
 SHS_DIR=... SCP_VF_U=... SCP_VF_I=... MONA_VF=... SHCJ_TTC=upstream/SourceHanCodeJP.ttc \
-  python scripts/build.py            # 全ファミリー（2:3 / 35 × 14面）
+  python scripts/build.py            # 全ファミリー（2:3 / 35 / Term × 10面）
   python scripts/build.py "Regular"  # Regular系のみ（動作確認用）
 python scripts/verify.py dist/ShoyuCodeProJP-Regular.otf   # 回帰テスト
 python scripts/nerdpatch.py <FontPatcher dir>              # NF 変種

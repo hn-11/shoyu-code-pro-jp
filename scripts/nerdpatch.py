@@ -42,7 +42,7 @@ def ff_env():
 def fix_names(patched: Path, src: Path) -> Path:
     """Rebuild the patched font's name table from the source font.
 
-    font-patcher can't parse SHCJ's subfamily scheme (EL/L/N/R/M/H + Italic)
+    font-patcher can't parse SHCJ's subfamily scheme (N/R/M/B/H + Italic)
     and collapses every face to "Regular", colliding on disk and at install
     time. Take the source names verbatim and splice in the NF marker.
     """
@@ -50,9 +50,9 @@ def fix_names(patched: Path, src: Path) -> Path:
 
     def nf_name(s):
         # JP-font convention (HackGen/PlemolJP/UDEV): NF goes AFTER the
-        # variant token — "Shoyu Code Pro JP Console NF", not "... NF Console".
-        s = re.sub(r"(Shoyu Code Pro JP(?: Console| 35| Term)?)", r"\1 NF", s, count=1)
-        return re.sub(r"(ShoyuCodeProJP(?:Console|35|Term)?)", r"\1NF", s, count=1)
+        # variant token — "Shoyu Code Pro JP Term NF", not "... NF Term".
+        s = re.sub(r"(Shoyu Code Pro JP(?: 35| Term)?)", r"\1 NF", s, count=1)
+        return re.sub(r"(ShoyuCodeProJP(?:35|Term)?)", r"\1NF", s, count=1)
 
     font = TTFont(patched)
     src_font = TTFont(src)

@@ -37,7 +37,11 @@ def main():
             missing = sorted(set(wanted) - set(present))
             raise SystemExit(
                 f"{fam}: expected {EXPECTED} faces, found {len(faces)}\n"
-                f"  present: {present}\n  missing: {missing}")
+                f"  present: {present}\n  missing: {missing}\n"
+                "  stale files left over in dist/ from an older roster are "
+                "the usual cause of an unexpected surplus; an unfiltered "
+                "`build.py` run clears dist/ShoyuCodeProJP*.otf first, so "
+                "rerun it without a FILTER before bundling")
         tc = TTCollection()
         tc.fonts = [TTFont(p) for p in faces]
         out = DIST / f"{fam}.ttc"

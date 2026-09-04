@@ -1,5 +1,5 @@
-# Tag push (v*) -> full assembly from live upstreams (42 fonts x 3 families),
-# verify, Nerd-patch everything, zip, GitHub release.
+# Tag push (v*) -> full assembly from live upstreams (5 weights x 2 styles
+# x 3 families = 30 faces), verify, Nerd-patch everything, zip, GitHub release.
 name: Release
 on:
   push:
@@ -11,6 +11,8 @@ on:
         required: true
 permissions:
   contents: write
+env:
+  FONTPATCHER_TAG: v3.4.0
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -45,22 +47,20 @@ jobs:
         id: fp
         with:
           path: FontPatcher
-          key: fontpatcher-v3.4.0
+          key: fontpatcher-${{ env.FONTPATCHER_TAG }}
       - if: steps.fp.outputs.cache-hit != 'true'
         run: |
           curl -sSfL -o /tmp/FontPatcher.zip \
-            https://github.com/ryanoasis/nerd-fonts/releases/download/v3.4.0/FontPatcher.zip
+            https://github.com/ryanoasis/nerd-fonts/releases/download/${FONTPATCHER_TAG}/FontPatcher.zip
           unzip -qo /tmp/FontPatcher.zip -d FontPatcher
       - run: python scripts/build.py
       - run: python scripts/verify.py dist/ShoyuCodeProJP-Regular.otf
       - run: python scripts/verify.py dist/ShoyuCodeProJP35-Heavy.otf
       - run: python scripts/verify.py dist/ShoyuCodeProJP-RegularItalic.otf
+      - run: python scripts/verify.py dist/ShoyuCodeProJPTerm-Regular.otf
       - run: python scripts/nerdpatch.py FontPatcher
       - name: Verify a Nerd Font-patched output
-        run: |
-          nf_font=$(find dist/nerd -name '*.otf' | head -1)
-          echo "verifying: $nf_font"
-          python scripts/verify.py "$nf_font"
+        run: python scripts/verify.py dist/nerd/ShoyuCodeProJPTermNF-Regular.otf
       - run: python scripts/makeotc.py
       - run: |
           cd dist && zip -q ShoyuCodeProJP.zip *.otf

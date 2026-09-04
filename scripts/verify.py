@@ -111,16 +111,38 @@ def main():
     else:
         assert angle == 0, f"{FONT}: upright face but post.italicAngle == {angle}"
 
+    # fsSelection/macStyle must agree with nameID 2 (RIBBI subfamily) — the
+    # Windows family model keys off these bits, not the name text.
+    failed = False
+    fsel = tf["OS/2"].fsSelection
+    mac = tf["head"].macStyle
+    sub = subfamily_name(tf)
+    want_bold = "Bold" in sub
+    want_italic = "Italic" in sub
+    ok = bool(fsel & 0x20) == want_bold
+    print(f"{'ok  ' if ok else 'FAIL'} fsSelection BOLD bit matches "
+          f"subfamily {sub!r} (fsSelection={fsel:#06x})")
+    failed |= not ok
+    ok = bool(fsel & 0x1) == want_italic
+    print(f"{'ok  ' if ok else 'FAIL'} fsSelection ITALIC bit matches "
+          f"subfamily {sub!r} (fsSelection={fsel:#06x})")
+    failed |= not ok
+    ok = bool(mac & 0x1) == want_bold
+    print(f"{'ok  ' if ok else 'FAIL'} macStyle Bold bit matches "
+          f"subfamily {sub!r} (macStyle={mac:#06x})")
+    failed |= not ok
+    ok = bool(mac & 0x2) == want_italic
+    print(f"{'ok  ' if ok else 'FAIL'} macStyle Italic bit matches "
+          f"subfamily {sub!r} (macStyle={mac:#06x})")
+    failed |= not ok
+    if not want_bold and not want_italic:   # Normal/Medium/Heavy too
+        ok = bool(fsel & 0x40) and not (fsel & 0x61 & ~0x40)
+        print(f"{'ok  ' if ok else 'FAIL'} fsSelection REGULAR bit set, "
+              f"BOLD/ITALIC clear (fsSelection={fsel:#06x})")
+        failed |= not ok
+
     blob = hb.Blob.from_file_path(str(FONT))
     font = hb.Font(hb.Face(blob))
-    failed = False
-
-    def shape_len(text, feats):
-        buf = hb.Buffer()
-        buf.add_str(text)
-        buf.guess_segment_properties()
-        hb.shape(font, buf, feats)
-        return len(buf.glyph_infos)
 
     def shape_infos(text, feats):
         buf = hb.Buffer()
@@ -128,6 +150,9 @@ def main():
         buf.guess_segment_properties()
         hb.shape(font, buf, feats)
         return list(buf.glyph_infos), list(buf.glyph_positions)
+
+    def shape_len(text, feats):
+        return len(shape_infos(text, feats)[0])
 
     for text, nglyphs in CASES:
         got = shape_len(text, {"calt": True, "liga": True})
@@ -139,6 +164,7 @@ def main():
     off = {"calt": False, "liga": False}
     toggles = [
         ("a != b", dict(off), 6),
+        ("a == b", dict(off, liga=True), 5),   # liga alone, calt off
         ("a != b", dict(off, ss01=True), 5),
         ("a -> b", dict(off, ss01=True), 6),
         ("a -> b", dict(off, ss02=True), 5),
@@ -151,11 +177,7 @@ def main():
 
     # SCP character variants and Monaspace alt designs must swap glyphs
     def first_gid(text, feats, i=0):
-        buf = hb.Buffer()
-        buf.add_str(text)
-        buf.guess_segment_properties()
-        hb.shape(font, buf, feats)
-        return buf.glyph_infos[i].codepoint
+        return shape_infos(text, feats)[0][i].codepoint
 
     variant_checks = [
         ("0", "zero"), ("a", "cv01"), ("g", "cv02"), ("a", "salt"),
@@ -180,7 +202,6 @@ def main():
         print(f"{'ok  ' if ok else 'FAIL'} {seq!r} 4-cell ligature: "
               f"{got_n} glyph(s), advance={got_adv} (want 1 glyph, {4 * a_adv})")
         failed |= not ok
-        assert ok, f"{FONT}: 4-cell ligature {seq!r} did not shape as expected"
 
     # every declared ligature must actually fire, at its declared cell width.
     # Sequences are embedded as "a <seq> b" (the same robust padding used by
@@ -195,11 +216,9 @@ def main():
     # between the fixed 2-glyph prefix ("a ") and 2-glyph suffix (" b") and
     # compare that to cells * half_width_cell -- this covers both the
     # single-glyph and multi-glyph-component cases without special-casing.
-    lig_checked = 0
     lig_failed = 0
     lig_fail_lines = []
     for seq, spec in LIGATURES.items():
-        lig_checked += 1
         text = f"a {seq} b"
         infos, positions = shape_infos(text, {"calt": True, "liga": True})
         want_adv = spec["cells"] * a_adv
@@ -212,16 +231,12 @@ def main():
             lig_fail_lines.append(
                 f"FAIL ligature {seq!r} ({spec['cells']} cells): "
                 f"{n} glyphs total, mid_advance={got_adv} (want {want_adv})")
-    if lig_checked != len(LIGATURES):
-        print(f"FAIL ligature sweep only checked {lig_checked}/{len(LIGATURES)} "
-              f"entries in mona_ligs.json")
-        failed = True
     if lig_failed:
         for line in lig_fail_lines:
             print(line)
         failed = True
     else:
-        print(f"ok   all {lig_checked} ligatures shape at declared widths")
+        print(f"ok   all {len(LIGATURES)} ligatures shape at declared widths")
 
     # standalone operators redrawn from Monaspace must match the ligatures
     # cut from the same instance: every contour of the lone glyph has a
@@ -275,6 +290,8 @@ def main():
     for ch in OVERLAP_CJK:
         cp = ord(ch)
         if cp not in cmap:
+            print(f"FAIL no overlap in {ch!r}: not in cmap")
+            failed = True
             continue
         gname = cmap[cp]
         ok = overlap_ok(gname)

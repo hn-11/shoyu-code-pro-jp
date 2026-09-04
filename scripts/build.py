@@ -17,21 +17,26 @@ not by name. Italic faces take SCP Italic VF + upright Japanese, matching
 SHCJ's own behavior.
 
 Families (suffix -> half-width cell):
-  ""   667  2:3 (SHCJ metrics) — editor AND terminal, as SHCJ always was
-  "35"  600  Source Code Pro's native proportion
+  ""     667  2:3 (SHCJ metrics) — editor AND terminal, as SHCJ always was
+  "35"   600  Source Code Pro's native proportion
+  "Term" 600  1:2 terminal grid: full-width widened to 1200 (see VARIANTS)
 
-A 1:2 "Console" variant was built and retired: squeezing SCP's roomy
-skeleton into a 500 cell loses too much (25% smaller Latin isotropically,
-or ~17% condensation + stroke-contrast skew anisotropically). The
-narrow_ambiguous/rescale machinery stays for anyone who wants it back.
+A separate, narrower 1:2 "Console" experiment (a 500 cell, not Term's 600)
+was built and retired: squeezing SCP's roomy skeleton down that far loses
+too much (25% smaller Latin isotropically, or ~17% condensation +
+stroke-contrast skew anisotropically). The rescale(ky=) machinery stays
+for anyone who wants it back.
 
 Usage:
   python scripts/build.py [FILTER]
-  FILTER matches a face when it equals the weight name ("Light"), the full
-  face label ("Light Italic"), the variant suffix ("35" / "Term" / "" for
+  FILTER matches a face when it equals the weight name ("Bold"), the full
+  face label ("Bold Italic"), the variant suffix ("35" / "Term" / "" for
   the base family), or is a leading word-run of the label ("Regular" also
-  takes "Regular Italic"). It is NOT a substring match — "Light" no longer
-  drags in "ExtraLight".
+  takes "Regular Italic", and "Bold" likewise takes "Bold Italic"). It is
+  a whole-word match, not a substring one.
+  With no FILTER, dist/ShoyuCodeProJP*.otf is cleared before building, so a
+  full build never leaves faces from an older roster behind. A filtered run
+  never deletes anything.
 
 Env (all required):
   SHS_DIR  = dir with SourceHanSansJP-<Weight>.otf
@@ -373,7 +378,8 @@ def charstring_lsb(cs):
     lsb=0, which lies to anything that trusts hmtx over the outline."""
     try:
         bounds = cs.calcBounds(None)
-    except Exception:
+    except Exception as exc:
+        print(f"  WARNING: calcBounds failed for appended glyph ({exc}); lsb=0")
         return 0
     return round(bounds[0]) if bounds else 0
 
@@ -444,15 +450,13 @@ def graft_halfwidth(base, scp, ref):
             pen = T2CharStringPen(pen_width(private, CELL), scp_gs)
             if src[0] == "scp":
                 draw_clean([(scp_gs, src[1], (SCP_K, 0, 0, SCP_K, 0, 0))], pen)
-                lsb = round(scp["hmtx"][src[1]][1] * SCP_K)
                 from_scp += 1
             else:
                 draw_clean([(ref_gs, g, (1, 0, 0, 1, 0, 0))], pen)
-                lsb = ref_hm[g][1]
                 from_ref += 1
             name = alloc_glyph_name(base)
             append_glyph(base, td, name, pen.getCharString(private=private),
-                         fd_index, CELL, lsb, vdon)
+                         fd_index, CELL, None, vdon)
             made[src] = name
             if src[0] == "scp":
                 default_map[src[1]] = name
@@ -503,10 +507,28 @@ def _subst_pairs(kind, subtables, tag):
         print(f"  warning: {tag}: unsupported GSUB LookupType {kind}, skipped")
 
 
+def _scp_ui_name(scp, feature_params):
+    """UI name text for an SCP feature's FeatureParams, or None.
+
+    StylisticSet (ssNN) carries it in UINameID, CharacterVariants (cvNN) in
+    FeatUILabelNameID; both resolve through SCP's own 'name' table."""
+    if feature_params is None:
+        return None
+    nid = getattr(feature_params, "UINameID", None)
+    if nid is None:
+        nid = getattr(feature_params, "FeatUILabelNameID", None)
+    if not nid:
+        return None
+    return scp["name"].getDebugName(nid)
+
+
 def import_scp_variants(base, scp, default_map):
     """Carry SCP's own character variants (dotted/slashed zero bodies,
     one/two-story a, g shapes, salt...) through the graft. Returns
-    {our tag: {our default glyph: our variant glyph}}."""
+    ({our tag: {our default glyph: our variant glyph}}, {our tag: UI name}).
+
+    UI names are only meaningful (and only defined by OpenType) for ssNN /
+    cvNN — 'zero' and 'salt' come back with no entry in the names dict."""
     gsub = scp["GSUB"].table
     cff = base["CFF "].cff
     td = cff[cff.fontNames[0]]
@@ -518,10 +540,16 @@ def import_scp_variants(base, scp, default_map):
 
     imported = {}   # scp variant glyph -> our glyph name
     tag_maps = {}
+    tag_names = {}
     for fr in gsub.FeatureList.FeatureRecord:
         tag = _remap_scp_tag(fr.FeatureTag)
         if tag is None:
             continue
+        if tag not in tag_names and (tag.startswith("ss")
+                                     or tag.startswith("cv")):
+            name = _scp_ui_name(scp, fr.Feature.FeatureParams)
+            if name:
+                tag_names[tag] = name
         for li in fr.Feature.LookupListIndex:
             kind, subtables = _unwrap(gsub.LookupList.Lookup[li])
             for src, dst in _subst_pairs(kind, subtables, fr.FeatureTag):
@@ -535,11 +563,10 @@ def import_scp_variants(base, scp, default_map):
                     append_glyph(
                         base, td, name,
                         pen.getCharString(private=private),
-                        fd_index, CELL,
-                        round(scp["hmtx"][dst][1] * SCP_K), vdon)
+                        fd_index, CELL, None, vdon)
                     imported[dst] = name
                 tag_maps.setdefault(tag, {})[default_map[src]] = imported[dst]
-    return tag_maps
+    return tag_maps, tag_names
 
 
 def copy_line_metrics(base, ref):
@@ -701,10 +728,27 @@ def set_names(font, suffix, weight, italic, italic_angle=-12.0):
         td.FullName = full
     if hasattr(td, "version"):
         td.version = f"{rev:.3f}"
+    # Windows' family-linking model reads *these* bits, not the name-table
+    # text above, to decide which face is "the bold" / "the italic" of a
+    # family — fsSelection/macStyle must always agree with nameID 2 (RIBBI
+    # subfamily) or apps that key off them (Office, GDI) pick the wrong face.
+    bold = weight == "Bold"
+    fsel = font["OS/2"].fsSelection & ~0x61  # clear ITALIC(0)/BOLD(5)/REGULAR(6)
+    if italic:
+        fsel |= 0x1
+    if bold:
+        fsel |= 0x20
+    if not italic and not bold:
+        fsel |= 0x40
+    font["OS/2"].fsSelection = fsel
+    mac = font["head"].macStyle & ~0x3  # clear Bold(0)/Italic(1)
+    if bold:
+        mac |= 0x1
+    if italic:
+        mac |= 0x2
+    font["head"].macStyle = mac
     if italic:
         font["post"].italicAngle = italic_angle
-        font["head"].macStyle |= 0x2
-        font["OS/2"].fsSelection = (font["OS/2"].fsSelection & ~0x40) | 0x1
         # caret follows the same angle the outlines actually carry
         font["hhea"].caretSlopeRise = 1000
         font["hhea"].caretSlopeRun = round(
@@ -743,7 +787,7 @@ def mona_baseline_shift(font, mona, k=MONA_K):
 MONA_STANDALONE = "=<>|~"
 
 
-def replace_from_mona(font, mona, chars=MONA_STANDALONE):
+def replace_from_mona(font, mona, chars=MONA_STANDALONE, dy=None):
     """Swap the outlines of `chars` for Monaspace's, keeping name, advance
     and cmap. Same instance, scale, shear and baseline as the ligatures."""
     cff = font["CFF "].cff
@@ -751,7 +795,8 @@ def replace_from_mona(font, mona, chars=MONA_STANDALONE):
     cmap = font.getBestCmap()
     mona_cmap = mona.getBestCmap()
     mona_gs = mona.getGlyphSet()
-    dy = mona_baseline_shift(font, mona)
+    if dy is None:
+        dy = mona_baseline_shift(font, mona)
     replaced = []
     for ch in chars:
         name = cmap.get(ord(ch))
@@ -771,7 +816,7 @@ def replace_from_mona(font, mona, chars=MONA_STANDALONE):
     return replaced
 
 
-def add_glyphs(font, mona, alts, ligatures=None):
+def add_glyphs(font, mona, alts, ligatures=None, dy=None):
     """Append the imported ligature glyphs; return {seq: glyph name}.
     Alternate (.alt) designs are appended too and recorded in `alts`."""
     ligatures = LIGATURES if ligatures is None else ligatures
@@ -782,7 +827,8 @@ def add_glyphs(font, mona, alts, ligatures=None):
     mona_names = set(mona.getGlyphOrder())
     vdon = vmtx_donor(font, fullwidth=False)
 
-    dy = mona_baseline_shift(font, mona)
+    if dy is None:
+        dy = mona_baseline_shift(font, mona)
     # FD assignment: reuse the FD of an existing symbol glyph
     fd_index = td.FDSelect[font.getGlyphID(cmap[0x2260])]
     private = td.FDArray[fd_index].Private
@@ -849,29 +895,33 @@ def _langsys_list(gsub):
                 yield ls
 
 
-def _existing_feature_index(gsub, tag):
-    """Index of a FeatureRecord with `tag` that some LangSys already uses —
-    merging into it beats appending a second record with the same tag
-    (shapers take the first match and the rest is dead weight)."""
-    used = set()
-    for ls in _langsys_list(gsub):
-        used.update(ls.FeatureIndex)
-    for i, fr in enumerate(gsub.FeatureList.FeatureRecord):
-        if fr.FeatureTag == tag and i in used:
-            return i
-    return None
-
-
 def _add_feature(gsub, tag, lookup_indices):
-    """Merge into an existing feature of the same tag, or append a new one.
-    Returns the feature index, or None when merged (already referenced)."""
-    i = _existing_feature_index(gsub, tag)
-    if i is not None:
-        feat = gsub.FeatureList.FeatureRecord[i].Feature
+    """Make `lookup_indices` reachable under `tag` from every LangSys.
+
+    A LangSys that already lists a `tag` record gets the lookups merged
+    into that record (shapers take the first matching tag and ignore a
+    second record, so appending one would be dead weight). Source Han
+    Sans carries one 'liga' record per script/langsys — eleven of them —
+    and merging into just the first left 'latn' without our ligatures.
+    LangSys that lack the tag share one new record. Returns that new
+    record's index, or None when every LangSys already had the tag."""
+    records = gsub.FeatureList.FeatureRecord
+    existing = {i for i, fr in enumerate(records) if fr.FeatureTag == tag}
+    merged = set()
+    lacking = []
+    for ls in _langsys_list(gsub):
+        mine = existing.intersection(ls.FeatureIndex)
+        if mine:
+            merged.update(mine)
+        else:
+            lacking.append(ls)
+    for i in merged:
+        feat = records[i].Feature
         for li in lookup_indices:
             if li not in feat.LookupListIndex:
                 feat.LookupListIndex.append(li)
         feat.LookupCount = len(feat.LookupListIndex)
+    if not lacking:
         return None
     fr = otTables.FeatureRecord()
     fr.FeatureTag = tag
@@ -879,9 +929,13 @@ def _add_feature(gsub, tag, lookup_indices):
     fr.Feature.FeatureParams = None
     fr.Feature.LookupListIndex = list(lookup_indices)
     fr.Feature.LookupCount = len(lookup_indices)
-    gsub.FeatureList.FeatureRecord.append(fr)
-    gsub.FeatureList.FeatureCount += 1
-    return gsub.FeatureList.FeatureCount - 1
+    records.append(fr)
+    gsub.FeatureList.FeatureCount = len(records)
+    new = len(records) - 1
+    for ls in lacking:
+        ls.FeatureIndex.append(new)
+        ls.FeatureCount = len(ls.FeatureIndex)
+    return new
 
 
 def _alloc_name_id(font):
@@ -901,16 +955,22 @@ def _add_ui_name(font, text):
     return nid
 
 
-def _set_feature_params(font, gsub, index, tag):
+def _set_feature_params(font, gsub, index, tag, name=None):
     """Attach a UI name to the feature we just authored at `index`.
 
-    Only for our own ss01-ss08 / cv99: features merged into a record that
-    already existed (index is None) belong to the base font or the
-    SCP-remapped ss11+ set and keep whatever FeatureParams they had.
+    `name` (when given) wins — it's SCP's own UI name for the ssNN/cvNN
+    tag, carried through by import_scp_variants — otherwise we fall back
+    to GROUP_NAMES for our own ss01-ss08 / cv99. Features merged into a
+    record that already existed (index is None) belong to the base font
+    and keep whatever FeatureParams they had; the SCP-imported tags don't
+    exist in the SHS base today, but the guard stays in case that changes.
     """
-    if index is None or tag not in GROUP_NAMES:
+    if index is None:
         return
-    nid = _add_ui_name(font, GROUP_NAMES[tag])
+    name = name or GROUP_NAMES.get(tag)
+    if not name:
+        return
+    nid = _add_ui_name(font, name)
     feat = gsub.FeatureList.FeatureRecord[index].Feature
     if tag.startswith("cv"):
         params = otTables.FeatureParamsCharacterVariants()
@@ -944,7 +1004,8 @@ def sort_feature_list(gsub):
     return remap
 
 
-def add_gsub(font, added, alts, variant_maps=None, ligatures=None):
+def add_gsub(font, added, alts, variant_maps=None, ligatures=None,
+             variant_names=None):
     """calt/liga carry every ligature (default on); each Monaspace-style
     group is additionally exposed as ssNN so users can toggle selectively
     (calt off + ssNN on). cv99 switches to the .alt operator designs."""
@@ -966,33 +1027,32 @@ def add_gsub(font, added, alts, variant_maps=None, ligatures=None):
     combined_lookup = _new_lookup(
         gsub, otl.buildLigatureSubstSubtable(combined))
 
+    # each ssNN group below gets its OWN subtable, so that longest-match
+    # guarantee is per group only: with calt off, enabling ss01 + ss02
+    # together can let ss01's '>=' eat the prefix of ss02's '>>=' before
+    # the longer match is ever tried. Accepted — Monaspace's own
+    # stylistic sets have the same property; calt is the cross-group-safe
+    # way to get everything at once.
     group_lookups = {}
     for grp in sorted(groups):
         group_lookups[grp] = _new_lookup(
             gsub, otl.buildLigatureSubstSubtable(groups[grp]))
 
-    feature_indices = []
     for tag in ("calt", "liga"):
-        feature_indices.append(_add_feature(gsub, tag, [combined_lookup]))
+        _add_feature(gsub, tag, [combined_lookup])
     for grp in sorted(group_lookups):
-        i = _add_feature(gsub, grp, [group_lookups[grp]])
-        _set_feature_params(font, gsub, i, grp)
-        feature_indices.append(i)
+        _set_feature_params(
+            font, gsub, _add_feature(gsub, grp, [group_lookups[grp]]), grp)
     if alts:
         alt_lookup = _new_lookup(gsub, otl.buildSingleSubstSubtable(alts))
-        i = _add_feature(gsub, "cv99", [alt_lookup])
-        _set_feature_params(font, gsub, i, "cv99")
-        feature_indices.append(i)
+        _set_feature_params(
+            font, gsub, _add_feature(gsub, "cv99", [alt_lookup]), "cv99")
     for tag in sorted(variant_maps or {}):
         vlookup = _new_lookup(
             gsub, otl.buildSingleSubstSubtable(variant_maps[tag]))
-        feature_indices.append(_add_feature(gsub, tag, [vlookup]))
-    feature_indices = [i for i in feature_indices if i is not None]
-
-    for ls in _langsys_list(gsub):
-        ls.FeatureIndex.extend(i for i in feature_indices
-                               if i not in ls.FeatureIndex)
-        ls.FeatureCount = len(ls.FeatureIndex)
+        _set_feature_params(
+            font, gsub, _add_feature(gsub, tag, [vlookup]), tag,
+            (variant_names or {}).get(tag))
     sort_feature_list(gsub)
 
 
@@ -1064,7 +1124,7 @@ def update_bbox(font):
 def face_matches(only, weight, face_label, suffix):
     """Command-line filter. Exact on the weight, the full face label or the
     variant suffix, plus a word-boundary prefix so "Regular" still takes
-    "Regular Italic" — but "Light" no longer matches "ExtraLight"."""
+    "Regular Italic" — whole words only, never a substring match."""
     if only is None:
         return True   # "" is a real filter: the base (suffix-less) family
     return (face_label == only or weight == only or suffix == only
@@ -1088,17 +1148,19 @@ def build_face(job):
     scp = scp_src.matched(target)
     base = TTFont(Path(env["SHS_DIR"]) / shs_file)
     n_scp, n_ref, default_map = graft_halfwidth(base, scp, ref)
-    variant_maps = import_scp_variants(base, scp, default_map)
+    variant_maps, variant_names = import_scp_variants(base, scp, default_map)
     copy_line_metrics(base, ref)
     # the outlines' real slant lives in the SCP Italic instance; SHCJ's
     # italic faces declare italicAngle=0, so they can't be the source
     ref_angle = (scp["post"].italicAngle or ref["post"].italicAngle or -12.0) \
         if italic else None
     mona = mona_src.matched(target, ref_angle)
+    # dy is measured once, on SCP's '=' before either import swaps it out
+    dy = mona_baseline_shift(base, mona)
     alts = {}
-    added = add_glyphs(base, mona, alts, LIGATURES)
-    replace_from_mona(base, mona)   # after add_glyphs: dy is measured on SCP's '='
-    add_gsub(base, added, alts, variant_maps, LIGATURES)
+    added = add_glyphs(base, mona, alts, LIGATURES, dy)
+    replace_from_mona(base, mona, dy=dy)
+    add_gsub(base, added, alts, variant_maps, LIGATURES, variant_names)
     if cell != CELL:
         rescale(base, cell)
     if term:
@@ -1150,6 +1212,15 @@ def main():
         sys.exit(f"missing env: {missing}")
     out_dir = ROOT / "dist"
     out_dir.mkdir(exist_ok=True)
+
+    if only is None:
+        # a full build must not leave faces from an older roster (e.g. the
+        # dropped ExtraLight/Light) for makeotc.py to bundle alongside these
+        stale = sorted(out_dir.glob("ShoyuCodeProJP*.otf"))
+        for f in stale:
+            f.unlink()
+        if stale:
+            print(f"removed {len(stale)} stale face(s) from {out_dir}")
 
     jobs = []
     for suffix, var in VARIANTS.items():

@@ -7,11 +7,14 @@ those tags. Prints a markdown summary of what moved on stdout and writes
 already current.
 
 `releases/latest` deliberately ignores prereleases and drafts - source-code-pro
-in particular ships prerelease tags between VF drops that we don't chase.
+in particular ships prerelease tags between VF drops that we don't chase. A
+single-component tag (a one-off hotfix, no VF drop) leaves the SCP pins at
+their current values - noted on stderr and in the summary - while the other
+upstreams still move; a slash-joined tag without a -vf part fails loudly.
 
-Every download URL is probed before anything is written. If an upstream renames
-an asset, this fails here with the URL in hand instead of opening a PR whose CI
-dies twenty minutes later at the fetch step.
+Every download URL is probed before anything is written. If an upstream
+renames an asset, this fails here with the URL in hand instead of opening a
+PR whose CI dies twenty minutes later at the fetch step.
 """
 
 import os
@@ -48,11 +51,14 @@ def scp_vf_zip(tag: str) -> str:
     The tag is a slash-joined triple, e.g. "2.042R-u/1.062R-i/1.026R-vf"; the
     VF zip is named after the third component alone:
     "VF-source-code-VF-1.026R.zip".
+
+    Raises ValueError when a slash-joined tag has no -vf component - that
+    is a renamed convention, not a hotfix, and must fail loudly.
     """
     for part in tag.split("/"):
         if part.endswith("-vf"):
             return f"VF-source-code-VF-{part[: -len('-vf')]}.zip"
-    raise SystemExit(f"no -vf component in source-code-pro tag {tag!r}")
+    raise ValueError(f"no -vf component in source-code-pro tag {tag!r}")
 
 
 def download_urls(pins: dict[str, str]) -> list[str]:
@@ -94,10 +100,26 @@ def main() -> int:
         raise SystemExit(f"no pins found in {ACTION}")
 
     scp_tag = latest_tag(SCP_REPO)
+    notes = []
+    if "/" not in scp_tag:
+        # a single-component tag is the one-off hotfix shape (no VF drop);
+        # anything else that fails scp_vf_zip is a renamed convention we
+        # must not paper over, so let it raise
+        notes.append(f"source-code-pro latest tag `{scp_tag}` has no VF "
+                     f"component; SCP pins kept at `{current['SCP_TAG']}`")
+        scp_pins = {"SCP_TAG": current["SCP_TAG"],
+                    "SCP_VF_ZIP": current["SCP_VF_ZIP"]}
+    else:
+        scp_pins = {
+            "SCP_TAG": scp_tag.replace("/", "%2F"),
+            "SCP_VF_ZIP": scp_vf_zip(scp_tag),
+        }
+    for note in notes:
+        print(f"note: {note}", file=sys.stderr)
+
     new = {
         "SHS_TAG": latest_tag(SHS_REPO),
-        "SCP_TAG": scp_tag.replace("/", "%2F"),
-        "SCP_VF_ZIP": scp_vf_zip(scp_tag),
+        **scp_pins,
         "MONA_TAG": latest_tag(MONA_REPO),
         "SHCJ_TAG": latest_tag(SHCJ_REPO),
     }
@@ -122,6 +144,8 @@ def main() -> int:
     print("| --- | --- | --- |")
     for key, (old, now) in moved.items():
         print(f"| `{key}` | `{old}` | `{now}` |")
+    for note in notes:   # into the PR body, where someone will read it
+        print(f"\n> {note}")
     return 0
 
 
