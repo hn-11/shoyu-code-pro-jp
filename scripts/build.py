@@ -5,7 +5,7 @@ Recipe (Source Han Mono's approach, re-executed against latest releases):
   - Japanese / full-width layer: Source Han Sans JP (latest, per weight)
   - Half-width Latin layer:      Source Code Pro VF, scaled 10/9 to 667
                                  (Adobe's own SHCJ derivation, re-run)
-  - Ligatures (50) and '=':      Monaspace VF (data/mona_ligs.json)
+  - Ligatures (50), = < > | ~:   Monaspace VF (data/mona_ligs.json)
   - Source Han Code JP serves as the PAIRING REFERENCE — each face's '='
     bar thickness decides the SCP/Monaspace wght instance — and as the
     donor for half-width glyphs SCP lacks (half-width kana etc.), plus
@@ -692,11 +692,16 @@ def mona_baseline_shift(font, mona):
 
 
 # standalone operators redrawn from Monaspace so they match the ligatures
-# built from the same outlines: '=' alone vs '==' / '=>' / ':=' used to
-# differ in bar spacing (SCP 170u gap, Monaspace 219u). Only '=' — its box
-# and vertical center coincide with SCP's within 10u; '-' is 132u shorter
-# in Monaspace and '|' sits 60u higher, so those stay SCP.
-MONA_STANDALONE = "="
+# built from the same outlines. Each of these visibly disagreed with its
+# ligature: '=' vs '==' in bar gap (SCP 170u, Monaspace 219u), '<' '>' vs
+# '<=' '>=' in size and angle, '|' vs '||' in vertical extent (SCP's bar
+# hangs 80u lower), '~' vs '~>' in amplitude. All four fit SCP's cell and
+# vertical scheme within a few units. Left as SCP: '-' (Monaspace's is
+# 132u shorter than the '=' it now sits beside), '!' (Monaspace's cap
+# height overshoots SCP's capitals), ':' (the ligatures use the raised
+# colon.case, so a swap buys nothing), '/' (would need '\' too), and the
+# rest of the punctuation whose skeletons simply differ.
+MONA_STANDALONE = "=<>|~"
 
 
 def replace_from_mona(font, mona, chars=MONA_STANDALONE):
