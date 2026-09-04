@@ -135,7 +135,7 @@ def main():
     print(f"{'ok  ' if ok else 'FAIL'} macStyle Italic bit matches "
           f"subfamily {sub!r} (macStyle={mac:#06x})")
     failed |= not ok
-    if sub == "Regular":
+    if not want_bold and not want_italic:   # Normal/Medium/Heavy too
         ok = bool(fsel & 0x40) and not (fsel & 0x61 & ~0x40)
         print(f"{'ok  ' if ok else 'FAIL'} fsSelection REGULAR bit set, "
               f"BOLD/ITALIC clear (fsSelection={fsel:#06x})")
