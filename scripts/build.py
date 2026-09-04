@@ -81,8 +81,9 @@ class Variant(NamedTuple):
     comp: bool   # re-match stroke weight AFTER rescale so Latin keeps
                  # SHCJ's CJK pairing (69/1000em bar). Without comp a
                  # rescaled Latin keeps Source Code Pro's native weight.
-    term: bool   # widen full-width advances to 2 cells (centered) + one-cell
-                 # copies for East-Asian-Width-ambiguous codepoints.
+    term: bool   # widen full-width advances to 2 cells (centered); EAW-
+                 # ambiguous codepoints take SCP's one-cell glyph where SCP
+                 # has one, else stay full-width (see narrow_ambiguous).
 
 
 VARIANTS = {
@@ -555,45 +556,59 @@ def copy_line_metrics(base, ref):
     base["OS/2"].panose = ref["OS/2"].panose
 
 
-def narrow_ambiguous(font, cell):
-    """Term (1:2) only: East-Asian-Width Ambiguous/Narrow codepoints that
-    carry full-width (1000) glyphs — … → ≠ Greek etc. — get a one-cell
-    scaled copy, because terminals allocate them ONE cell by default and
-    the full-width ink bleeds into the neighbour (Sarasa Term does the
-    same). CJK (W/F) stays two cells; the original glyphs are untouched.
-    Must run BEFORE widen_fullwidth, i.e. while full-width is still 1000."""
+def narrow_ambiguous(font, cell, scp):
+    """Term (1:2) only: settle the East-Asian-Width Ambiguous/Narrow
+    codepoints that carry full-width (1000) glyphs, the way HackGen Console
+    / PlemolJP Console / Moralerspace HW do:
+
+      - SCP has the character (… → ≠ ≤ × ÷ ° ■ Greek, accented Latin,
+        Cyrillic, and all 160 box-drawing / block elements): take SCP's own
+        one-cell glyph, already weight-matched — a real half-width design
+        instead of a shrunken full-width one. SCP's box drawing runs
+        -400..1000 so it tiles under any line spacing.
+      - everything else (① ※ ⌘ ★ ...): left full-width. Terminals that
+        count ambiguous as narrow overprint the next cell, exactly as they
+        do with HackGen; `compatibility.ambiguousWidth: wide` (Windows
+        Terminal) or the equivalent elsewhere gives them their two cells.
+
+    CJK (W/F) stays two cells; the original glyphs are untouched. Must run
+    BEFORE widen_fullwidth, i.e. while full-width is still 1000, and AFTER
+    rescale, so the SCP glyphs land at the final cell size."""
     cff = font["CFF "].cff
     td = cff[cff.fontNames[0]]
     cmap = font.getBestCmap()
-    gs = font.getGlyphSet()
     fd_index = td.FDSelect[font.getGlyphID(cmap[ord("A")])]
     private = td.FDArray[fd_index].Private
     vdon = vmtx_donor(font, fullwidth=False)
+    scp_cm, scp_gs = scp.getBestCmap(), scp.getGlyphSet()
+    scp_k = cell / SCP_CELL
     new_map = {}
-    made = {}  # source glyph -> scaled glyph (dedup shared glyphs)
+    made = {}  # scp glyph -> one-cell glyph (dedup shared sources)
+    n_wide = 0
     for cp, g in sorted(cmap.items()):
         if font["hmtx"][g][0] != FULLWIDTH:
             continue
         if unicodedata.east_asian_width(chr(cp)) in ("W", "F"):
             continue
-        if g not in made:
-            k = cell / FULLWIDTH
-            pen = T2CharStringPen(pen_width(private, cell), gs)
-            bp = BoundsPen(gs)
-            gs[g].draw(bp)
-            cy = (bp.bounds[1] + bp.bounds[3]) / 2 if bp.bounds else 0
-            # shrink about the vertical center so marks don't sink
-            gs[g].draw(TransformPen(pen, (k, 0, 0, k, 0, round(cy * (1 - k)))))
+        src = scp_cm.get(cp)
+        if src is None:
+            n_wide += 1
+            continue
+        if src not in made:
+            pen = T2CharStringPen(pen_width(private, cell), scp_gs)
+            draw_clean([(scp_gs, src, (scp_k, 0, 0, scp_k, 0, 0))], pen)
             name = alloc_glyph_name(font)
             append_glyph(font, td, name, pen.getCharString(private=private),
-                         fd_index, cell, None, vdon)
-            made[g] = name
-        new_map[cp] = made[g]
+                         fd_index, cell, round(scp["hmtx"][src][1] * scp_k),
+                         vdon)
+            made[src] = name
+        new_map[cp] = made[src]
     for table in font["cmap"].tables:
         if table.isUnicode():
             for cp, name in new_map.items():
                 if cp in table.cmap:
                     table.cmap[cp] = name
+    print(f"  ambiguous width: {len(made)} from SCP, {n_wide} left full-width")
     return len(new_map)
 
 
@@ -1064,7 +1079,7 @@ def build_face(job):
         rescale(base, cell)
     if term:
         # ambiguous-width first (adv==1000 probe), then widen CJK
-        narrow_ambiguous(base, cell)
+        narrow_ambiguous(base, cell, scp)
         widen_fullwidth(base, cell)
     ps = set_names(base, suffix, weight, italic,
                    ref_angle if ref_angle is not None else -12.0)

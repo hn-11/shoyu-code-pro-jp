@@ -89,6 +89,21 @@ def main():
         f"{FONT}: expected (half,full)=({exp_half},{exp_full}) for family "
         f"{fam!r}, got ({a_adv},{cjk_adv})")
 
+    # Term settles ambiguous-width characters like HackGen Console: SCP's
+    # own one-cell glyph where SCP has the character (box drawing included)
+    # and the rest (①…) left at two cells rather than shrunk. JP / 35 keep
+    # SHCJ's full-width assignments throughout.
+    if "Term" in fam.split(" "):
+        policy = {"\u2192": exp_half, "\u2026": exp_half, "\u03b1": exp_half,
+                  "\u2500": exp_half, "\u2460": exp_full, "\u203b": exp_full}
+    else:
+        policy = {"\u2192": exp_full, "\u2460": exp_full}
+    for ch, want in policy.items():
+        got = hmtx[cmap[ord(ch)]][0]
+        assert got == want, (
+            f"{FONT}: U+{ord(ch):04X} {ch!r} advance {got}, want {want}")
+    print(f"ok   ambiguous-width policy ({len(policy)} probes)")
+
     angle = tf["post"].italicAngle
     if italic:
         assert angle != 0, f"{FONT}: italic face but post.italicAngle == 0"
