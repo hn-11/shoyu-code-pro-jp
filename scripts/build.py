@@ -507,10 +507,28 @@ def _subst_pairs(kind, subtables, tag):
         print(f"  warning: {tag}: unsupported GSUB LookupType {kind}, skipped")
 
 
+def _scp_ui_name(scp, feature_params):
+    """UI name text for an SCP feature's FeatureParams, or None.
+
+    StylisticSet (ssNN) carries it in UINameID, CharacterVariants (cvNN) in
+    FeatUILabelNameID; both resolve through SCP's own 'name' table."""
+    if feature_params is None:
+        return None
+    nid = getattr(feature_params, "UINameID", None)
+    if nid is None:
+        nid = getattr(feature_params, "FeatUILabelNameID", None)
+    if not nid:
+        return None
+    return scp["name"].getDebugName(nid)
+
+
 def import_scp_variants(base, scp, default_map):
     """Carry SCP's own character variants (dotted/slashed zero bodies,
     one/two-story a, g shapes, salt...) through the graft. Returns
-    {our tag: {our default glyph: our variant glyph}}."""
+    ({our tag: {our default glyph: our variant glyph}}, {our tag: UI name}).
+
+    UI names are only meaningful (and only defined by OpenType) for ssNN /
+    cvNN — 'zero' and 'salt' come back with no entry in the names dict."""
     gsub = scp["GSUB"].table
     cff = base["CFF "].cff
     td = cff[cff.fontNames[0]]
@@ -522,10 +540,16 @@ def import_scp_variants(base, scp, default_map):
 
     imported = {}   # scp variant glyph -> our glyph name
     tag_maps = {}
+    tag_names = {}
     for fr in gsub.FeatureList.FeatureRecord:
         tag = _remap_scp_tag(fr.FeatureTag)
         if tag is None:
             continue
+        if tag not in tag_names and (tag.startswith("ss")
+                                     or tag.startswith("cv")):
+            name = _scp_ui_name(scp, fr.Feature.FeatureParams)
+            if name:
+                tag_names[tag] = name
         for li in fr.Feature.LookupListIndex:
             kind, subtables = _unwrap(gsub.LookupList.Lookup[li])
             for src, dst in _subst_pairs(kind, subtables, fr.FeatureTag):
@@ -542,7 +566,7 @@ def import_scp_variants(base, scp, default_map):
                         fd_index, CELL, None, vdon)
                     imported[dst] = name
                 tag_maps.setdefault(tag, {})[default_map[src]] = imported[dst]
-    return tag_maps
+    return tag_maps, tag_names
 
 
 def copy_line_metrics(base, ref):
@@ -704,10 +728,27 @@ def set_names(font, suffix, weight, italic, italic_angle=-12.0):
         td.FullName = full
     if hasattr(td, "version"):
         td.version = f"{rev:.3f}"
+    # Windows' family-linking model reads *these* bits, not the name-table
+    # text above, to decide which face is "the bold" / "the italic" of a
+    # family — fsSelection/macStyle must always agree with nameID 2 (RIBBI
+    # subfamily) or apps that key off them (Office, GDI) pick the wrong face.
+    bold = weight == "Bold"
+    fsel = font["OS/2"].fsSelection & ~0x61  # clear ITALIC(0)/BOLD(5)/REGULAR(6)
+    if italic:
+        fsel |= 0x1
+    if bold:
+        fsel |= 0x20
+    if not italic and not bold:
+        fsel |= 0x40
+    font["OS/2"].fsSelection = fsel
+    mac = font["head"].macStyle & ~0x3  # clear Bold(0)/Italic(1)
+    if bold:
+        mac |= 0x1
+    if italic:
+        mac |= 0x2
+    font["head"].macStyle = mac
     if italic:
         font["post"].italicAngle = italic_angle
-        font["head"].macStyle |= 0x2
-        font["OS/2"].fsSelection = (font["OS/2"].fsSelection & ~0x40) | 0x1
         # caret follows the same angle the outlines actually carry
         font["hhea"].caretSlopeRise = 1000
         font["hhea"].caretSlopeRun = round(
@@ -914,16 +955,22 @@ def _add_ui_name(font, text):
     return nid
 
 
-def _set_feature_params(font, gsub, index, tag):
+def _set_feature_params(font, gsub, index, tag, name=None):
     """Attach a UI name to the feature we just authored at `index`.
 
-    Only for our own ss01-ss08 / cv99: features merged into a record that
-    already existed (index is None) belong to the base font or the
-    SCP-remapped ss11+ set and keep whatever FeatureParams they had.
+    `name` (when given) wins — it's SCP's own UI name for the ssNN/cvNN
+    tag, carried through by import_scp_variants — otherwise we fall back
+    to GROUP_NAMES for our own ss01-ss08 / cv99. Features merged into a
+    record that already existed (index is None) belong to the base font
+    and keep whatever FeatureParams they had; the SCP-imported tags don't
+    exist in the SHS base today, but the guard stays in case that changes.
     """
-    if index is None or tag not in GROUP_NAMES:
+    if index is None:
         return
-    nid = _add_ui_name(font, GROUP_NAMES[tag])
+    name = name or GROUP_NAMES.get(tag)
+    if not name:
+        return
+    nid = _add_ui_name(font, name)
     feat = gsub.FeatureList.FeatureRecord[index].Feature
     if tag.startswith("cv"):
         params = otTables.FeatureParamsCharacterVariants()
@@ -957,7 +1004,8 @@ def sort_feature_list(gsub):
     return remap
 
 
-def add_gsub(font, added, alts, variant_maps=None, ligatures=None):
+def add_gsub(font, added, alts, variant_maps=None, ligatures=None,
+             variant_names=None):
     """calt/liga carry every ligature (default on); each Monaspace-style
     group is additionally exposed as ssNN so users can toggle selectively
     (calt off + ssNN on). cv99 switches to the .alt operator designs."""
@@ -1002,7 +1050,9 @@ def add_gsub(font, added, alts, variant_maps=None, ligatures=None):
     for tag in sorted(variant_maps or {}):
         vlookup = _new_lookup(
             gsub, otl.buildSingleSubstSubtable(variant_maps[tag]))
-        _add_feature(gsub, tag, [vlookup])
+        _set_feature_params(
+            font, gsub, _add_feature(gsub, tag, [vlookup]), tag,
+            (variant_names or {}).get(tag))
     sort_feature_list(gsub)
 
 
@@ -1098,7 +1148,7 @@ def build_face(job):
     scp = scp_src.matched(target)
     base = TTFont(Path(env["SHS_DIR"]) / shs_file)
     n_scp, n_ref, default_map = graft_halfwidth(base, scp, ref)
-    variant_maps = import_scp_variants(base, scp, default_map)
+    variant_maps, variant_names = import_scp_variants(base, scp, default_map)
     copy_line_metrics(base, ref)
     # the outlines' real slant lives in the SCP Italic instance; SHCJ's
     # italic faces declare italicAngle=0, so they can't be the source
@@ -1110,7 +1160,7 @@ def build_face(job):
     alts = {}
     added = add_glyphs(base, mona, alts, LIGATURES, dy)
     replace_from_mona(base, mona, dy=dy)
-    add_gsub(base, added, alts, variant_maps, LIGATURES)
+    add_gsub(base, added, alts, variant_maps, LIGATURES, variant_names)
     if cell != CELL:
         rescale(base, cell)
     if term:

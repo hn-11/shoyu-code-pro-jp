@@ -111,9 +111,38 @@ def main():
     else:
         assert angle == 0, f"{FONT}: upright face but post.italicAngle == {angle}"
 
+    # fsSelection/macStyle must agree with nameID 2 (RIBBI subfamily) — the
+    # Windows family model keys off these bits, not the name text.
+    failed = False
+    fsel = tf["OS/2"].fsSelection
+    mac = tf["head"].macStyle
+    sub = subfamily_name(tf)
+    want_bold = "Bold" in sub
+    want_italic = "Italic" in sub
+    ok = bool(fsel & 0x20) == want_bold
+    print(f"{'ok  ' if ok else 'FAIL'} fsSelection BOLD bit matches "
+          f"subfamily {sub!r} (fsSelection={fsel:#06x})")
+    failed |= not ok
+    ok = bool(fsel & 0x1) == want_italic
+    print(f"{'ok  ' if ok else 'FAIL'} fsSelection ITALIC bit matches "
+          f"subfamily {sub!r} (fsSelection={fsel:#06x})")
+    failed |= not ok
+    ok = bool(mac & 0x1) == want_bold
+    print(f"{'ok  ' if ok else 'FAIL'} macStyle Bold bit matches "
+          f"subfamily {sub!r} (macStyle={mac:#06x})")
+    failed |= not ok
+    ok = bool(mac & 0x2) == want_italic
+    print(f"{'ok  ' if ok else 'FAIL'} macStyle Italic bit matches "
+          f"subfamily {sub!r} (macStyle={mac:#06x})")
+    failed |= not ok
+    if sub == "Regular":
+        ok = bool(fsel & 0x40) and not (fsel & 0x61 & ~0x40)
+        print(f"{'ok  ' if ok else 'FAIL'} fsSelection REGULAR bit set, "
+              f"BOLD/ITALIC clear (fsSelection={fsel:#06x})")
+        failed |= not ok
+
     blob = hb.Blob.from_file_path(str(FONT))
     font = hb.Font(hb.Face(blob))
-    failed = False
 
     def shape_infos(text, feats):
         buf = hb.Buffer()
