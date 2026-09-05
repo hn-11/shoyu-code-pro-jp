@@ -1087,11 +1087,66 @@ def add_glyphs(font, mona, alts, ligatures=None, dy=None):
     return added
 
 
-def _new_lookup(gsub, subtable):
-    lookup = otl.buildLookup([subtable])
+def _new_lookup(gsub, *subtables):
+    lookup = otl.buildLookup(list(subtables))
     gsub.LookupList.Lookup.append(lookup)
     gsub.LookupList.LookupCount += 1
     return gsub.LookupList.LookupCount - 1
+
+
+class _LookupRef:
+    """What ChainContextualBuilder wants for a lookup to call: anything
+    with a `lookup_index`."""
+    def __init__(self, index):
+        self.lookup_index = index
+
+
+def _guard_subtables(font, gsub, ligatures, lig_lookup):
+    """Context guards around the combined ligature lookup, the part of
+    Monaspace's calt that a plain LigatureSubst cannot express.
+
+    Monaspace builds its ligatures as chaining rules so that an operator
+    run longer than any ligature stays plain: '&&=' is not '&' + '&=',
+    '~~>' is not '~' + '~>', and '<|>' is neither '<|' + '>' nor '<' +
+    '|>'. Four kinds of "ignore" rule (match, consume, substitute
+    nothing) reproduce that, each only where the longer run is NOT itself
+    a ligature (those are left to longest match inside `lig_lookup`):
+
+      a. seq preceded by its own first glyph      ('&' before '&=')
+      b. seq followed by its own last glyph       ('->' before '>')
+      c. seq preceded by the body of another ligature that ends with
+         seq's first glyph                        ('<' before '|>')
+      d. seq followed by the tail of another ligature that starts with
+         seq's last glyph                         ('<|' before '>')
+
+    then one rule applying `lig_lookup` at any ligature's first glyph.
+    Returns the subtables in that order; HarfBuzz tries them in order and
+    the first match wins, so a guard that fires consumes the run before
+    the ligature rule ever sees it."""
+    seqs = {tuple(k) for k in ligatures}
+    firsts = sorted({k[0] for k in seqs})
+    builder = otl.ChainContextSubstBuilder(font, None)
+    Rule = otl.ChainContextualRule
+    seen = set()   # a and c (or b and d) can derive the same guard twice
+
+    def ignore(prefix, glyphs, suffix):
+        if (prefix, glyphs, suffix) in seen:
+            return
+        seen.add((prefix, glyphs, suffix))
+        builder.rules.append(Rule([{g} for g in prefix], [{g} for g in glyphs],
+                                  [{g} for g in suffix], [None] * len(glyphs)))
+    for seq in sorted(seqs, key=len, reverse=True):
+        if (seq[0],) + seq not in seqs:
+            ignore((seq[0],), seq, ())                            # a
+        if seq + (seq[-1],) not in seqs:
+            ignore((), seq, (seq[-1],))                           # b
+        for other in seqs:
+            if other[-1] == seq[0] and other[:-1] + seq not in seqs:
+                ignore(other[:-1], seq, ())                       # c
+            if other[0] == seq[-1] and seq + other[1:] not in seqs:
+                ignore((), seq, other[1:])                        # d
+    builder.rules.append(Rule([], [set(firsts)], [], [[_LookupRef(lig_lookup)]]))
+    return builder.build().SubTable
 
 
 def _langsys_list(gsub):
@@ -1288,8 +1343,10 @@ def add_gsub(font, added, alts, variant_maps=None, ligatures=None,
         group_lookups[grp] = _new_lookup(
             gsub, otl.buildLigatureSubstSubtable(groups[grp]))
 
+    guarded_lookup = _new_lookup(
+        gsub, *_guard_subtables(font, gsub, combined, combined_lookup))
     for tag in ("calt", "liga"):
-        _add_feature(gsub, tag, [combined_lookup])
+        _add_feature(gsub, tag, [guarded_lookup])
     for grp in sorted(group_lookups):
         _set_feature_params(
             font, gsub, _add_feature(gsub, grp, [group_lookups[grp]]), grp)
