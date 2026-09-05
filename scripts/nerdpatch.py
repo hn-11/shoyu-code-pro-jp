@@ -15,6 +15,10 @@ import sys
 import tempfile
 from pathlib import Path
 
+import build  # scripts/ is on sys.path (script dir, or test's own insert)
+from fontTools.pens.boundsPen import BoundsPen
+from fontTools.pens.t2CharStringPen import T2CharStringPen
+from fontTools.pens.transformPen import TransformPen
 from fontTools.ttLib import TTFont
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -39,6 +43,80 @@ def ff_env():
     return env
 
 
+# Nerd Fonts icon ranges (PUA + supplementary PUA-A slice NF actually
+# uses): font-patcher draws every glyph in these for a 1000-unit cell
+# regardless of the target family's half-width cell.
+NERD_RANGES = ((0xE000, 0xF8FF), (0xF0000, 0xFFFFD))
+
+
+def _glyph_private(td, gid):
+    """CID-keyed CFF (FDArray/FDSelect) or plain CFF (one Private dict) —
+    font-patcher's output is a flattened, non-CID CFF, but handle both so
+    this also works untouched on a CID source."""
+    if hasattr(td, "FDArray"):
+        return td.FDArray[td.FDSelect[gid]].Private
+    return td.Private
+
+
+def fit_nerd_glyphs(font, cell):
+    """font-patcher --complete sizes every Nerd Font icon (PUA + the
+    supplementary planes NF uses) for a 1000-unit cell, no matter the
+    target family's half-width cell — 1000 lands on neither 667 (JP) nor
+    600 (JP35), breaking the monospace grid (Term is already 600, so
+    font-patcher's output happens to already match there).
+
+    Rescale each affected glyph isotropically by cell/advance, like
+    build.rescale, but about the glyph's vertical center (build.py's
+    glyph_vcenter) instead of the origin, so the icon stays put vertically
+    while its footprint shrinks to fit the cell horizontally too. A glyph
+    may be reachable from several codepoints (icons get aliased); rewrite
+    each glyph once.
+    """
+    cmap = font.getBestCmap()
+    cff = font["CFF "].cff
+    td = cff.topDictIndex.items[0]
+    gs = font.getGlyphSet()
+    hmtx = font["hmtx"]
+
+    names = set()
+    for lo, hi in NERD_RANGES:
+        for cp in range(lo, hi + 1):
+            name = cmap.get(cp)
+            if name is not None:
+                names.add(name)
+
+    done = 0
+    from_advances = set()
+    for name in names:
+        adv, _ = hmtx.metrics[name]
+        if adv == 0 or adv == cell:
+            continue
+        k = cell / adv
+        bounds_pen = BoundsPen(gs)
+        gs[name].draw(bounds_pen)
+        if bounds_pen.bounds is None:
+            dy = 0  # blank glyph (no ink) — nothing to center
+        else:
+            vcenter = (bounds_pen.bounds[1] + bounds_pen.bounds[3]) / 2
+            dy = vcenter - k * vcenter
+        gid = font.getGlyphID(name)
+        private = _glyph_private(td, gid)
+        pen = T2CharStringPen(build.pen_width(private, cell), gs)
+        gs[name].draw(TransformPen(pen, (k, 0, 0, k, 0, dy)))
+        cs = pen.getCharString(private=private)
+        td.CharStrings.charStringsIndex[td.CharStrings.charStrings[name]] = cs
+        hmtx.metrics[name] = (cell, build.charstring_lsb(cs))
+        from_advances.add(adv)
+        done += 1
+    if done:
+        src_advance = (from_advances.pop() if len(from_advances) == 1
+                       else sorted(from_advances))
+        print(f"  fitted {done} Nerd Font glyph(s) from advance {src_advance} to {cell}")
+    else:
+        print(f"  fitted 0 Nerd Font glyphs (already at cell {cell})")
+    return done
+
+
 def fix_names(patched: Path, src: Path) -> Path:
     """Rebuild the patched font's name table from the source font.
 
@@ -56,6 +134,11 @@ def fix_names(patched: Path, src: Path) -> Path:
 
     font = TTFont(patched)
     src_font = TTFont(src)
+
+    src_cmap = src_font.getBestCmap()
+    cell = src_font["hmtx"].metrics[src_cmap[ord("a")]][0]
+    fit_nerd_glyphs(font, cell)
+
     font["name"].names = []
     for rec in src_font["name"].names:
         s = rec.toUnicode()

@@ -127,7 +127,20 @@ font-patcher がグリフを Unicode で引けないため、パッチ前に Fon
 
 ## インストール
 
-[Releases](../../releases) から OTF をダウンロードしてインストールし、
+[Releases](../../releases) から用途に応じてアセットを選ぶ。いずれの zip にも
+OFL のライセンス全文（LICENSE）を同梱している。
+
+- **`ShoyuCodeProJP.zip`**: 面ごとに分かれた個別の OTF。必要な面だけ
+  入れたい人向け。
+- **`ShoyuCodeProJP.ttc` / `ShoyuCodeProJP35.ttc` / `ShoyuCodeProJPTerm.ttc`**:
+  各ファミリー12面（6ウェイト×2スタイル）を1ファイルにまとめた TTC。
+  1ファイルで全面をインストールできる（サイズは OTF 合計と3%しか
+  違わないので、選ぶ利点はもっぱらインストールの手間が減ること）。
+- **`ShoyuCodeProJP-NerdFont.zip`**: Nerd Fonts のアイコングリフを追加した
+  NF 変種（ファミリー名は末尾に `NF` が付く、例 `Shoyu Code Pro JP NF`）。
+  ターミナルのプロンプト装飾（アイコン表示）に使う場合はこちら。
+
+ダウンロードしてインストールし、
 
 ```jsonc
 {

@@ -66,8 +66,18 @@ jobs:
         run: python scripts/verify.py dist/nerd/ShoyuCodeProJPTermNF-Regular.otf
       - run: python scripts/makeotc.py
       - run: |
-          cd dist && zip -q ShoyuCodeProJP.zip *.otf
-          cd nerd && zip -q ../ShoyuCodeProJP-NerdFont.zip *.otf
+          cp LICENSE dist/LICENSE
+          cp LICENSE dist/nerd/LICENSE
+          cd dist && zip -q ShoyuCodeProJP.zip *.otf LICENSE
+          cd nerd && zip -q ../ShoyuCodeProJP-NerdFont.zip *.otf LICENSE
+      - name: Extract changelog section for this tag
+        run: |
+          TAG="${{ inputs.tag || github.ref_name }}"
+          awk -v tag="## ${TAG}" '
+            $0 == tag {flag=1; next}
+            flag && /^## / {flag=0}
+            flag
+          ' CHANGELOG.md > release_notes.md
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           # on dispatch the tag doesn't exist yet; gh-release creates it
@@ -75,6 +85,7 @@ jobs:
           tag_name: ${{ inputs.tag || github.ref_name }}
           target_commitish: ${{ github.sha }}
           generate_release_notes: true
+          body_path: release_notes.md
           files: |
             dist/ShoyuCodeProJP.zip
             dist/ShoyuCodeProJP-NerdFont.zip
