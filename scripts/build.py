@@ -1108,7 +1108,7 @@ def _guard_subtables(font, gsub, ligatures, lig_lookup):
     Monaspace builds its ligatures as chaining rules so that an operator
     run longer than any ligature stays plain: '&&=' is not '&' + '&=',
     '~~>' is not '~' + '~>', and '<|>' is neither '<|' + '>' nor '<' +
-    '|>'. Three kinds of "ignore" rule (match, consume, substitute
+    '|>'. Four kinds of "ignore" rule (match, consume, substitute
     nothing) reproduce that, each only where the longer run is NOT itself
     a ligature (those are left to longest match inside `lig_lookup`):
 
@@ -1127,7 +1127,12 @@ def _guard_subtables(font, gsub, ligatures, lig_lookup):
     firsts = sorted({k[0] for k in seqs})
     builder = otl.ChainContextSubstBuilder(font, None)
     Rule = otl.ChainContextualRule
+    seen = set()   # a and c (or b and d) can derive the same guard twice
+
     def ignore(prefix, glyphs, suffix):
+        if (prefix, glyphs, suffix) in seen:
+            return
+        seen.add((prefix, glyphs, suffix))
         builder.rules.append(Rule([{g} for g in prefix], [{g} for g in glyphs],
                                   [{g} for g in suffix], [None] * len(glyphs)))
     for seq in sorted(seqs, key=len, reverse=True):

@@ -23,6 +23,7 @@ CASES = [
     ("m >>= g", 5), ("s // c", 5),
     # context guards: an operator run longer than any ligature stays plain
     ("x <|> y", 7), ("a &&= b", 7), ("a ~~> b", 7), ("a ->> b", 7),
+    ("a ==> b", 7),
     ("日本語 != x", 7),
 ]
 
