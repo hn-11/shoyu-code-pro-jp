@@ -86,6 +86,12 @@ SCP_K = CELL / SCP_CELL  # 10/9, Adobe's SHCJ scale factor
 CID_ALLOC_START = 23058
 CID_MAX = 65534
 
+# Unicode Combining Diacritical Marks block. SCP has these (as spacing
+# clones centered in their own 600-unit cell — SCP is monospace, so even a
+# bare accent gets a full column), SHCJ doesn't; graft_halfwidth() grafts
+# them at 0 advance instead of CELL so they behave as real combining marks.
+COMBINING_MARKS = range(0x0300, 0x0370)
+
 
 class Variant(NamedTuple):
     cell: int    # half-width advance
@@ -493,6 +499,18 @@ def graft_halfwidth(base, scp, ref):
     (− 555, ˇ 600, ˙ 500: SHS never made those monospaced), SHCJ's
     full-width glyph is copied in, so the 2:3 grid holds everywhere SHCJ's
     does.
+
+    Combining marks (U+0300-U+036F) are the one SCP-only case that must NOT
+    get CELL: SCP draws them as if standalone — a spacing clone centered in
+    its own 600-unit cell, same as every other SCP glyph (there is no 0
+    advance to inherit; every instance at every weight measures 600) — but
+    a proper combining accent has to have 0 advance so 'k' + U+0301 shapes
+    as one cell, not two. Grafted here at 0 advance, with the outline
+    additionally shifted left by one CELL so the ink — centered in SCP's
+    own cell — lands centered over the PRECEDING glyph's cell instead of
+    its own. Returns (from_scp, from_ref, default_map, marks), where
+    `marks` is the set of grafted 0-advance glyph names, for rescale() to
+    still track (see there).
     """
     ref_cm, ref_hm = ref.getBestCmap(), ref["hmtx"]
     scp_cm = scp.getBestCmap()
@@ -507,6 +525,9 @@ def graft_halfwidth(base, scp, ref):
     new_map = {}
     default_map = {}  # scp glyph name -> our glyph name (for variant wiring)
     made = {}         # source glyph -> our glyph (dedup shared sources)
+    marks = set()     # 0-advance combining marks grafted from SCP — their
+                       # OUTLINE still needs the family's cell rescale later
+                       # even though their advance stays 0 (see rescale())
     from_scp = from_ref = 0
     bhm = base["hmtx"]
     for cp in sorted(set(ref_cm) | set(scp_cm)):
@@ -537,19 +558,27 @@ def graft_halfwidth(base, scp, ref):
         # default_map 1:1 so zero/cv/salt wiring survives for all of them
         src = ("scp", scp_cm[cp]) if cp in scp_cm else ("ref", g)
         if src not in made:
-            pen = T2CharStringPen(pen_width(private, CELL), scp_gs)
+            is_mark = src[0] == "scp" and cp in COMBINING_MARKS
+            width = 0 if is_mark else CELL
+            pen = T2CharStringPen(pen_width(private, width), scp_gs)
             if src[0] == "scp":
-                draw_clean([(scp_gs, src[1], (SCP_K, 0, 0, SCP_K, 0, 0))], pen)
-                from_scp += 1
+                # is_mark: shift left by one CELL so ink SCP centered in
+                # its OWN cell instead lands over the PRECEDING glyph's
+                dx = -CELL if is_mark else 0
+                draw_clean([(scp_gs, src[1], (SCP_K, 0, 0, SCP_K, dx, 0))], pen)
+                if not is_mark:
+                    from_scp += 1
             else:
                 draw_clean([(ref_gs, g, (1, 0, 0, 1, 0, 0))], pen)
                 from_ref += 1
             name = alloc_glyph_name(base)
             append_glyph(base, td, name, pen.getCharString(private=private),
-                         fd_index, CELL, None, vdon)
+                         fd_index, width, None, vdon)
             made[src] = name
             if src[0] == "scp":
                 default_map[src[1]] = name
+            if is_mark:
+                marks.add(name)
         new_map[cp] = made[src]
 
     # Drop legacy non-Unicode subtables (Mac (1,0) format 6): they still
@@ -562,7 +591,7 @@ def graft_halfwidth(base, scp, ref):
         for cp, name in new_map.items():
             if cp in table.cmap or not (bmp_only and cp > 0xFFFF):
                 table.cmap[cp] = name   # SCP-only codepoints are new entries
-    return from_scp, from_ref, default_map
+    return from_scp, from_ref, default_map, marks
 
 
 def _remap_scp_tag(tag):
@@ -674,6 +703,36 @@ def copy_line_metrics(base, ref):
     base["OS/2"].panose = ref["OS/2"].panose
 
 
+# Representative sample chars per ulCodePageRange1 bit: a bit is set when
+# every sample character for it is in the final cmap. Only these bits are
+# touched by recalc_codepage_range() — everything else in the field (Mac
+# charset, OEM/DOS, codepages we don't sample for...) stays whatever
+# Source Han Sans declared.
+CODEPAGE_SAMPLES = {
+    0: "éàü",    # 1252 Latin 1
+    1: "łőřș",   # 1250 Latin 2
+    2: "Жд",     # 1251 Cyrillic
+    3: "Ωβ",     # 1253 Greek
+    4: "ğşıİ",   # 1254 Turkish
+    17: "日あｱ",  # 932 JIS
+}
+
+
+def recalc_codepage_range(font):
+    """Set the ulCodePageRange1 bits CODEPAGE_SAMPLES covers from the final
+    cmap; leave every other bit as inherited from the SHS base."""
+    cmap = font.getBestCmap()
+    os2 = font["OS/2"]
+    bits = os2.ulCodePageRange1
+    for bit, sample in CODEPAGE_SAMPLES.items():
+        mask = 1 << bit
+        if all(ord(c) in cmap for c in sample):
+            bits |= mask
+        else:
+            bits &= ~mask
+    os2.ulCodePageRange1 = bits
+
+
 # Term: ambiguous-width symbols that pair with a ligature take Monaspace's
 # one-cell glyph rather than SCP's, so '←' beside '<-' (and ≠ / !=, ≤ / <=,
 # … / ...) shares its stroke weight and arrowhead. Only in Term — in the
@@ -757,20 +816,26 @@ def narrow_ambiguous(font, cell, scp, mona):
 HALFWIDTH_FORMS = (0xFF61, 0xFFDC)   # U+FF61-FFDC: half-width kana, ￩ etc.
 
 
-def fit_halfwidth_forms(font, cell):
+def fit_halfwidth_forms(font, cell, glyph_names=None):
     """600-cell families only: SHCJ draws the half-width forms (ｱ ｡ ｢ ...)
     at 500 — half of its 1000 em, which lands on neither its own 667 cell
     nor ours. The 2:3 family keeps that as SHCJ's look; here the glyph is
     centered in one cell so the terminal grid holds. Runs after rescale
-    (the 500 glyphs are untouched by it: 500 % 667 != 0)."""
-    cmap = font.getBestCmap()
+    (the 500 glyphs are untouched by it: 500 % 667 != 0).
+
+    `glyph_names` (when given) replaces the default HALFWIDTH_FORMS
+    codepoint scan with an explicit iterable of glyph names — used to
+    also center hwid's own 500-advance alternates (see hwid_targets())."""
     cff = font["CFF "].cff
     td = cff.topDictIndex.items[0]
     gs = font.getGlyphSet()
     hmtx = font["hmtx"]
     done = set()
-    for cp in range(HALFWIDTH_FORMS[0], HALFWIDTH_FORMS[1] + 1):
-        name = cmap.get(cp)
+    if glyph_names is None:
+        cmap = font.getBestCmap()
+        glyph_names = (cmap.get(cp) for cp in
+                       range(HALFWIDTH_FORMS[0], HALFWIDTH_FORMS[1] + 1))
+    for name in glyph_names:
         if name is None or name in done:
             continue
         adv, lsb = hmtx.metrics[name]
@@ -1146,6 +1211,49 @@ def sort_feature_list(gsub):
     return remap
 
 
+def drop_features(font, tags):
+    """Remove every FeatureRecord whose tag is in `tags` from GSUB and GPOS
+    alike: drop it from FeatureList and every LangSys's FeatureIndex,
+    remapping the remaining indices — same pattern as sort_feature_list().
+    Used for 'pwid'/'palt': proportional-width has no meaning in a
+    fixed-cell terminal font (see the 600-cell families in build_face)."""
+    for tbl_tag in ("GSUB", "GPOS"):
+        if tbl_tag not in font:
+            continue
+        table = font[tbl_tag].table
+        records = table.FeatureList.FeatureRecord
+        drop = {i for i, fr in enumerate(records) if fr.FeatureTag in tags}
+        if not drop:
+            continue
+        keep = [i for i in range(len(records)) if i not in drop]
+        remap = {old: new for new, old in enumerate(keep)}
+        table.FeatureList.FeatureRecord = [records[i] for i in keep]
+        table.FeatureList.FeatureCount = len(keep)
+        for ls in _langsys_list(table):
+            ls.FeatureIndex = sorted(remap[i] for i in ls.FeatureIndex
+                                     if i in remap)
+            ls.FeatureCount = len(ls.FeatureIndex)
+
+
+def hwid_targets(font):
+    """Glyph names reachable via the 'hwid' feature (Single or Alternate
+    subst) — SHS's own half-width alternates, drawn at its native 500-unit
+    half cell (half of the 1000 em), not our 600-unit one. Used to center
+    them onto the terminal grid (see fit_halfwidth_forms())."""
+    if "GSUB" not in font:
+        return set()
+    gsub = font["GSUB"].table
+    targets = set()
+    for fr in gsub.FeatureList.FeatureRecord:
+        if fr.FeatureTag != "hwid":
+            continue
+        for li in fr.Feature.LookupListIndex:
+            kind, subs = _unwrap(gsub.LookupList.Lookup[li])
+            for _, dst in _subst_pairs(kind, subs, "hwid"):
+                targets.add(dst)
+    return targets
+
+
 def add_gsub(font, added, alts, variant_maps=None, ligatures=None,
              variant_names=None):
     """calt/liga carry every ligature (default on); each Monaspace-style
@@ -1208,11 +1316,18 @@ def rescaled_advance(adv, cell):
     return None
 
 
-def rescale(font, cell, ky=None):
+def rescale(font, cell, ky=None, also_rescale=()):
     """Rescale half-width glyphs (and ligatures) from 667 to `cell`.
     Isotropic by default — Adobe's own SHCJ recipe. Pass `ky` to keep a
     taller vertical scale (condensed experiment: terminal fonts like
-    HackGen/PlemolJP run cap/half ~1.3 vs SCP's roomy 1.09)."""
+    HackGen/PlemolJP run cap/half ~1.3 vs SCP's roomy 1.09).
+
+    `also_rescale`: glyph names whose advance is 0 (so rescaled_advance()
+    leaves them alone) but whose OUTLINE was drawn against the 667 grid and
+    must still track it — the 0-advance combining marks graft_halfwidth()
+    grafts from SCP, positioned by negative sidebearing over a Latin base
+    that DOES get rescaled here. Their advance stays 0; only the outline
+    and lsb get the same k."""
     cff = font["CFF "].cff
     td = cff.topDictIndex.items[0]
     gs = font.getGlyphSet()
@@ -1224,7 +1339,9 @@ def rescale(font, cell, ky=None):
         adv, lsb = hmtx.metrics[name]
         new_adv = rescaled_advance(adv, cell)
         if new_adv is None:
-            continue
+            if name not in also_rescale:
+                continue
+            new_adv = adv   # keep the 0 advance; only the outline moves
         gid = font.getGlyphID(name)
         private = td.FDArray[td.FDSelect[gid]].Private
         pen = T2CharStringPen(pen_width(private, new_adv), gs)
@@ -1289,7 +1406,7 @@ def build_face(job):
         target *= CELL / cell  # pre-inflate; rescale undoes it
     scp = scp_src.matched(target)
     base = TTFont(Path(env["SHS_DIR"]) / shs_file)
-    n_scp, n_ref, default_map = graft_halfwidth(base, scp, ref)
+    n_scp, n_ref, default_map, marks = graft_halfwidth(base, scp, ref)
     variant_maps, variant_names = import_scp_variants(base, scp, default_map)
     copy_line_metrics(base, ref)
     # the outlines' real slant lives in the SCP Italic instance; SHCJ's
@@ -1304,12 +1421,23 @@ def build_face(job):
     replace_from_mona(base, mona, dy=dy)
     add_gsub(base, added, alts, variant_maps, LIGATURES, variant_names)
     if cell != CELL:
-        rescale(base, cell)
+        rescale(base, cell, also_rescale=marks)
         fit_halfwidth_forms(base, cell)
+        # hwid/pwid alternates off the grid: pwid/palt have no meaning in a
+        # fixed-cell font, and hwid's own 500-advance alternates (from SHS's
+        # 1000em) need centering into `cell`, same as fit_halfwidth_forms
+        # above — walk hwid BEFORE dropping any features that might touch it
+        hwid_500 = {g for g in hwid_targets(base)
+                   if base["hmtx"].metrics[g][0] == 500}
+        fit_halfwidth_forms(base, cell, glyph_names=hwid_500)
+        drop_features(base, {"pwid", "palt"})
     if term:
         # ambiguous-width first (adv==1000 probe), then widen CJK
         narrow_ambiguous(base, cell, scp, mona)
         widen_fullwidth(base, cell)
+    # OS/2 Unicode / code-page range bits, from the now-final cmap
+    base["OS/2"].recalcUnicodeRanges(base)
+    recalc_codepage_range(base)
     ps = set_names(base, suffix, weight, italic,
                    ref_angle if ref_angle is not None else -12.0,
                    version=env.get("SHOYU_VERSION"))

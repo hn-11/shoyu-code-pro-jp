@@ -273,6 +273,84 @@ def test_ligature_module_constant_matches_loader():
     assert build.load_ligatures() == build.LIGATURES
 
 
+# --- drop_features (pwid/palt removal) -----------------------------------
+
+class FakeTable:
+    """font["GSUB"] / font["GPOS"] stand-in: just carries `.table`."""
+    def __init__(self, table):
+        self.table = table
+
+
+def test_drop_features_removes_from_langsys_and_remaps():
+    records = [FakeFeatureRecord(tag, FakeFeature([]))
+               for tag in ("calt", "pwid", "liga")]
+    ls = FakeLangSys([0, 1, 2])   # calt, pwid, liga
+    gsub = FakeGSUB(records, [FakeScriptRecord(FakeScript(ls))])
+    font = {"GSUB": FakeTable(gsub)}
+
+    build.drop_features(font, {"pwid"})
+
+    tags = [fr.FeatureTag for fr in gsub.FeatureList.FeatureRecord]
+    assert tags == ["calt", "liga"]
+    assert gsub.FeatureList.FeatureCount == 2
+    # old index 1 (pwid) is gone; old index 2 (liga) remaps to 1
+    assert ls.FeatureIndex == [0, 1]
+    assert ls.FeatureCount == 2
+
+
+def test_drop_features_noop_when_tag_absent():
+    records = [FakeFeatureRecord("calt", FakeFeature([]))]
+    ls = FakeLangSys([0])
+    gsub = FakeGSUB(records, [FakeScriptRecord(FakeScript(ls))])
+    font = {"GSUB": FakeTable(gsub)}
+
+    build.drop_features(font, {"pwid"})
+
+    assert [fr.FeatureTag for fr in gsub.FeatureList.FeatureRecord] == ["calt"]
+    assert ls.FeatureIndex == [0]
+
+
+def test_drop_features_skips_tables_the_font_lacks():
+    font = {"GSUB": FakeTable(FakeGSUB([], []))}
+    build.drop_features(font, {"palt"})   # no "GPOS" key: must not raise
+
+
+# --- recalc_codepage_range -------------------------------------------------
+
+class FakeOS2:
+    def __init__(self, ul_code_page_range1):
+        self.ulCodePageRange1 = ul_code_page_range1
+
+
+class FakeCmapFont:
+    def __init__(self, cmap, ul_code_page_range1):
+        self._cmap = cmap
+        self._tables = {"OS/2": FakeOS2(ul_code_page_range1)}
+
+    def getBestCmap(self):
+        return self._cmap
+
+    def __getitem__(self, key):
+        return self._tables[key]
+
+
+def test_recalc_codepage_range_sets_and_clears_sampled_bits():
+    # only the Latin-1 sample is present in cmap
+    cmap = {ord(c): "g" for c in "éàü"}
+    # bit 1 (Latin 2) starts incorrectly set; bit 29 is an unrelated
+    # inherited bit recalc_codepage_range must leave alone
+    font = FakeCmapFont(cmap, ul_code_page_range1=(1 << 1) | (1 << 29))
+
+    build.recalc_codepage_range(font)
+
+    bits = font["OS/2"].ulCodePageRange1
+    assert bits & (1 << 0)          # Latin 1 sample present -> set
+    assert not bits & (1 << 1)      # Latin 2 sample absent -> cleared
+    assert not bits & (1 << 2)      # Cyrillic absent
+    assert not bits & (1 << 17)     # JIS absent
+    assert bits & (1 << 29)         # untouched, non-sampled bit preserved
+
+
 # --- per-contour bounds (the '=' bar probe) ------------------------------
 
 def test_contour_bounds_ignores_curve_control_points():

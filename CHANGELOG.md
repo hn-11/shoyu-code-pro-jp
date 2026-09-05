@@ -1,0 +1,31 @@
+# Changelog
+
+## v3.1.0
+
+- Light ウェイト復活（Monaspace 下限を超える分をアウトライン削りで合わせる）
+- リリース版数を name ID 5 / fontRevision に刻印
+- SCP の未収録約 600 字（`ł` `ğ` `ş` `ı` `ř` `₽` …）を半角で取り込み
+- `−` `ς` `⁴` などのグリッド外グリフ修正
+- 35/Term で半角カナを 1 セルに中央配置
+- Term/35: `pwid`/`palt` を外し `hwid` 先のグリフをセルに合わせる
+- NF 変種のアイコンを JP/35 でも 1 セル幅に
+- 結合文字（U+0300〜036F）を送り 0 で取り込み、直前の文字に重なるように
+- OS/2 の Unicode / コードページ範囲ビットを最終的な収録文字から再計算
+- `makeotc.py` がファミリー内で cmap が一致しない面を検出して止まるように
+- リリース zip に LICENSE 同梱
+
+## v3.0.0
+
+破壊的変更を含みます。
+
+- ExtraLight/Light 削除（Light は 3.1.0 で復活）
+- `= < > | ~` を Monaspace に
+- Term の曖昧幅を HackGen Console 方式に変更
+
+**既存ユーザーへの影響**: Term で `①` `※` が 2 セル幅になり、曖昧幅を
+半角扱いするターミナルでは右隣に食み出す。Windows Terminal は
+`"compatibility.ambiguousWidth": "wide"` で 2 セル確保できる。`←` `→` `≠`
+`≤` `…` は 1 セル（Monaspace 版）。
+
+- liga 単独で合字が出なかったバグ修正
+- Term が CI で検証されるように
