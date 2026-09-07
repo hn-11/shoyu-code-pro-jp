@@ -1,6 +1,6 @@
-# Shoyu Code Pro（仮称）— 欧文中間フォント計画
+# Sumi Moji（仮称）— 欧文中間フォント計画
 
-状態: 計画のみ（v3.3.0 時点）。名前は仮で、リブランディング時に差し替える前提。
+状態: 計画のみ（v3.3.0 時点）。名前は仮称 **Sumi Moji**（墨文字）。衝突調査済み（フォント・技術領域で同名なし、商標は未確認、`sumimoji.com` / `.net` は取得済みで `.dev` / `.jp` は空き）。
 
 ## 1. 目的
 
@@ -22,14 +22,27 @@ Shoyu Code Pro JP の欧文層（Source Code Pro の文字 + Monaspace の記号
 
 | 用途 | ファミリー名 | PostScript 名 |
 |---|---|---|
-| 欧文のみ | Shoyu Code Pro | ShoyuCodePro-Regular など |
-| 欧文のみ NF | Shoyu Code Pro NF | ShoyuCodeProNF-Regular |
-| 和文入り（現行） | Shoyu Code Pro JP / JP 35 / JP Term | 変更なし |
+| 欧文のみ | Sumi Moji | SumiMoji-Regular など |
+| 欧文のみ NF | Sumi Moji NF | SumiMojiNF-Regular |
+| 和文入り | Sumi Moji JP / Sumi Moji JP 35 / Sumi Moji JP Term | SumiMojiJP-Regular, SumiMojiJP35-Regular, SumiMojiJPTerm-Regular |
+| 和文入り NF | Sumi Moji JP NF など | SumiMojiJPNF-Regular など |
+
+リブランディング時に現行の Shoyu Code Pro JP から名前を変える箇所（一括で変更する）:
+
+1. `scripts/build.py` の `set_names`（family / PostScript 名のプレフィックス）と `PROJECT_URL` / `PROJECT_COPYRIGHT`
+2. `scripts/nerdpatch.py` の NF 命名正規表現
+3. `scripts/makeotc.py` の TTC ファイル名
+4. `.github/workflows/release.yml` のリリース資産名と `SHOYU_VERSION` 環境変数名
+5. `scripts/verify.py` の `FAMILY_METRICS` 判定（ファミリー名のトークン）
+6. README / CHANGELOG / LICENSE の名前と、リポジトリ名・`git remote`
 
 - OFL の Reserved Font Name により `Source` と `Monaspace` はフォント名に
-  使えない（一部に含めるのも不可）。「monasource」はプロジェクトの呼び名や
-  リポジトリ名には使えるが、フォントのファミリー名には使わない
-- 「Shoyu Code Pro JP」の「JP なし」が欧文版、という現行の命名と自然に噛み合う
+  使えない。OFL FAQ 5.4 は「RFN の単語全体は不可、単語の一部は可だが非推奨」
+  で、`Monasource` は `Source` を丸ごと含むため不可側。`Sumi Moji` は
+  どちらの RFN も含まない
+- 名前の由来: 墨文字（筆で書いた文字）。`Sumi` 単体は筆文字系フォント名で
+  多用されるが、`Sumi Moji` 複合名のフォントは無い。日本に同名の工芸系
+  小規模ブランド（T シャツ、ネイル筆、書道用品店「墨文字製作所」）がある
 - name ID 0 / 9 のドナー表記、achVendID `SHYU`、STAT、WWS は JP と同じ規約
 
 ## 3. 仕様
@@ -144,7 +157,7 @@ lookup と feature を SHS の GSUB にマージ）、10/9 拡大（JP）、`nar
   マスターを置く位置に依存する。誤差 1u を超える場合はマスターを増やす
 - **Italic**: SCP Italic は −12°、Monaspace の slnt は −11° が下限。
   残り 1° のシアーは現行どおりマスター生成時に掛ける
-- **名前**: 仮称。リブランディングで変えるときは name ID 1/4/6/16、
-  PostScript 名、TTC 名、リリース資産名、README の 6 か所を一括で変える
+- **名前**: 仮称 Sumi Moji。商標（USPTO / J-PlatPat）はこの環境から未確認、
+  確定前に直接引く。変更箇所の一覧は 2 節
 - **バージョン**: JP と同じタグで同時にリリースする（別バージョン番号を
   持たない）
