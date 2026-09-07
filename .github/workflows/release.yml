@@ -61,6 +61,9 @@ jobs:
       - run: python scripts/verify.py dist/ShoyuCodeProJP35-Heavy.otf
       - run: python scripts/verify.py dist/ShoyuCodeProJP-RegularItalic.otf
       - run: python scripts/verify.py dist/ShoyuCodeProJPTerm-Regular.otf
+      - run: python scripts/build_latin.py
+      - run: python scripts/verify_latin.py dist/latin/SumiMoji-Regular.otf
+      - run: python scripts/verify_latin.py dist/latin/SumiMoji-BoldItalic.otf
       - run: python scripts/nerdpatch.py FontPatcher
       - name: Verify a Nerd Font-patched output
         run: python scripts/verify.py dist/nerd/ShoyuCodeProJPTermNF-Regular.otf
@@ -68,7 +71,9 @@ jobs:
       - run: |
           cp LICENSE dist/LICENSE
           cp LICENSE dist/nerd/LICENSE
+          cp LICENSE dist/latin/LICENSE
           cd dist && zip -q ShoyuCodeProJP.zip *.otf LICENSE
+          (cd latin && zip -q ../SumiMoji.zip *.otf LICENSE)
           cd nerd && zip -q ../ShoyuCodeProJP-NerdFont.zip *.otf LICENSE
       - name: Extract changelog section for this tag
         run: |
@@ -88,6 +93,7 @@ jobs:
           body_path: release_notes.md
           files: |
             dist/ShoyuCodeProJP.zip
+            dist/SumiMoji.zip
             dist/ShoyuCodeProJP-NerdFont.zip
             dist/ShoyuCodeProJP.ttc
             dist/ShoyuCodeProJP35.ttc

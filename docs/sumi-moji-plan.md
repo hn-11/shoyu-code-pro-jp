@@ -1,6 +1,11 @@
 # Sumi Moji（仮称）— 欧文中間フォント計画
 
-状態: 計画のみ（v3.3.0 時点）。名前は仮称 **Sumi Moji**（墨文字）。衝突調査済み（フォント・技術領域で同名なし、商標は未確認、`sumimoji.com` / `.net` は取得済みで `.dev` / `.jp` は空き）。
+状態: 段階 1a まで実装済み（v3.3.0）。`scripts/build_latin.py` が 35
+ファミリーの完成した OTF から欧文レイヤーを切り出して `SumiMoji-*.otf`
+12面をビルドし、`SumiMoji.zip` としてリリース資産に含まれている。
+段階 1b（下記）以降は未着手。名前は仮称 **Sumi Moji**（墨文字）。
+衝突調査済み（フォント・技術領域で同名なし、商標は未確認、
+`sumimoji.com` / `.net` は取得済みで `.dev` / `.jp` は空き）。
 
 ## 1. 目的
 
@@ -94,17 +99,33 @@ Shoyu Code Pro JP の欧文層（Source Code Pro の文字 + Monaspace の記号
 
 ## 4. ビルド構成
 
+現在（段階 1a、実装済み）: `build_latin.py` は VF からではなく、
+`build.py` が組み上げた 35 の完成品 OTF を切り出す側になっている
+（`build.py` 自体は今も SHS + SCP VF + Monaspace VF + SHCJ から毎回
+独立に組む。以下は段階 1b で置き換える計画のまま）。
+
 ```
-scripts/build_latin.py   # SCP VF + Monaspace VF -> dist/latin/ShoyuCodePro-*.otf
-scripts/build.py         # SHS + SHCJ + dist/latin/*.otf -> dist/ShoyuCodeProJP*.otf
-scripts/verify_latin.py  # 欧文単体の回帰テスト
+scripts/build.py         # SHS + SCP VF + Monaspace VF + SHCJ
+                          #   -> dist/ShoyuCodeProJP*.otf（JP/35/Term、現行どおり）
+scripts/build_latin.py   # dist/ShoyuCodeProJP35-*.otf（段階1aの入力）
+                          #   -> dist/latin/SumiMoji-*.otf
+scripts/verify_latin.py  # 欧文単体の回帰テスト（dist/latin/SumiMoji-*.otf）
 scripts/verify.py        # JP（現行）
 ```
 
-build.py から build_latin.py に移す関数: `VFSource.matched`、`draw_clean` /
-`erode_path` 一式、`graft_halfwidth` の SCP 側、`replace_from_mona`、
-`add_glyphs`、`add_gsub` / `_guard_subtables`、`import_scp_variants`、
-`latin_blue_zones` / `add_latin_fd`、`autohint_face`、`subroutinize_face`。
+計画（段階 1b、未着手）:
+
+```
+scripts/build_latin.py   # SCP VF + Monaspace VF -> dist/latin/SumiMoji-*.otf
+scripts/build.py         # SHS + SHCJ + dist/latin/*.otf -> dist/ShoyuCodeProJP*.otf
+```
+
+build.py から build_latin.py に移す関数（段階1bで実施、1aでは未実施—
+build.py は現行のまま VF から直接組んでいる）: `VFSource.matched`、
+`draw_clean` / `erode_path` 一式、`graft_halfwidth` の SCP 側、
+`replace_from_mona`、`add_glyphs`、`add_gsub` / `_guard_subtables`、
+`import_scp_variants`、`latin_blue_zones` / `add_latin_fd`、
+`autohint_face`、`subroutinize_face`。
 
 build.py に残る処理: SHS の読み込み、SHCJ からの半角カナ等の複写、行間の
 複写、欧文フォントからのグリフ・GSUB の取り込み（グリフ名を CID に付け替え、
@@ -114,16 +135,27 @@ lookup と feature を SHS の GSUB にマージ）、10/9 拡大（JP）、`nar
 
 ## 5. 段階
 
-### 段階 1: 静的 12 面（リファクタリング）
+### 段階 1a: 35 から切り出し（実装済み、v3.3.0）
 
-1. `build_latin.py` を切り出し、`dist/latin/` に 12 面を出す
-2. `build.py` を「欧文 OTF を読む側」に書き換える
+1. ✅ `build_latin.py` を切り出し、`dist/ShoyuCodeProJP35-*.otf`
+   （`build.py` が既にビルドした 35 面）から `dist/latin/` に
+   `SumiMoji-*.otf` 12 面を出す
+2. ✅ `verify_latin.py`（HarfBuzz の合字・ガード、メタデータ、GSUB の
+   構成）
+3. ✅ リリース資産に `SumiMoji.zip`（LICENSE 同梱）を追加。CHANGELOG に
+   「欧文版」を追記。`ci.yml` は Regular ペアをビルド・検証、
+   `release.yml` は 12 面をビルドし 2 面を検証
+4. 未着手: Nerd Fonts 変種、TTC 化
+
+### 段階 1b: build.py が欧文フォントを消費する側に書き換え（未着手）
+
+1. `build_latin.py` の入力を 35 の完成品 OTF から SCP VF + Monaspace VF
+   直接に変える（段階 1a は既存の 35 ビルドに依存する中間形態）
+2. `build.py` を「欧文 OTF（`dist/latin/*.otf`）を読む側」に書き換える
 3. **ゴールデン比較**: 書き換え前後で JP 全面のグリフアウトライン・cmap・
    GSUB の shaping 結果が一致することを CI で確認する（差が出てよいのは
    name テーブルのみ）
-4. `verify_latin.py`（HarfBuzz の合字・ガード、fontbakery universal、
-   メタデータ）
-5. リリース資産に `ShoyuCodePro.zip`（+ NF）を追加。CHANGELOG に「欧文版」を追記
+4. fontbakery universal チェックを `verify_latin.py` に追加
 
 見積り: 数日。描画結果は変わらない。
 

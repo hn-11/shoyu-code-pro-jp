@@ -124,7 +124,8 @@ def test_ligature_schema():
     assert ligs, "no ligatures loaded"
     for seq, spec in ligs.items():
         assert isinstance(seq, str) and seq, f"bad key {seq!r}"
-        assert set(spec) == {"cells", "glyphs", "group"}, seq
+        assert {"cells", "glyphs", "group"} <= set(spec) <= {
+            "cells", "glyphs", "group", "at"}, seq
         assert spec["glyphs"], f"{seq}: empty glyph list"
         assert all(isinstance(g, str) and g for g in spec["glyphs"]), seq
         assert spec["group"] in KNOWN_GROUPS, f"{seq}: group {spec['group']}"
@@ -132,6 +133,11 @@ def test_ligature_schema():
         # one cell per input character, and never fewer cells than parts
         assert spec["cells"] == len(seq), f"{seq}: cells != len(sequence)"
         assert len(spec["glyphs"]) <= spec["cells"], seq
+        if "at" in spec:   # explicit cell per part: in range, ascending
+            at = spec["at"]
+            assert len(at) == len(spec["glyphs"]), seq
+            assert all(0 <= c < spec["cells"] for c in at), seq
+            assert at == sorted(at) and len(set(at)) == len(at), seq
 
 
 def test_every_group_has_a_ui_name():

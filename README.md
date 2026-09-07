@@ -15,10 +15,10 @@ SHCJ ユーザーの見た目の連続性が保たれる。
 
 ## 合字一覧
 
-**Monaspace 由来の50種**を収録（[githubnext/monaspace](https://github.com/githubnext/monaspace) v1.400、OFL）。
+**Monaspace 由来の61種**を収録（[githubnext/monaspace](https://github.com/githubnext/monaspace) v1.400、OFL）。
 主要どころ: `!=` `==` `===` `!==` `<=` `>=` `->` `<-` `=>` `~>` `:=` `::`
-`<<=` `>>=` `=<<` `|>` `<|` `<>` `</>` `//` `#[` `...` `&=` `||` ほか（全50種）。
-全リストは `data/mona_ligs.json` を参照。
+`<<=` `>>=` `=<<` `|>` `<|` `<>` `</>` `//` `#[` `...` `&=` `||` `!~` `=~`
+`~~>` `<!--` `&&=` ほか（全61種）。全リストは `data/mona_ligs.json` を参照。
 
 移植するのは合字グリフと、単独の ASCII 記号 32字全部
 （`` !"#$%&'()*+,-./:;<=>?@[\]^_`{|}~ ``）。英数字やそれ以外の文字は
@@ -53,14 +53,14 @@ GSUB は `calt` / `liga` 両登録（全合字が既定で有効）。加えて 
 
 | feature | 内容 | 例 |
 |---------|------|----|
-| ss01 | 比較・等価 | `!=` `===` `<=` `>=` |
-| ss02 | 矢印 | `->` `<-` `=>` `>>=` |
-| ss03 | マークアップ | `</` `/>` `</>` `<>` |
+| ss01 | 比較・等価 | `!=` `===` `<=` `>=` `!~` `=~` |
+| ss02 | 矢印 | `->` `<-` `=>` `>>=` `~~>` |
+| ss03 | マークアップ | `</` `/>` `</>` `<>` `<!--` |
 | ss04 | パイプ | `\|>` `<\|` |
-| ss05 | コロン | `::` `:=` |
-| ss06 | ドット | `..` `...` |
+| ss05 | コロン | `::` `:=` `:>` `<:` |
+| ss06 | ドット | `..` `...` `..<` `.=` |
 | ss07 | コメント | `//` `///` |
-| ss08 | 反復・論理・その他 | `\|\|` `<<` `>>` `#[` `#(` `&=` |
+| ss08 | 反復・論理・その他 | `\|\|` `<<` `>>` `#[` `#(` `&=` `&&` `&&=` `++` |
 | ss09 | 幅の代替（矢印・≠≤≥…の 1 セル版） | |
 | cv99 | 演算子の代替デザイン（Monaspace の .alt） | |
 
@@ -81,6 +81,8 @@ stylistic set も同じ挙動なので許容している。グループを跨い
 
 `:=` と `::` は Monaspace 内でも文脈変異（`colon.case`）で実現されているため、
 同グリフの合成として取り込んでいる（実レンダリングと誤差1ユニット未満で一致）。
+同じ手法で `&&` `++`（`&` `+` の init/fina 変異）、`..<` `.=`（ピリオドを
+上げた変異）、`:>` `<:`（コロンを上げた変異）も合成して取り込んでいる。
 
 ## ファミリー構成
 
@@ -173,6 +175,27 @@ HackGen Console / PlemolJP Console / Moralerspace HW / UDEV Gothic JPDOC
 font-patcher がグリフを Unicode で引けないため、パッチ前に FontForge の
 `cidFlatten()` で平坦化している（アウトラインは無変換）。
 
+## Sumi Moji（欧文のみ、仮称）
+
+35 ファミリーの欧文レイヤー（Source Code Pro の文字 + Monaspace の記号・
+合字）だけを切り出した、和文を含まない単独フォント。ウェイト・合字は 35
+と同一で、Source Han Sans のグリフは一切残さない（`.notdef` も描き直し）
+ため、クレジットは Source Code Pro と Monaspace のみになる。合字と対になる
+`← → ↑ ↓ ⇐ ⇒ ⇔ ≠ ≤ ≥ …` は欧文フォントに全角の概念が無いため 1 セルの
+Monaspace 版が既定。行間などの縦メトリクスは SHCJ ではなく Source Code
+Pro 自身の hhea 値（984 / -273）。OS/2 の typo も同じ値にして USE_TYPO_METRICS を立て、win はファミリー全面のバウンディングボックスを覆う値（1133 / 400）にしてある。
+
+```sh
+python scripts/build.py        # 先に 35 を含む全ファミリーをビルド
+python scripts/build_latin.py  # dist/ShoyuCodeProJP35-*.otf -> dist/latin/SumiMoji-*.otf
+```
+
+`SCP_VF_U` / `SCP_VF_I`（Source Code Pro VF）を渡すとそこから縦メトリクスを
+取り直す。省略時は 35 面（Source Han Code JP 由来）の値のまま。
+
+「Sumi Moji」はまだ仮称（PostScript 名は `SumiMoji-*`）。経緯・命名調査・
+今後の計画は [docs/sumi-moji-plan.md](docs/sumi-moji-plan.md) を参照。
+
 ## インストール
 
 [Releases](../../releases) から用途に応じてアセットを選ぶ。いずれの zip にも
@@ -187,6 +210,8 @@ OFL のライセンス全文（LICENSE）を同梱している。
 - **`ShoyuCodeProJP-NerdFont.zip`**: Nerd Fonts のアイコングリフを追加した
   NF 変種（ファミリー名は末尾に `NF` が付く、例 `Shoyu Code Pro JP NF`）。
   ターミナルのプロンプト装飾（アイコン表示）に使う場合はこちら。
+- **`SumiMoji.zip`**: 和文を含まない欧文のみの Sumi Moji（仮称）12面。
+  NF 変種と TTC はまだ無い。
 
 ダウンロードしてインストールし、
 

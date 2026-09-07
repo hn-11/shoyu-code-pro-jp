@@ -141,7 +141,7 @@ FACES = [
 
 
 def load_ligatures(path=None):
-    """data/mona_ligs.json -> {sequence: {cells, glyphs, group}}."""
+    """data/mona_ligs.json -> {sequence: {cells, glyphs, group[, at]}}."""
     with open(path or ROOT / "data" / "mona_ligs.json") as fp:
         return json.load(fp)
 
@@ -1082,7 +1082,8 @@ OWNED_NAME_IDS = (0, 1, 2, 3, 4, 6, 8, 9, 11, 16, 17)
 
 
 def set_names(font, suffix, weight, italic, italic_angle=-12.0, version=None,
-              credits=()):
+              credits=(), family_base="Shoyu Code Pro JP", ps_base="ShoyuCodeProJP",
+              base_credit="Source Han Sans"):
     """Rewrite the family-identifying names, preserve the legal ones.
 
     `version` (SHOYU_VERSION, e.g. "3.1.0") stamps our own release version
@@ -1093,23 +1094,24 @@ def set_names(font, suffix, weight, italic, italic_angle=-12.0, version=None,
 
     `credits`: [(donor label, copyright text, designer text), ...] for the
     donors other than Source Han Sans (whose own strings are inherited in
-    the base font's name table) — appended to name IDs 0 and 9 so the
-    Source Code Pro and Monaspace notices ship inside the font, not only
-    in LICENSE. Also drops Source Han Sans's DSIG (a signature over bytes
+    the base font's name table and credited under `base_credit`; pass
+    None for a font with no Source Han Sans glyphs, e.g. the Latin-only
+    face) — appended to name IDs 0 and 9 so the Source Code Pro and
+    Monaspace notices ship inside the font, not only in LICENSE. Also drops Source Han Sans's DSIG (a signature over bytes
     that no longer exist) and replaces Adobe's vendor identity (nameID
     8/11, OS/2 achVendID) with the project's.
     """
-    base_family = ("Shoyu Code Pro JP " + suffix).strip()
+    base_family = (family_base + " " + suffix).strip()
     ribbi = weight in ("Regular", "Bold")
     family = base_family if ribbi else f"{base_family} {weight}"
     sub = (weight if ribbi else "Regular") + (" Italic" if italic else "")
     sub = sub.replace("Regular Italic", "Italic")
-    psfam = "ShoyuCodeProJP" + suffix
+    psfam = ps_base + suffix
     ps = f"{psfam}-{weight}{'Italic' if italic else ''}"
     full = f"{family} {sub}".replace(" Regular", "").strip()
     name = font["name"]
-    shs_copyright = name.getDebugName(0) or ""
-    shs_designer = name.getDebugName(9) or ""
+    shs_copyright = name.getDebugName(0) or "" if base_credit else ""
+    shs_designer = name.getDebugName(9) or "" if base_credit else ""
     # drop stale records for the IDs we own (every platform/encoding), so
     # the base font's Source Han Sans strings can't survive alongside ours
     name.names = [n for n in name.names if n.nameID not in OWNED_NAME_IDS]
@@ -1121,21 +1123,27 @@ def set_names(font, suffix, weight, italic, italic_angle=-12.0, version=None,
         major, minor = version.split(".")[:2]
         cff_version = f"{major}.{minor}"
         font["head"].fontRevision = float(cff_version)
-        version_str = (f"Version {version};Shoyu Code Pro JP;"
-                       f"SHS {shs_rev:.3f}")
+        version_str = f"Version {version};{family_base}"
+        if base_credit:
+            version_str += f";SHS {shs_rev:.3f}"
         unique_version = version
     else:
         cff_version = f"{shs_rev:.3f}"
-        version_str = f"Version {shs_rev:.3f};Shoyu Code Pro JP"
+        version_str = f"Version {shs_rev:.3f};{family_base}"
         unique_version = cff_version
-    copyright_parts = [f"Shoyu Code Pro JP: {PROJECT_COPYRIGHT}.",
-                       f"Source Han Sans: {shs_copyright}"]
-    designer_parts = [shs_designer]
+    copyright_parts = [f"{family_base}: {PROJECT_COPYRIGHT}."]
+    designer_parts = []
+    if base_credit:
+        copyright_parts.append(f"{base_credit}: {shs_copyright}")
+        designer_parts.append(shs_designer)
     for label, notice, designer in credits:
         if notice:
             copyright_parts.append(f"{label}: {notice}")
         if designer:
             designer_parts.append(f"{label}: {designer}")
+    # one sentence per donor: SCP's notice ends in a quote, not a period
+    copyright_parts = [p if p.rstrip().endswith(".") else p.rstrip() + "."
+                       for p in copyright_parts]
     for nid, val in ((0, " ".join(copyright_parts)),
                      (1, family), (2, sub),
                      (3, f"{unique_version};{VENDOR_ID};{ps}"),
@@ -1290,7 +1298,11 @@ def add_glyphs(font, mona, alts, ligatures=None, dy=None):
             # a single spanning glyph is drawn in its final cell; shift right
             offsets = [(cells - 1) * MONA_CELL * MONA_K]
         else:
-            offsets = [i * MONA_CELL * MONA_K for i in range(len(spec["glyphs"]))]
+            # composed sequences: one part per cell, unless "at" says which
+            # cell each part sits in ('&&=' is ampersand.init in cell 0 and
+            # the 2-cell ampersand_equal, drawn in its final cell, at 2)
+            offsets = [c * MONA_CELL * MONA_K
+                       for c in spec.get("at", range(len(spec["glyphs"])))]
         pen = T2CharStringPen(pen_width(private, width), font.getGlyphSet())
         # composed sequences (':=' etc.) overlap by construction — the same
         # pathops pass the .alt path uses removes the seams
