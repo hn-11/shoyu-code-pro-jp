@@ -56,7 +56,11 @@ import copy
 import json
 import math
 import os
+import shutil
+import string
+import subprocess
 import sys
+import tempfile
 import unicodedata
 from pathlib import Path
 from typing import NamedTuple
@@ -91,6 +95,18 @@ CID_MAX = 65534
 # bare accent gets a full column), SHCJ doesn't; graft_halfwidth() grafts
 # them at 0 advance instead of CELL so they behave as real combining marks.
 COMBINING_MARKS = range(0x0300, 0x0370)
+
+# Provenance stamped into every face (name IDs 0/3/8/11, OS/2 achVendID).
+# The vendor ID is ours by convention only — Microsoft's registry is opt-in
+# and this one is not registered; it just has to stop being Adobe's 'ADBO'.
+PROJECT_URL = "https://github.com/hn-11/shoyu-code-pro-jp"
+PROJECT_COPYRIGHT = f"Copyright 2026 hn-11 ({PROJECT_URL})"
+VENDOR_ID = "SHYU"
+
+# OS/2 usWeightClass per output weight, and the STAT table's wght axis
+# values — the same numbers Source Han Sans declares for these faces.
+WEIGHT_CLASS = {"Light": 300, "Normal": 350, "Regular": 400,
+                "Medium": 500, "Bold": 700, "Heavy": 900}
 
 
 class Variant(NamedTuple):
@@ -461,6 +477,17 @@ def vmtx_donor(font, fullwidth=True):
     return None
 
 
+def note_redrawn(font, names):
+    """Remember glyphs whose charstring WE generated. T2CharStringPen output
+    carries no hints, so every glyph that passes through it — grafted,
+    rescaled, shifted, widened — is re-hinted by autohint_face() after the
+    face is saved. Source Han Sans's own untouched glyphs keep theirs."""
+    redrawn = getattr(font, "_redrawn", None)
+    if redrawn is None:
+        redrawn = font._redrawn = set()
+    redrawn.update(names)
+
+
 def append_glyph(font, td, name, cs, fd_index, width, lsb=None, vdonor=None):
     order = font.getGlyphOrder()
     order.append(name)
@@ -474,6 +501,11 @@ def append_glyph(font, td, name, cs, fd_index, width, lsb=None, vdonor=None):
         width, charstring_lsb(cs) if lsb is None else lsb)
     if "vmtx" in font and vdonor is not None:
         font["vmtx"].metrics[name] = font["vmtx"].metrics[vdonor]
+    note_redrawn(font, [name])
+    appended = getattr(font, "_appended", None)
+    if appended is None:
+        appended = font._appended = set()
+    appended.add(name)
     font.setGlyphOrder(order)
     if hasattr(font, "_reverseGlyphOrderDict"):
         del font._reverseGlyphOrderDict
@@ -690,13 +722,14 @@ def import_scp_variants(base, scp, default_map):
 
 
 def copy_line_metrics(base, ref):
-    """Keep SHCJ's vertical rhythm and width metadata — the rendered line
-    height and how font pickers classify the font must not change."""
+    """Keep SHCJ's vertical rhythm — the rendered line height must not
+    change. Width metadata (isFixedPitch, PANOSE proportion, xAvgCharWidth,
+    x/cap height) is NOT copied: SHCJ declares itself proportional, which
+    hides it from monospace-only font pickers; see set_monospace_metadata()."""
     for tbl, attrs in (
         ("hhea", ("ascent", "descent", "lineGap")),
         ("OS/2", ("sTypoAscender", "sTypoDescender", "sTypoLineGap",
-                  "usWinAscent", "usWinDescent", "xAvgCharWidth")),
-        ("post", ("isFixedPitch",)),
+                  "usWinAscent", "usWinDescent")),
     ):
         for a in attrs:
             setattr(base[tbl], a, getattr(ref[tbl], a))
@@ -850,6 +883,7 @@ def fit_halfwidth_forms(font, cell, glyph_names=None):
             pen.getCharString(private=private)
         hmtx.metrics[name] = (cell, lsb + shift)
         done.add(name)
+    note_redrawn(font, done)
     return len(done)
 
 
@@ -877,15 +911,18 @@ def widen_fullwidth(font, cell):
         hmtx.metrics[name] = (full, lsb + shift)
     for name, cs in new_cs.items():
         td.CharStrings.charStringsIndex[td.CharStrings.charStrings[name]] = cs
+    note_redrawn(font, new_cs)
 
 
-# name IDs we own; everything else (0 Copyright, 5 Version, 7 Trademark,
-# 13/14 License) is inherited from the base font — dropping those would
-# strip the OFL notice the fonts are distributed under.
-OWNED_NAME_IDS = (1, 2, 3, 4, 6, 16, 17)
+# name IDs we rewrite. 0 (Copyright) and 9 (Designer) are rebuilt FROM the
+# inherited Source Han Sans strings plus the other donors' — every OFL
+# notice stays, ours is prepended. 5 Version, 7 Trademark, 13/14 License
+# are inherited untouched.
+OWNED_NAME_IDS = (0, 1, 2, 3, 4, 6, 8, 9, 11, 16, 17)
 
 
-def set_names(font, suffix, weight, italic, italic_angle=-12.0, version=None):
+def set_names(font, suffix, weight, italic, italic_angle=-12.0, version=None,
+              credits=()):
     """Rewrite the family-identifying names, preserve the legal ones.
 
     `version` (SHOYU_VERSION, e.g. "3.1.0") stamps our own release version
@@ -893,6 +930,14 @@ def set_names(font, suffix, weight, italic, italic_angle=-12.0, version=None):
     our version and the inherited Source Han Sans revision, and the CFF
     version matches head. Left None (the default), the inherited SHS
     revision is kept as-is — today's behaviour, used for CI builds.
+
+    `credits`: [(donor label, copyright text, designer text), ...] for the
+    donors other than Source Han Sans (whose own strings are inherited in
+    the base font's name table) — appended to name IDs 0 and 9 so the
+    Source Code Pro and Monaspace notices ship inside the font, not only
+    in LICENSE. Also drops Source Han Sans's DSIG (a signature over bytes
+    that no longer exist) and replaces Adobe's vendor identity (nameID
+    8/11, OS/2 achVendID) with the project's.
     """
     base_family = ("Shoyu Code Pro JP " + suffix).strip()
     ribbi = weight in ("Regular", "Bold")
@@ -903,15 +948,11 @@ def set_names(font, suffix, weight, italic, italic_angle=-12.0, version=None):
     ps = f"{psfam}-{weight}{'Italic' if italic else ''}"
     full = f"{family} {sub}".replace(" Regular", "").strip()
     name = font["name"]
+    shs_copyright = name.getDebugName(0) or ""
+    shs_designer = name.getDebugName(9) or ""
     # drop stale records for the IDs we own (every platform/encoding), so
     # the base font's Source Han Sans strings can't survive alongside ours
     name.names = [n for n in name.names if n.nameID not in OWNED_NAME_IDS]
-    for nid, val in ((1, family), (2, sub), (3, f"{ps};shoyu-code-pro-jp"),
-                     (4, full), (6, ps),
-                     (16, base_family),
-                     (17, (weight + (" Italic" if italic else ""))
-                          .replace("Regular Italic", "Italic"))):
-        name.setName(val, nid, 3, 1, 0x409)
     # version: SHOYU_VERSION (set) stamps our own release version and notes
     # the inherited SHS revision alongside it; unset (CI builds) keeps that
     # inherited revision as-is, as before.
@@ -922,10 +963,33 @@ def set_names(font, suffix, weight, italic, italic_angle=-12.0, version=None):
         font["head"].fontRevision = float(cff_version)
         version_str = (f"Version {version};Shoyu Code Pro JP;"
                        f"SHS {shs_rev:.3f}")
+        unique_version = version
     else:
         cff_version = f"{shs_rev:.3f}"
         version_str = f"Version {shs_rev:.3f};Shoyu Code Pro JP"
-    name.setName(version_str, 5, 3, 1, 0x409)
+        unique_version = cff_version
+    copyright_parts = [f"Shoyu Code Pro JP: {PROJECT_COPYRIGHT}.",
+                       f"Source Han Sans: {shs_copyright}"]
+    designer_parts = [shs_designer]
+    for label, notice, designer in credits:
+        if notice:
+            copyright_parts.append(f"{label}: {notice}")
+        if designer:
+            designer_parts.append(f"{label}: {designer}")
+    for nid, val in ((0, " ".join(copyright_parts)),
+                     (1, family), (2, sub),
+                     (3, f"{unique_version};{VENDOR_ID};{ps}"),
+                     (4, full), (5, version_str), (6, ps),
+                     (8, "hn-11"), (9, "; ".join(p for p in designer_parts if p)),
+                     (11, PROJECT_URL),
+                     (16, base_family),
+                     (17, (weight + (" Italic" if italic else ""))
+                          .replace("Regular Italic", "Italic"))):
+        name.setName(val, nid, 3, 1, 0x409)
+    font["OS/2"].achVendID = VENDOR_ID
+    font["OS/2"].usWeightClass = WEIGHT_CLASS[weight]
+    if "DSIG" in font:
+        del font["DSIG"]
     cff = font["CFF "].cff
     cff.fontNames[0] = ps
     td = cff.topDictIndex.items[0]
@@ -947,6 +1011,13 @@ def set_names(font, suffix, weight, italic, italic_angle=-12.0, version=None):
         fsel |= 0x20
     if not italic and not bold:
         fsel |= 0x40
+    # WWS (bit 8): every face is fully described by weight/width/slope
+    # names, which is what lets DirectWrite group the 12 faces under one
+    # typographic family (nameID 16/17). The bit exists from OS/2 v4 on;
+    # v4 adds nothing else to the v3 layout Source Han Sans ships.
+    fsel |= 0x100
+    if font["OS/2"].version < 4:
+        font["OS/2"].version = 4
     font["OS/2"].fsSelection = fsel
     mac = font["head"].macStyle & ~0x3  # clear Bold(0)/Italic(1)
     if bold:
@@ -981,17 +1052,20 @@ def mona_baseline_shift(font, mona, k=MONA_K):
                  - glyph_vcenter(mona, mona.getBestCmap()[ord("=")], k))
 
 
-# standalone operators redrawn from Monaspace so they match the ligatures
-# built from the same outlines. Each of these visibly disagreed with its
-# ligature: '=' vs '==' in bar gap (SCP 170u, Monaspace 219u), '<' '>' vs
-# '<=' '>=' in size and angle, '|' vs '||' in vertical extent (SCP's bar
-# hangs 80u lower), '~' vs '~>' in amplitude. All four fit SCP's cell and
-# vertical scheme within a few units. Left as SCP: '-' (Monaspace's is
-# 132u shorter than the '=' it now sits beside), '!' (Monaspace's cap
-# height overshoots SCP's capitals), ':' (the ligatures use the raised
-# colon.case, so a swap buys nothing), '/' (would need '\' too), and the
-# rest of the punctuation whose skeletons simply differ.
-MONA_STANDALONE = "=<>|~"
+# Standalone ASCII punctuation redrawn from Monaspace so it matches the
+# ligatures cut from the same instance — every one of the 32 symbols;
+# letters and digits stay Source Code Pro. The first five ('=' '<' '>'
+# '|' '~') differed from their ligatures in shape ('=' vs '==' bar gap,
+# SCP 170u / Monaspace 219u; '<' vs '<=' size and angle; '|' vs '||'
+# vertical extent; '~' vs '~>' amplitude). The rest differ mostly in
+# vertical size: Monaspace's cap height and x-height sit above SCP's, so
+# '!' '&' '?' ':' ';' rise 16-67u, brackets and '#' '@' '$' are 60-150u
+# taller and up to 96u wider — all still inside the cell, and under two
+# pixels at terminal sizes, whereas a '#' beside '#[' or a '-' beside '->'
+# in a different skeleton was the visible seam. '-' is 124u narrower than
+# '=' (so is Monaspace's own). SCP's cv14/cv15/cv16 variants still swap
+# '-' '*' '$' back to SCP's typographic forms when a user turns them on.
+MONA_STANDALONE = string.punctuation   # !"#$%&'()*+,-./:;<=>?@[\]^_`{|}~
 
 
 def replace_from_mona(font, mona, chars=MONA_STANDALONE, dy=None):
@@ -1019,6 +1093,7 @@ def replace_from_mona(font, mona, chars=MONA_STANDALONE, dy=None):
         cs = pen.getCharString(private=private)
         td.CharStrings.charStringsIndex[td.CharStrings.charStrings[name]] = cs
         font["hmtx"].metrics[name] = (adv, charstring_lsb(cs))
+        note_redrawn(font, [name])
         replaced.append(ch)
     return replaced
 
@@ -1119,12 +1194,19 @@ def _guard_subtables(font, gsub, ligatures, lig_lookup):
       d. seq followed by the tail of another ligature that starts with
          seq's last glyph                         ('<|' before '>')
 
-    then one rule applying `lig_lookup` at any ligature's first glyph.
-    Returns the subtables in that order; HarfBuzz tries them in order and
-    the first match wins, so a guard that fires consumes the run before
-    the ligature rule ever sees it."""
+    then one rule PER LIGATURE whose input sequence is the whole ligature,
+    applying `lig_lookup` at its first glyph — longest first. Returns the
+    subtables in that order; shapers try them in order and the first match
+    wins, so a guard that fires consumes the run before any trigger rule
+    sees it.
+
+    The trigger's input must cover every component. A single one-glyph
+    rule that lets the nested LigatureSubst run on past the matched input
+    shapes fine in HarfBuzz (and fontkit) but not in DirectWrite — Windows
+    Terminal rendered '->' plain — because what a nested lookup may consume
+    beyond the input sequence is undefined by OpenType. Monaspace's own
+    calt is built the way this is: input length == ligature length."""
     seqs = {tuple(k) for k in ligatures}
-    firsts = sorted({k[0] for k in seqs})
     builder = otl.ChainContextSubstBuilder(font, None)
     Rule = otl.ChainContextualRule
     seen = set()   # a and c (or b and d) can derive the same guard twice
@@ -1145,7 +1227,10 @@ def _guard_subtables(font, gsub, ligatures, lig_lookup):
                 ignore(other[:-1], seq, ())                       # c
             if other[0] == seq[-1] and seq + other[1:] not in seqs:
                 ignore((), seq, other[1:])                        # d
-    builder.rules.append(Rule([], [set(firsts)], [], [[_LookupRef(lig_lookup)]]))
+    for seq in sorted(seqs, key=len, reverse=True):
+        builder.rules.append(Rule([], [{g} for g in seq], [],
+                                  [[_LookupRef(lig_lookup)]]
+                                  + [None] * (len(seq) - 1)))
     return builder.build().SubTable
 
 
@@ -1407,8 +1492,7 @@ def rescale(font, cell, ky=None, also_rescale=()):
         hmtx.metrics[name] = (new_adv, round(lsb * k))
     for name, cs in new_cs.items():  # swap after drawing everything
         td.CharStrings.charStringsIndex[td.CharStrings.charStrings[name]] = cs
-    # the average follows the half-width layer it describes
-    font["OS/2"].xAvgCharWidth = round(font["OS/2"].xAvgCharWidth * k)
+    note_redrawn(font, new_cs)
 
 
 def update_bbox(font):
@@ -1435,6 +1519,182 @@ def update_bbox(font):
     head = font["head"]
     head.xMin, head.yMin, head.xMax, head.yMax = box
     return box
+
+
+def classify_marks(font, marks):
+    """GDEF: the 0-advance combining marks grafted from SCP are class 3
+    (Mark). Left as class 1 they are 'zero-width bases' — shapers would
+    treat them as letters in their own right (mark-skipping lookups stop
+    on them, cursor placement counts them). Only OUR grafted marks are
+    touched; Source Han Sans's own classification (U+3099 etc.) stays."""
+    if "GDEF" not in font or not marks:
+        return
+    gdef = font["GDEF"].table
+    if gdef.GlyphClassDef is None:
+        gdef.GlyphClassDef = otTables.GlyphClassDef()
+        gdef.GlyphClassDef.classDefs = {}
+    for g in marks:
+        gdef.GlyphClassDef.classDefs[g] = 3
+
+
+def set_monospace_metadata(font):
+    """Declare the font monospaced, the way HackGen / PlemolJP do for the
+    same two-width (1:2 / 2:3) CJK layout: post.isFixedPitch and PANOSE
+    proportion 9 are what Windows Terminal's font picker and GDI's
+    FIXED_PITCH filter read — SHCJ's inherited 0 hid the fonts there.
+    xAvgCharWidth follows OS/2 v3+'s definition (mean of every non-zero
+    advance) instead of SHCJ's stale number."""
+    font["post"].isFixedPitch = 1
+    font["OS/2"].panose.bProportion = 9
+    font["OS/2"].recalcAvgCharWidth(font)
+
+
+def _bounds(gs, name):
+    pen = BoundsPen(gs)
+    gs[name].draw(pen)
+    return pen.bounds
+
+
+def set_latin_heights(font):
+    """OS/2 sxHeight / sCapHeight measured on the face's own 'x' and 'H'.
+    Source Han Sans's values described ITS Latin (543 / 733); the 600-cell
+    families carry SCP at native size (488 / 655), and CSS font-size-adjust
+    or a terminal sizing icons to the cap height would be off by 12%."""
+    cmap = font.getBestCmap()
+    gs = font.getGlyphSet()
+    font["OS/2"].sxHeight = round(_bounds(gs, cmap[ord("x")])[3])
+    font["OS/2"].sCapHeight = round(_bounds(gs, cmap[ord("H")])[3])
+
+
+def latin_blue_zones(font):
+    """Alignment zones and standard stems for the grafted Latin, measured
+    on the final outlines: (BlueValues, OtherBlues, StdHW, StdVW).
+
+    Zones (bottom, top), flat edge paired with the round overshoot:
+    baseline 'o'/0, x-height 'x'/'o', cap 'H'/'O', ascender 'd' (flat
+    only); OtherBlues: descender 'p' flat / 'g' round. StdHW is the '='
+    bar the whole weight pairing is keyed on; StdVW the '|' stem."""
+    cmap = font.getBestCmap()
+    gs = font.getGlyphSet()
+
+    def top(ch):
+        return _bounds(gs, cmap[ord(ch)])[3]
+
+    def bottom(ch):
+        return _bounds(gs, cmap[ord(ch)])[1]
+
+    def zone(a, b):
+        a, b = round(a), round(b)
+        return (min(a, b), max(a, b))
+
+    zones = sorted([zone(bottom("o"), 0), zone(top("x"), top("o")),
+                    zone(top("H"), top("O")), zone(top("d"), top("d"))])
+    blues = []
+    for b, t in zones:
+        if blues and b <= blues[-1] + 1:   # overlapping zones are illegal
+            continue
+        blues += [b, t]
+    other = zone(bottom("g"), bottom("p"))
+    bar = _bounds(gs, cmap[ord("|")])
+    return (blues, list(other),
+            round(bar_thickness(font, cmap[ord("=")])),
+            round(bar[2] - bar[0]))
+
+
+def add_latin_fd(font):
+    """Give every glyph we appended its own CID FontDict, a copy of the
+    Source Han Sans Latin one with the alignment zones re-measured on OUR
+    outlines (latin_blue_zones). Autohinting reads zones from the FD; SHS's
+    zones (x-height 543, cap 733) miss SCP's (488 / 655 at 600, 539 / 729
+    at 667) and the hints would snap to nothing. Returns the FD index."""
+    cff = font["CFF "].cff
+    td = cff[cff.fontNames[0]]
+    cmap = font.getBestCmap()
+    src = td.FDArray[td.FDSelect[font.getGlyphID(cmap[ord("A")])]]
+    fd = copy.deepcopy(src)
+    fd.FontName = f"{cff.fontNames[0]}-Latin"
+    private = fd.Private
+    blues, other, std_hw, std_vw = latin_blue_zones(font)
+    for key in ("FamilyBlues", "FamilyOtherBlues", "StemSnapH", "StemSnapV",
+                "BlueValues", "OtherBlues", "StdHW", "StdVW"):
+        private.rawDict.pop(key, None)
+        if key in private.__dict__:
+            delattr(private, key)
+    private.BlueValues = blues
+    private.OtherBlues = other
+    private.StdHW = std_hw
+    private.StdVW = std_vw
+    private.StemSnapH = [std_hw]
+    private.StemSnapV = [std_vw]
+    td.FDArray.append(fd)
+    index = len(td.FDArray) - 1
+    # only glyphs append_glyph() created: Source Han Sans's own glyphs also
+    # live above CID_ALLOC_START (its CID space is sparse) and call THEIR
+    # FD's subroutines, so a CID-range test would corrupt them
+    for name in getattr(font, "_appended", ()):
+        td.FDSelect.gidArray[font.getGlyphID(name)] = index
+    print(f"  Latin FD {index}: blues {blues} other {other} "
+          f"StdHW {std_hw} StdVW {std_vw}")
+    return index
+
+
+def add_stat(font, weight, italic):
+    """STAT for a static face: ONE value per axis, this face's own (wght
+    from WEIGHT_CLASS, ital 0/1). Regular links to Bold and upright to
+    Italic (Format 3, elidable), the rest are plain Format 1. A static
+    font that lists the whole family's values instead confuses Windows'
+    family model (fontbakery: multiple-STAT-entries)."""
+    wght = WEIGHT_CLASS[weight]
+    wght_value = {"value": wght, "name": weight}
+    if weight == "Regular":
+        wght_value.update(flags=0x2, linkedValue=WEIGHT_CLASS["Bold"])
+    ital_value = ({"value": 1, "name": "Italic"} if italic else
+                  {"value": 0, "name": "Regular", "flags": 0x2, "linkedValue": 1})
+    axes = [{"tag": "wght", "name": "Weight", "values": [wght_value]},
+            {"tag": "ital", "name": "Italic", "values": [ital_value]}]
+    otl.buildStatTable(font, axes, elidedFallbackName="Regular",
+                       macNames=False)
+
+
+def subroutinize_face(path):
+    """CFF subroutinization (cffsubr = AFDKO tx). Every charstring we
+    generate is flat, and Term regenerates all 17k full-width ones; with
+    hints on top the face grew 44%. tx folds the repetition back into
+    subroutines — smaller than the v3.2.0 files — and keeps the hints."""
+    import cffsubr
+    font = TTFont(path)
+    cffsubr.subroutinize(font)
+    font.save(path)
+
+
+def autohint_face(path, glyph_names):
+    """Hint the glyphs we (re)drew with AFDKO's otfautohint, in place.
+
+    Restricted to `glyph_names` (note_redrawn): Source Han Sans's own
+    hints on untouched glyphs are kept as shipped, and the run stays
+    seconds for the 667 family (grafted Latin only) instead of minutes.
+    SHOYU_SKIP_AUTOHINT=1 skips it for quick local iterations."""
+    if os.environ.get("SHOYU_SKIP_AUTOHINT"):
+        print("  autohint skipped (SHOYU_SKIP_AUTOHINT)")
+        return
+    if not glyph_names:
+        return
+    path = Path(path)
+    with tempfile.TemporaryDirectory() as tmp:
+        listing = Path(tmp) / "glyphs.txt"
+        listing.write_text(",".join(sorted(glyph_names)))
+        out = Path(tmp) / path.name
+        cmd = [sys.executable, "-m", "afdko.otfautohint",
+               "--glyphs-file", str(listing), "-o", str(out), str(path)]
+        proc = subprocess.run(cmd, stdout=subprocess.PIPE, check=False,
+                              stderr=subprocess.STDOUT, text=True)
+        if proc.returncode != 0 or not out.exists():
+            raise RuntimeError(f"otfautohint failed for {path.name}:\n"
+                               f"{proc.stdout[-2000:]}")
+        warnings = [ln for ln in proc.stdout.splitlines()
+                    if "WARNING" in ln or "ERROR" in ln]
+        shutil.move(str(out), str(path))
+    print(f"  autohint: {len(glyph_names)} glyphs, {len(warnings)} warnings")
 
 
 def face_matches(only, weight, face_label, suffix):
@@ -1464,6 +1724,7 @@ def build_face(job):
     scp = scp_src.matched(target)
     base = TTFont(Path(env["SHS_DIR"]) / shs_file)
     n_scp, n_ref, default_map, marks = graft_halfwidth(base, scp, ref)
+    classify_marks(base, marks)
     variant_maps, variant_names = import_scp_variants(base, scp, default_map)
     copy_line_metrics(base, ref)
     # the outlines' real slant lives in the SCP Italic instance; SHCJ's
@@ -1495,12 +1756,23 @@ def build_face(job):
     # OS/2 Unicode / code-page range bits, from the now-final cmap
     base["OS/2"].recalcUnicodeRanges(base)
     recalc_codepage_range(base)
+    set_monospace_metadata(base)
+    set_latin_heights(base)
+    add_latin_fd(base)
+    credits = [(label, donor["name"].getDebugName(0)
+                or donor["name"].getDebugName(7),
+                donor["name"].getDebugName(9))
+               for label, donor in (("Source Code Pro", scp),
+                                    ("Monaspace", mona))]
     ps = set_names(base, suffix, weight, italic,
                    ref_angle if ref_angle is not None else -12.0,
-                   version=env.get("SHOYU_VERSION"))
+                   version=env.get("SHOYU_VERSION"), credits=credits)
+    add_stat(base, weight, italic)
     update_bbox(base)
     out = Path(out_dir) / f"{ps}.otf"
     base.save(out)
+    autohint_face(out, getattr(base, "_redrawn", set()))
+    subroutinize_face(out)
     return (f"{face_label}{f' [{suffix}]' if suffix else ''}: "
             f"scp={n_scp} shcj={n_ref} ligs={len(added)} -> {out.name}")
 

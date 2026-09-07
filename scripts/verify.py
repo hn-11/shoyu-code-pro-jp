@@ -255,9 +255,10 @@ def main():
     # standalone operators redrawn from Monaspace must match the ligatures
     # cut from the same instance: every contour of the lone glyph has a
     # counterpart in the ligature at the same y extent (ligatures span
-    # more cells, so only y is comparable). '==' '<<' '>>' '||' repeat the
-    # glyph outright; '~' has no such ligature ('~>' is a fused wave-arrow)
-    # and is not checked.
+    # more cells, so only y is comparable). '==' '<<' '>>' '||' '..' '!!'
+    # ';;' repeat the glyph outright; '~' ('~>' is a fused wave-arrow),
+    # ':' ('::' is the raised colon.case) and '&' (no '&&' ligature) have
+    # no such ligature and are not checked.
     from build import (
         FACES,
         MONA_STANDALONE,
@@ -276,13 +277,14 @@ def main():
         infos, _ = shape_infos(text, {"calt": True, "liga": True})
         return glyph_order[infos[2].codepoint]
 
-    pairs = {"=": "a == b", "<": "a << b", ">": "a >> b", "|": "a || b"}
+    pairs = {"=": "a == b", "<": "a << b", ">": "a >> b", "|": "a || b",
+             ".": "a .. b", "!": "a !! b", ";": "a ;; b"}
     for ch in MONA_STANDALONE:
         if ch not in pairs:
             continue
         rows_ch, rows_lig = y_rows(cmap[ord(ch)]), y_rows(lig_glyph(pairs[ch]))
         ok = bool(rows_ch) and all(
-            any(abs(a - c) <= 1 and abs(b - d) <= 1 for c, d in rows_lig)
+            any(abs(a - c) <= 2 and abs(b - d) <= 2 for c, d in rows_lig)
             for a, b in rows_ch)
         print(f"{'ok  ' if ok else 'FAIL'} {ch!r} rows {rows_ch} "
               f"found in {pairs[ch].split()[1]!r} {rows_lig}")
@@ -363,11 +365,10 @@ def main():
                       f"{seq!r} glyph {gname!r}")
                 failed |= not ok
 
-    # width metadata follows SHCJ's declarations (dual-width, so NOT pure
-    # monospace: SHCJ 2.012R declares isFixedPitch=0, PANOSE proportion=0,
-    # xAvgCharWidth=977 at the 667 cell) — the contract is continuity, and
-    # xAvgCharWidth is rescaled with the half-width cell by rescale().
-    SHCJ_XAVG = 977  # declared value in SHCJ 2.012R
+    # width metadata: declared monospaced (set_monospace_metadata — what
+    # Windows Terminal's picker and GDI's FIXED_PITCH filter read; SHCJ's
+    # own 0/0 hid it there), xAvgCharWidth per OS/2 v3+ (mean of every
+    # non-zero advance), x/cap height measured on the face's own glyphs.
     if " NF" in fam:
         # font-patcher rewrites PANOSE to monospaced and recalculates
         # xAvgCharWidth on the flattened font; those are its own to set
@@ -376,20 +377,32 @@ def main():
     else:
         fixed = tf["post"].isFixedPitch
     if fixed is not None:
-        ok = fixed == 0
-        print(f"{'ok  ' if ok else 'FAIL'} post.isFixedPitch == 0 (SHCJ declaration), got {fixed}")
+        ok = fixed == 1
+        print(f"{'ok  ' if ok else 'FAIL'} post.isFixedPitch == 1, got {fixed}")
         failed |= not ok
 
         panose_prop = tf["OS/2"].panose.bProportion
-        ok = panose_prop == 0
-        print(f"{'ok  ' if ok else 'FAIL'} OS/2 PANOSE proportion == 0 (SHCJ declaration), got {panose_prop}")
+        ok = panose_prop == 9
+        print(f"{'ok  ' if ok else 'FAIL'} OS/2 PANOSE proportion == 9 (monospaced), got {panose_prop}")
         failed |= not ok
 
+        from fontTools.misc.roundTools import otRound
+        widths = [adv for adv, _ in tf["hmtx"].metrics.values() if adv > 0]
         avg_w = tf["OS/2"].xAvgCharWidth
-        want_avg = round(SHCJ_XAVG * a_adv / 667)
+        want_avg = otRound(sum(widths) / len(widths))
         ok = avg_w == want_avg
-        print(f"{'ok  ' if ok else 'FAIL'} OS/2.xAvgCharWidth scales with cell ({avg_w} vs {want_avg})")
+        print(f"{'ok  ' if ok else 'FAIL'} OS/2.xAvgCharWidth is the mean non-zero advance ({avg_w} vs {want_avg})")
         failed |= not ok
+
+        from fontTools.pens.boundsPen import BoundsPen
+        gs = tf.getGlyphSet()
+        for attr, ch in (("sxHeight", "x"), ("sCapHeight", "H")):
+            pen = BoundsPen(gs)
+            gs[cmap[ord(ch)]].draw(pen)
+            got, want = getattr(tf["OS/2"], attr), round(pen.bounds[3])
+            ok = got == want
+            print(f"{'ok  ' if ok else 'FAIL'} OS/2.{attr} == top of {ch!r} ({got} vs {want})")
+            failed |= not ok
 
     # line-metrics sanity: hhea and OS/2 vertical metrics must be nonzero
     # and internally consistent

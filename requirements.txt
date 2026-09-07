@@ -1,3 +1,5 @@
 fonttools>=4.50,<5
 uharfbuzz>=0.39,<1
 skia-pathops>=0.8,<1
+afdko>=5,<6
+cffsubr>=0.3,<1
