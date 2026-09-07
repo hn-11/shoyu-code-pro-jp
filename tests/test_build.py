@@ -137,13 +137,13 @@ def test_ligature_schema():
 def test_every_group_has_a_ui_name():
     groups = {spec["group"] for spec in build.load_ligatures().values()}
     assert groups <= set(build.GROUP_NAMES), "group without a UI name"
-    # cv99 is authored too, and no name goes unused
-    assert set(build.GROUP_NAMES) == groups | {"cv99"}
+    # cv99 and ss09 (width alternates) are authored too; no name goes unused
+    assert set(build.GROUP_NAMES) == groups | {"cv99", "ss09"}
 
 
 def test_ui_names_are_nonempty_ascii():
     for tag, name in build.GROUP_NAMES.items():
-        assert tag in KNOWN_GROUPS or tag.startswith("cv"), tag
+        assert tag in KNOWN_GROUPS or tag == "ss09" or tag.startswith("cv"), tag
         assert name and name.strip() == name, tag
         assert name.isascii(), tag
 
@@ -746,3 +746,51 @@ def test_set_names():
     assert os2.fsSelection & 0x100   # WWS
     assert not os2.fsSelection & 0x40   # regular clear
     assert os2.version >= 4
+
+
+# --- stretch_path (full-width arrows from Monaspace) ---------------------
+
+def _arrow_path(axis):
+    """Shaft 100 long x 20 thick plus a triangular head, along `axis`."""
+    import pathops
+    path = pathops.Path()
+    pen = path.getPen()
+    pts = [(0, -10), (100, -10), (100, -30), (140, 0), (100, 30), (100, 10),
+           (0, 10)]
+    if axis == 1:
+        pts = [(y, x) for x, y in pts]
+    pen.moveTo(pts[0])
+    for pt in pts[1:]:
+        pen.lineTo(pt)
+    pen.closePath()
+    return path
+
+
+@pytest.mark.parametrize("axis", [0, 1])
+def test_stretch_path_lengthens_only_the_shaft(axis):
+    src = _arrow_path(axis)
+    out = build.stretch_path(src, axis, 60)
+    b0, b1 = src.bounds, out.bounds
+    if axis == 0:
+        assert b1[2] - b1[0] == pytest.approx((b0[2] - b0[0]) + 60)
+        assert (b1[1], b1[3]) == pytest.approx((b0[1], b0[3]))
+    else:
+        assert b1[3] - b1[1] == pytest.approx((b0[3] - b0[1]) + 60)
+        assert (b1[0], b1[2]) == pytest.approx((b0[0], b0[2]))
+    # the gap is filled with the shaft's own cross-section (20 thick)
+    assert abs(out.area) == pytest.approx(abs(src.area) + 60 * 20)
+
+
+def test_stretch_path_noop_when_nothing_to_add():
+    src = _arrow_path(0)
+    assert build.stretch_path(src, 0, 0) is src
+
+
+@pytest.mark.parametrize("axis", [0, 1])
+def test_stretch_path_shortens_the_shaft(axis):
+    src = _arrow_path(axis)
+    out = build.stretch_path(src, axis, -40)
+    b0, b1 = src.bounds, out.bounds
+    length = (lambda b: b[2] - b[0]) if axis == 0 else (lambda b: b[3] - b[1])
+    assert length(b1) == pytest.approx(length(b0) - 40)
+    assert abs(out.area) == pytest.approx(abs(src.area) - 40 * 20)

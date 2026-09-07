@@ -290,13 +290,54 @@ def main():
               f"found in {pairs[ch].split()[1]!r} {rows_lig}")
         failed |= not ok
 
+    # width alternates of the ligature-paired symbols (← → ≠ … etc.):
+    # 2:3 / 35 default to full width with the arrows redrawn from
+    # Monaspace (same head as '->'), and hwid / ss09 give the one-cell
+    # form; Term defaults to one cell and fwid gives the full-width form.
+    from build import ARROWS_H, MONA_AMBIGUOUS
+    fam_tokens = [t for t in fam.split(" ") if t != "NF"]
+
+    def advance_of(text, feats):
+        _, positions = shape_infos(text, feats)
+        return positions[0].x_advance
+
+    full_adv = expected_metrics(tf)[1]
+    is_term = "Term" in fam_tokens
+    for ch in MONA_AMBIGUOUS:
+        if is_term:
+            got_default, got_alt = advance_of(ch, {}), advance_of(ch, {"fwid": True})
+            ok = got_default == a_adv and got_alt == full_adv
+            print(f"{'ok  ' if ok else 'FAIL'} {ch!r} default {got_default} "
+                  f"(want {a_adv}), fwid {got_alt} (want {full_adv})")
+        else:
+            got_default = advance_of(ch, {})
+            got_h, got_s = advance_of(ch, {"hwid": True}), advance_of(ch, {"ss09": True})
+            ok = got_default == full_adv and got_h == a_adv and got_s == a_adv
+            print(f"{'ok  ' if ok else 'FAIL'} {ch!r} default {got_default} "
+                  f"(want {full_adv}), hwid {got_h} / ss09 {got_s} (want {a_adv})")
+        failed |= not ok
+    if not is_term:
+        # the full-width horizontal arrows are cut from the ligature they
+        # pair with (ARROW_SOURCE): same vertical extent, within 2u
+        from build import ARROW_SOURCE
+
+        def extent(rows):
+            return min(a for a, _ in rows), max(b for _, b in rows)
+        for ch in ARROWS_H:
+            seq = ARROW_SOURCE[ch][0]
+            lig_ymin, lig_ymax = extent(y_rows(lig_glyph(f"a {seq} b")))
+            ymin, ymax = extent(y_rows(cmap[ord(ch)]))
+            ok = abs(ymin - lig_ymin) <= 2 and abs(ymax - lig_ymax) <= 2
+            print(f"{'ok  ' if ok else 'FAIL'} {ch!r} y extent {ymin}..{ymax} "
+                  f"vs {seq!r} {lig_ymin}..{lig_ymax}")
+            failed |= not ok
+
     # stroke weight vs the SHCJ reference: the '=' bar our Latin layer was
     # weight-matched to should still measure the same after grafting,
     # rescaling etc. Only meaningful for families that pair to SHCJ's
     # weight at all — the "35" family deliberately keeps Source Code
     # Pro's native weight instead (see VARIANTS' comp flag in build.py).
     shcj_ttc = os.environ.get("SHCJ_TTC")
-    fam_tokens = [t for t in fam.split(" ") if t != "NF"]
     if shcj_ttc is None:
         print("skip  '=' bar vs SHCJ reference (SHCJ_TTC unset)")
     elif "35" in fam_tokens:

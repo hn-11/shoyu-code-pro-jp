@@ -161,6 +161,7 @@ GROUP_NAMES = {
     "ss06": "Dots",
     "ss07": "Comments",
     "ss08": "Repetition, logic & misc",
+    "ss09": "Half-width arrows & operators",
     "cv99": "Alternate ligature designs",
 }
 
@@ -772,6 +773,171 @@ def recalc_codepage_range(font):
 # 2:3 families these are full-width Source Han Sans glyphs that fill the
 # em, which a 600-unit arrow centered in 1000 would not.
 MONA_AMBIGUOUS = "←→↑↓⇐⇒⇔≠≤≥…"
+ARROWS_H = "←→⇐⇒⇔"   # shaft runs along x
+ARROWS_V = "↑↓"      # shaft runs along y
+
+
+def mona_onecell(font, cell, mona, chars=MONA_AMBIGUOUS):
+    """One-cell Monaspace glyphs for `chars` (those Monaspace has), at this
+    family's cell and weight instance, baseline-aligned like the ligatures.
+    Appends them and returns {codepoint: glyph name}; the cmap is NOT
+    touched — Term makes them the default (narrow_ambiguous), the 2:3 / 35
+    families expose them under hwid / ss09 (add_width_alternates)."""
+    cff = font["CFF "].cff
+    td = cff[cff.fontNames[0]]
+    cmap = font.getBestCmap()
+    fd_index = td.FDSelect[font.getGlyphID(cmap[ord("A")])]
+    private = td.FDArray[fd_index].Private
+    vdon = vmtx_donor(font, fullwidth=False)
+    mona_cm, mona_gs = mona.getBestCmap(), mona_glyphset(mona)
+    mona_k = cell / MONA_CELL
+    mona_dy = mona_baseline_shift(font, mona, mona_k)
+    out = {}
+    for ch in chars:
+        cp = ord(ch)
+        if cp not in cmap or cp not in mona_cm:
+            continue
+        pen = T2CharStringPen(pen_width(private, cell), mona_gs)
+        draw_clean([(mona_gs, mona_cm[cp],
+                     mona_transform(mona, 0, mona_dy, mona_k))], pen)
+        name = alloc_glyph_name(font)
+        append_glyph(font, td, name, pen.getCharString(private=private),
+                     fd_index, cell, None, vdon)
+        out[cp] = name
+    return out
+
+
+def _rect_path(x0, y0, x1, y1):
+    path = pathops.Path()
+    pen = path.getPen()
+    pen.moveTo((x0, y0))
+    pen.lineTo((x1, y0))
+    pen.lineTo((x1, y1))
+    pen.lineTo((x0, y1))
+    pen.closePath()
+    return path
+
+
+def _xform_path(path, matrix):
+    out = pathops.Path()
+    path.draw(TransformPen(out.getPen(), matrix))
+    return out
+
+
+def stretch_path(path, axis, extra):
+    """Change an arrow outline's length along `axis` (0 = x, 1 = y) by
+    `extra` units without touching its head or stroke. Lengthening: cut
+    at the midpoint of the ink, slide the far half out, fill the gap with
+    the shaft's own 2-unit cross-section scaled to the gap — so a double
+    shaft (⇒) stays a double shaft. Shortening (`extra` < 0): drop a
+    |extra|-long piece of shaft around the midpoint and close up. This
+    is how Monaspace's '-->' relates to '->'."""
+    if extra == 0:
+        return path
+    big = 1e5
+    x0, y0, x1, y1 = path.bounds
+    mid = (x0 + x1) / 2 if axis == 0 else (y0 + y1) / 2
+
+    def clip(a, b):   # slice of `path` between a and b along `axis`
+        rect = (_rect_path(a, -big, b, big) if axis == 0
+                else _rect_path(-big, a, big, b))
+        return pathops.op(path, rect, pathops.PathOp.INTERSECTION)
+
+    def shift(part, d):
+        return _xform_path(part, (1, 0, 0, 1, d, 0) if axis == 0
+                           else (1, 0, 0, 1, 0, d))
+
+    if extra > 0:
+        near = clip(-big, mid)
+        far = shift(clip(mid, big), extra)
+        slab = clip(mid - 1, mid + 1)
+        scale = (extra + 2) / 2          # 2 units wide -> extra + 2
+        t = (mid - 1) * (1 - scale)      # keep the near edge of the slab put
+        band = _xform_path(slab, (scale, 0, 0, 1, t, 0) if axis == 0
+                           else (1, 0, 0, scale, 0, t))
+        out = pathops.op(near, band, pathops.PathOp.UNION)
+    else:
+        cut = -extra
+        near = clip(-big, mid - cut / 2)
+        far = shift(clip(mid + cut / 2, big), -cut)
+        out = near
+    out = pathops.op(out, far, pathops.PathOp.UNION)
+    out.simplify()
+    return out
+
+
+# Full-width arrows are cut from the LIGATURE glyphs, not from Monaspace's
+# own arrow characters: Monaspace draws U+2192 smaller than its '->' (head
+# 516 vs 629 tall at our scale, centered higher), and the whole point is
+# that '→' beside '->' shares the head. (source ligature, transform).
+ARROW_SOURCE = {
+    "→": ("->", None), "←": ("<-", None),
+    "⇒": ("=>", None), "⇐": ("=>", "mirror"), "⇔": ("<=>", None),
+    "↑": ("->", "ccw"), "↓": ("->", "cw"),
+}
+
+
+def stretch_arrows(font, added, slant=0.0, chars=ARROWS_H + ARROWS_V):
+    """2:3 / 35 families: full-width arrows built from the ligature glyphs
+    (ARROW_SOURCE) so they share head and stroke with '->' '=>' '<=>',
+    but keep Source Han Sans's full-width advance and ink extent — the
+    shaft is shortened or lengthened (stretch_path) to SHS's ink length.
+    ⇐ mirrors '=>', ↑ ↓ rotate '->' and take SHS's height. Italic: the
+    slant is taken out before mirroring / rotating / resizing and put
+    back after, so a slanted vertical shaft stays straight. Replaces the
+    cmap default; returns {codepoint: (SHS glyph name, new glyph name)}."""
+    cff = font["CFF "].cff
+    td = cff[cff.fontNames[0]]
+    cmap = font.getBestCmap()
+    gs = font.getGlyphSet()
+    fd_index = td.FDSelect[font.getGlyphID(cmap[ord("A")])]
+    private = td.FDArray[fd_index].Private
+    vdon = vmtx_donor(font, fullwidth=True)
+    t = math.tan(math.radians(-slant))
+    swapped = {}
+    for ch in chars:
+        cp = ord(ch)
+        seq, op = ARROW_SOURCE[ch]
+        if cp not in cmap or seq not in added:
+            continue
+        old = cmap[cp]
+        adv = font["hmtx"][old][0]
+        shs = _bounds(gs, old)
+        if shs is None:
+            continue
+        path = pathops.Path()
+        gs[added[seq]].draw(TransformPen(path.getPen(), (1, 0, -t, 1, 0, 0)))
+        if op == "mirror":
+            path = _xform_path(path, (-1, 0, 0, 1, 0, 0))
+        elif op == "ccw":
+            path = _xform_path(path, (0, 1, -1, 0, 0, 0))
+        elif op == "cw":
+            path = _xform_path(path, (0, -1, 1, 0, 0, 0))
+        path.simplify()
+        axis = 0 if ch in ARROWS_H else 1
+        b = path.bounds
+        have = (b[2] - b[0]) if axis == 0 else (b[3] - b[1])
+        want = (shs[2] - shs[0]) if axis == 0 else (shs[3] - shs[1])
+        path = stretch_path(path, axis, want - have)
+        b = path.bounds
+        # center on the advance; keep the ligature's baseline alignment for
+        # horizontal arrows, take SHS's own vertical center for ↑ ↓
+        tx = adv / 2 - (b[0] + b[2]) / 2
+        ty = 0 if axis == 0 else (shs[1] + shs[3]) / 2 - (b[1] + b[3]) / 2
+        path = _xform_path(path, (1, 0, t, 1, tx + t * ty, ty))
+        pen = T2CharStringPen(pen_width(private, adv), gs)
+        path.draw(pen)
+        name = alloc_glyph_name(font)
+        append_glyph(font, td, name, pen.getCharString(private=private),
+                     fd_index, adv, None, vdon)
+        swapped[cp] = (old, name)
+    for table in font["cmap"].tables:
+        if table.isUnicode():
+            for cp, (_, name) in swapped.items():
+                if cp in table.cmap:
+                    table.cmap[cp] = name
+    print(f"  full-width arrows from the ligatures: {len(swapped)}")
+    return swapped
 
 
 def narrow_ambiguous(font, cell, scp, mona):
@@ -791,9 +957,11 @@ def narrow_ambiguous(font, cell, scp, mona):
         do with HackGen; `compatibility.ambiguousWidth: wide` (Windows
         Terminal) or the equivalent elsewhere gives them their two cells.
 
-    CJK (W/F) stays two cells; the original glyphs are untouched. Must run
-    BEFORE widen_fullwidth, i.e. while full-width is still 1000, and AFTER
-    rescale, so the imported glyphs land at the final cell size."""
+    CJK (W/F) stays two cells; the original glyphs are untouched (the
+    MONA_AMBIGUOUS ones come back under fwid, see add_width_alternates).
+    Must run BEFORE widen_fullwidth, i.e. while full-width is still 1000,
+    and AFTER rescale, so the imported glyphs land at the final cell size.
+    Returns {codepoint: (old full-width glyph, new one-cell glyph)}."""
     cff = font["CFF "].cff
     td = cff[cff.fontNames[0]]
     cmap = font.getBestCmap()
@@ -802,48 +970,40 @@ def narrow_ambiguous(font, cell, scp, mona):
     vdon = vmtx_donor(font, fullwidth=False)
     scp_cm, scp_gs = scp.getBestCmap(), scp.getGlyphSet()
     scp_k = cell / SCP_CELL
-    mona_cm, mona_gs = mona.getBestCmap(), mona_glyphset(mona)
-    # the ligature pass sized Monaspace for CELL; this font's cell may differ
-    mona_k = cell / MONA_CELL
-    mona_dy = mona_baseline_shift(font, mona, mona_k)
-    new_map = {}
-    made = {}  # (source, glyph) -> one-cell glyph (dedup shared sources)
-    n_mona = n_scp = n_wide = 0
+    onecell = mona_onecell(font, cell, mona)
+    n_mona = len(onecell)
+    swapped = {}
+    made = {}  # scp glyph -> one-cell glyph (dedup shared sources)
+    n_scp = n_wide = 0
     for cp, g in sorted(cmap.items()):
         if font["hmtx"][g][0] != FULLWIDTH:
             continue
         if unicodedata.east_asian_width(chr(cp)) in ("W", "F"):
             continue
-        if chr(cp) in MONA_AMBIGUOUS and cp in mona_cm:
-            src = ("mona", mona_cm[cp])
-        elif cp in scp_cm:
-            src = ("scp", scp_cm[cp])
-        else:
+        if cp in onecell:
+            swapped[cp] = (g, onecell[cp])
+            continue
+        if cp not in scp_cm:
             n_wide += 1
             continue
+        src = scp_cm[cp]
         if src not in made:
-            if src[0] == "mona":
-                pen = T2CharStringPen(pen_width(private, cell), mona_gs)
-                draw_clean([(mona_gs, src[1],
-                             mona_transform(mona, 0, mona_dy, mona_k))], pen)
-                n_mona += 1
-            else:
-                pen = T2CharStringPen(pen_width(private, cell), scp_gs)
-                draw_clean([(scp_gs, src[1], (scp_k, 0, 0, scp_k, 0, 0))], pen)
-                n_scp += 1
-            cs = pen.getCharString(private=private)
+            pen = T2CharStringPen(pen_width(private, cell), scp_gs)
+            draw_clean([(scp_gs, src, (scp_k, 0, 0, scp_k, 0, 0))], pen)
+            n_scp += 1
             name = alloc_glyph_name(font)
-            append_glyph(font, td, name, cs, fd_index, cell, None, vdon)
+            append_glyph(font, td, name, pen.getCharString(private=private),
+                         fd_index, cell, None, vdon)
             made[src] = name
-        new_map[cp] = made[src]
+        swapped[cp] = (g, made[src])
     for table in font["cmap"].tables:
         if table.isUnicode():
-            for cp, name in new_map.items():
+            for cp, (_, name) in swapped.items():
                 if cp in table.cmap:
                     table.cmap[cp] = name
     print(f"  ambiguous width: {n_mona} from Monaspace, {n_scp} from SCP, "
           f"{n_wide} left full-width")
-    return len(new_map)
+    return swapped
 
 
 HALFWIDTH_FORMS = (0xFF61, 0xFFDC)   # U+FF61-FFDC: half-width kana, ￩ etc.
@@ -1448,6 +1608,25 @@ def add_gsub(font, added, alts, variant_maps=None, ligatures=None,
     sort_feature_list(gsub)
 
 
+def add_width_alternates(font, hwid=None, fwid=None, ss09=None):
+    """Wire the width alternates of the MONA_AMBIGUOUS characters into
+    GSUB: {default glyph: alternate glyph} maps for hwid (2:3 / 35: the
+    one-cell Monaspace form), fwid (Term: the full-width Source Han Sans
+    form the default replaced) and ss09 (the arrow-only counterpart of
+    hwid, for users who don't want SHS's own half-width kana to follow).
+    hwid / fwid already exist in the Source Han Sans base; the new lookups
+    are merged into those records. Runs after add_gsub, so it re-sorts."""
+    gsub = font["GSUB"].table
+    for tag, mapping in (("hwid", hwid), ("fwid", fwid), ("ss09", ss09)):
+        if not mapping:
+            continue
+        lookup = _new_lookup(gsub, otl.buildSingleSubstSubtable(mapping))
+        index = _add_feature(gsub, tag, [lookup])
+        if tag == "ss09":
+            _set_feature_params(font, gsub, index, tag)
+    sort_feature_list(gsub)
+
+
 def rescaled_advance(adv, cell):
     """New advance for `adv` under a 667 -> `cell` rescale, or None when the
     glyph is left alone. Every whole number of half-width cells rescales —
@@ -1750,9 +1929,23 @@ def build_face(job):
         fit_halfwidth_forms(base, cell, glyph_names=hwid_500)
         drop_features(base, {"pwid", "palt"})
     if term:
-        # ambiguous-width first (adv==1000 probe), then widen CJK
-        narrow_ambiguous(base, cell, scp, mona)
+        # ambiguous-width first (adv==1000 probe), then widen CJK; the
+        # replaced full-width forms of the ligature-paired 11 stay
+        # reachable under fwid
+        swapped = narrow_ambiguous(base, cell, scp, mona)
         widen_fullwidth(base, cell)
+        add_width_alternates(base, fwid={
+            new: old for cp, (old, new) in swapped.items()
+            if chr(cp) in MONA_AMBIGUOUS})
+    else:
+        # full-width stays the default (SHCJ's look), but the arrows are
+        # redrawn from Monaspace at full width, and every ligature-paired
+        # symbol has a one-cell Monaspace form under hwid / ss09
+        onecell = mona_onecell(base, cell, mona)
+        stretch_arrows(base, added, ref_angle if ref_angle is not None else 0.0)
+        cmap_now = base.getBestCmap()
+        halfwidth = {cmap_now[cp]: name for cp, name in onecell.items()}
+        add_width_alternates(base, hwid=halfwidth, ss09=halfwidth)
     # OS/2 Unicode / code-page range bits, from the now-final cmap
     base["OS/2"].recalcUnicodeRanges(base)
     recalc_codepage_range(base)
