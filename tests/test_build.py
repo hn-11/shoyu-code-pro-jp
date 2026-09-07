@@ -31,9 +31,47 @@ import build  # noqa: E402
     ("liga", None),
     ("calt", None),
     ("kern", None),
+    ("ss10", "ss20"),   # ss01-ss10 all shift by +10
+    ("ss11", "ss11"),   # ss11+ is already in our own numbering: unchanged
+    ("ss17", "ss17"),
+    ("ssxx", None),     # not a digit suffix
+    ("case", None),
+    ("frac", None),
 ])
 def test_remap_scp_tag(tag, want):
     assert build._remap_scp_tag(tag) == want
+
+
+def test_group_names_all_remap_nontrivially():
+    """Invariant behind the explicit GROUP_NAMES skip in
+    import_scp_variants: every tag we author ourselves (GROUP_NAMES) is
+    exactly the shape _remap_scp_tag maps ssNN -> ss(NN+10) for (or, for
+    cv99, passes through unchanged) — none of them come back None. So if
+    an SCP font happened to carry a feature under one of our own tags
+    (ss01-ss09, cv99), _remap_scp_tag alone would NOT filter it out: it
+    would be remapped/kept just like any other SCP feature and collide
+    with the glyph variants Sumi Moji itself authors under that tag. That
+    is exactly why import_scp_variants must skip fr.FeatureTag in
+    GROUP_NAMES explicitly, before ever calling _remap_scp_tag."""
+    for tag in build.GROUP_NAMES:
+        assert build._remap_scp_tag(tag) is not None, tag
+
+
+# --- Latin donor face paths (LATIN_PROFILES) ------------------------------
+
+def test_latin_face_path_ship_regular_upright():
+    got = build.latin_face_path("dist/latin", "ship", "Regular", False)
+    assert got == Path("dist/latin") / "SumiMoji-Regular.otf"
+
+
+def test_latin_face_path_term_bold_italic():
+    got = build.latin_face_path("dist/latin", "term", "Bold", True)
+    assert got == Path("dist/latin") / "term" / "SumiMojiTerm-BoldItalic.otf"
+
+
+def test_latin_face_path_unknown_profile_raises():
+    with pytest.raises(KeyError):
+        build.latin_face_path("dist/latin", "bogus", "Regular", False)
 
 
 # --- CID allocation ------------------------------------------------------
@@ -752,6 +790,53 @@ def test_set_names():
     assert os2.fsSelection & 0x100   # WWS
     assert not os2.fsSelection & 0x40   # regular clear
     assert os2.version >= 4
+
+
+# --- donor_credits (Latin donor's own composed name IDs 0 / 9) -----------
+
+def test_donor_credits_parses_scp_and_monaspace_in_order():
+    font = _tt_font([".notdef", "A"], {ord("A"): "A"}, {"A": 600})
+    font["name"].setName(
+        "Sumi Moji: Copyright 2026 hn-11 (https://x). "
+        "Source Code Pro: © 2023 Adobe (http://www.adobe.com/), with "
+        "Reserved Font Name ‘Source’. "
+        "Monaspace: Copyright 2023 GitHub, Inc. "
+        "(https://github.com/githubnext/monaspace), with Reserved Font "
+        "Names 'Monaspace', 'Monaspace Argon'.",
+        0, 3, 1, 0x409)
+    font["name"].setName(
+        "Source Code Pro: Paul D. Hunt, Teo Tuominen; "
+        "Monaspace: Riley Cran and the Lettermatic Team",
+        9, 3, 1, 0x409)
+
+    credits = build.donor_credits(font)
+
+    assert [label for label, _, _ in credits] == ["Source Code Pro", "Monaspace"]
+    scp_label, scp_copyright, scp_designer = credits[0]
+    assert scp_copyright == (
+        "© 2023 Adobe (http://www.adobe.com/), with Reserved Font "
+        "Name ‘Source’.")
+    assert scp_designer == "Paul D. Hunt, Teo Tuominen"
+    mona_label, mona_copyright, mona_designer = credits[1]
+    assert mona_copyright.endswith("'Monaspace Argon'.")
+    assert mona_designer == "Riley Cran and the Lettermatic Team"
+
+
+def test_donor_credits_designers_none_when_name_id_9_absent():
+    font = _tt_font([".notdef", "A"], {ord("A"): "A"}, {"A": 600})
+    font["name"].setName(
+        "Sumi Moji: Copyright 2026 hn-11 (https://x). "
+        "Source Code Pro: © 2023 Adobe (http://www.adobe.com/), with "
+        "Reserved Font Name ‘Source’. "
+        "Monaspace: Copyright 2023 GitHub, Inc. "
+        "(https://github.com/githubnext/monaspace), with Reserved Font "
+        "Names 'Monaspace', 'Monaspace Argon'.",
+        0, 3, 1, 0x409)
+    # nameID 9 is never set on this font
+
+    credits = build.donor_credits(font)
+
+    assert [designer for _, _, designer in credits] == [None, None]
 
 
 # --- stretch_path (full-width arrows from Monaspace) ---------------------

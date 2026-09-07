@@ -55,26 +55,30 @@ jobs:
           curl -sSfL -o /tmp/FontPatcher.zip \
             https://github.com/ryanoasis/nerd-fonts/releases/download/${FONTPATCHER_TAG}/FontPatcher.zip
           unzip -qo /tmp/FontPatcher.zip -d FontPatcher
+      - run: python scripts/build_latin.py
       - run: python scripts/build.py
       - run: python scripts/verify.py dist/ShoyuCodeProJP-Regular.otf
       - run: python scripts/verify.py dist/ShoyuCodeProJP-Light.otf
       - run: python scripts/verify.py dist/ShoyuCodeProJP35-Heavy.otf
       - run: python scripts/verify.py dist/ShoyuCodeProJP-RegularItalic.otf
       - run: python scripts/verify.py dist/ShoyuCodeProJPTerm-Regular.otf
-      - run: python scripts/build_latin.py
       - run: python scripts/verify_latin.py dist/latin/SumiMoji-Regular.otf
       - run: python scripts/verify_latin.py dist/latin/SumiMoji-BoldItalic.otf
       - run: python scripts/nerdpatch.py FontPatcher
       - name: Verify a Nerd Font-patched output
         run: python scripts/verify.py dist/nerd/ShoyuCodeProJPTermNF-Regular.otf
+      - name: Verify the Sumi Moji Nerd Font-patched output
+        run: python scripts/verify_latin.py dist/nerd/latin/SumiMojiNF-Regular.otf
       - run: python scripts/makeotc.py
       - run: |
           cp LICENSE dist/LICENSE
           cp LICENSE dist/nerd/LICENSE
           cp LICENSE dist/latin/LICENSE
+          cp LICENSE dist/nerd/latin/LICENSE
           cd dist && zip -q ShoyuCodeProJP.zip *.otf LICENSE
           (cd latin && zip -q ../SumiMoji.zip *.otf LICENSE)
           cd nerd && zip -q ../ShoyuCodeProJP-NerdFont.zip *.otf LICENSE
+          (cd latin && zip -q ../../SumiMoji-NerdFont.zip *.otf LICENSE)
       - name: Extract changelog section for this tag
         run: |
           TAG="${{ inputs.tag || github.ref_name }}"
@@ -95,6 +99,8 @@ jobs:
             dist/ShoyuCodeProJP.zip
             dist/SumiMoji.zip
             dist/ShoyuCodeProJP-NerdFont.zip
+            dist/SumiMoji-NerdFont.zip
             dist/ShoyuCodeProJP.ttc
             dist/ShoyuCodeProJP35.ttc
             dist/ShoyuCodeProJPTerm.ttc
+            dist/SumiMoji.ttc

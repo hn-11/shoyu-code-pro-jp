@@ -1,118 +1,40 @@
-"""Unit tests for scripts/build_latin.py that need no font files."""
+"""Unit tests for scripts/build_latin.py that need no font files.
+
+build_latin.py no longer cuts the Latin layer out of the 35 faces; it
+assembles Sumi Moji from the Source Code Pro and Monaspace variable
+fonts directly (see the module docstring). These tests cover the pure
+logic left behind: zone-order repair on a CFF FDArray, the typo/win
+metrics helpers, per-family win-metric harmonization, donor credits,
+the SCP stylistic-set remap, and the two weight profiles / constants.
+"""
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
+import pytest
 from fontTools.fontBuilder import FontBuilder
 from fontTools.pens.ttGlyphPen import TTGlyphPen
+from fontTools.ttLib import TTFont
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import build  # noqa: E402
 import build_latin  # noqa: E402
+import test_build as tb  # noqa: E402 -- reuse its GSUB fakes
 
-# --- donor_credits ---------------------------------------------------------
-
-def _name_font():
-    """A minimal FontBuilder TTF (1000 UPM, .notdef + a) with a name
-    table — donor_credits only reads name IDs 0 and 9; everything else
-    here is just what FontBuilder needs to produce a valid font."""
-    fb = FontBuilder(1000, isTTF=True)
-    fb.setupGlyphOrder([".notdef", "a"])
-    fb.setupCharacterMap({ord("a"): "a"})
-    fb.setupGlyf({g: TTGlyphPen(None).glyph() for g in (".notdef", "a")})
-    fb.setupHorizontalMetrics({".notdef": (0, 0), "a": (600, 0)})
-    fb.setupHorizontalHeader(ascent=800, descent=-200)
-    fb.setupNameTable({"familyName": "Test", "styleName": "Regular"})
-    fb.setupOS2()
-    fb.setupPost()
-    return fb.font
-
-
-NAME0 = (
-    "Shoyu Code Pro JP 35: Copyright 2026 hn-11 (https://x). "
-    "Source Han Sans: © 2014-2025 Adobe (http://www.adobe.com/), with "
-    "Reserved Font Name 'Source'. Source Code Pro: © 2023 Adobe "
-    "(http://www.adobe.com/), with Reserved Font Name "
-    "‘Source’. Monaspace: Copyright 2023 GitHub, Inc. "
-    "(https://github.com/githubnext/monaspace), with Reserved Font Names "
-    "'Monaspace', 'Monaspace Argon'."
-)
-
-NAME0_NO_MONASPACE = (
-    "Shoyu Code Pro JP 35: Copyright 2026 hn-11 (https://x). "
-    "Source Han Sans: © 2014-2025 Adobe (http://www.adobe.com/), with "
-    "Reserved Font Name 'Source'. Source Code Pro: © 2023 Adobe "
-    "(http://www.adobe.com/), with Reserved Font Name "
-    "‘Source’."
-)
-
-NAME9 = ("Ryoko NISHIZUKA (kana); Paul D. Hunt (Latin); Source Code Pro: "
-         "Paul D. Hunt, Teo Tuominen; Monaspace: Riley Cran and the "
-         "Lettermatic Team")
-
-SCP_COPYRIGHT = ("© 2023 Adobe (http://www.adobe.com/), with Reserved "
-                  "Font Name ‘Source’.")
-
-
-def test_donor_credits_parses_both_donors_in_order():
-    font = _name_font()
-    font["name"].setName(NAME0, 0, 3, 1, 0x409)
-    font["name"].setName(NAME9, 9, 3, 1, 0x409)
-
-    credits = build_latin.donor_credits(font)
-
-    assert isinstance(credits, list)
-    assert [label for label, _, _ in credits] == ["Source Code Pro",
-                                                   "Monaspace"]
-
-    scp, mona = credits
-    assert scp == ("Source Code Pro", SCP_COPYRIGHT, "Paul D. Hunt, Teo Tuominen")
-    assert mona[1].startswith("Copyright 2023 GitHub")
-    assert mona[1].endswith("'Monaspace Argon'.")
-    assert mona[2] == "Riley Cran and the Lettermatic Team"
-
-    for _, copyright_, designer in credits:
-        assert copyright_ is None or "Source Han Sans" not in copyright_
-        assert designer is None or "Source Han Sans" not in designer
-
-
-def test_donor_credits_designer_none_when_nameid9_absent():
-    font = _name_font()
-    font["name"].setName(NAME0, 0, 3, 1, 0x409)
-    # nameID 9 left unset entirely
-
-    credits = build_latin.donor_credits(font)
-
-    designers = dict((label, designer) for label, _, designer in credits)
-    assert designers["Source Code Pro"] is None
-    assert designers["Monaspace"] is None
-
-
-def test_donor_credits_monaspace_copyright_none_when_absent_from_nameid0():
-    font = _name_font()
-    font["name"].setName(NAME0_NO_MONASPACE, 0, 3, 1, 0x409)
-    font["name"].setName(NAME9, 9, 3, 1, 0x409)
-
-    credits = build_latin.donor_credits(font)
-
-    by_label = dict((label, (cr, des)) for label, cr, des in credits)
-    assert "Monaspace" in by_label          # tuple still returned
-    assert by_label["Monaspace"][0] is None
-
-
-# --- latin_layer -------------------------------------------------------
+# --- fix_zone_order -------------------------------------------------------
 
 class _FakeTopDict:
-    def __init__(self, fdarray, fdselect):
+    def __init__(self, fdarray):
         self.FDArray = fdarray
-        self.FDSelect = fdselect
 
 
 class _FakeCFF:
-    def __init__(self, top_dict, font_name="X"):
+    def __init__(self, fdarray, font_name="X"):
         self.fontNames = [font_name]
-        self._top_dict = top_dict
+        self._top_dict = _FakeTopDict(fdarray)
 
     def __getitem__(self, name):
         return self._top_dict
@@ -123,107 +45,284 @@ class _FakeCFFTable:
         self.cff = cff
 
 
-class _FakeFont:
-    """Just enough of a CID-keyed CFF TTFont for latin_layer: a `CFF `
-    table wrapping a CFF with one top dict (FDArray + FDSelect), plus
-    getBestCmap / getGlyphID / hmtx."""
-
-    def __init__(self, cmap, glyph_ids, fdselect, hmtx, fdarray):
-        self._cmap = cmap
-        self._glyph_ids = glyph_ids
-        top_dict = _FakeTopDict(fdarray, fdselect)
-        self._tables = {"CFF ": _FakeCFFTable(_FakeCFF(top_dict)),
-                        "hmtx": hmtx}
-
-    def getBestCmap(self):
-        return self._cmap
-
-    def getGlyphID(self, name):
-        return self._glyph_ids[name]
-
-    def __getitem__(self, key):
-        return self._tables[key]
+def _zone_font(*privates):
+    """A fake CID-keyed CFF font: one FontDict per Private given."""
+    fdarray = [SimpleNamespace(Private=p) for p in privates]
+    return {"CFF ": _FakeCFFTable(_FakeCFF(fdarray))}
 
 
-def _latin_test_font():
-    """FD 0 stands in for the CJK/base FontDict, FD 1 (the last one) for
-    the Latin FontDict build.add_latin_fd appends — latin_layer keeps
-    only glyphs FDSelect points at the last FD."""
-    names = ["notdef", "last600", "last0", "last1000", "fd0_600",
-             "arrow", "hash", "kana"]
-    glyph_ids = {n: i for i, n in enumerate(names)}
-    fdselect = [0, 1, 1, 1, 0, 1, 1, 1]
-    cmap = {
-        0x41: "last600",      # last FD, 600 advance -> kept
-        0x42: "last0",        # last FD, 0 advance -> kept
-        0x43: "last1000",     # last FD, full-width advance -> dropped
-        0x44: "fd0_600",      # FD 0, 600 advance -> dropped
-        0x2192: "arrow",      # -> MONA_AMBIGUOUS
-        0x23: "hash",         # # MONA_STANDALONE (string.punctuation)
-        0xFF71: "kana",       # halfwidth katakana A, neither
-    }
-    hmtx = {
-        "last600": (600, 0), "last0": (0, 0), "last1000": (1000, 0),
-        "fd0_600": (600, 0), "arrow": (600, 0), "hash": (600, 0),
-        "kana": (600, 0),
-    }
-    fdarray = [object(), object()]
-    return _FakeFont(cmap, glyph_ids, fdselect, hmtx, fdarray)
+def test_fix_zone_order_sorts_an_inverted_pair():
+    private = SimpleNamespace(OtherBlues=[-217, -222])
+    font = _zone_font(private)
+
+    build_latin.fix_zone_order(font)
+
+    assert private.OtherBlues == [-222, -217]
 
 
-def test_latin_layer_keeps_last_fd_glyph_at_cell_advance():
-    keep = build_latin.latin_layer(_latin_test_font())
-    assert keep[0x41] == "last600"
+def test_fix_zone_order_sorts_pairs_out_of_order_and_within_a_pair():
+    # (486, 490) is already ascending, (-12, 0) is fine, but (582, 566) is
+    # inverted and the three pairs are not sorted by first value
+    private = SimpleNamespace(BlueValues=[486, 490, -12, 0, 582, 566])
+    font = _zone_font(private)
+
+    build_latin.fix_zone_order(font)
+
+    assert private.BlueValues == [-12, 0, 486, 490, 566, 582]
 
 
-def test_latin_layer_keeps_last_fd_glyph_at_zero_advance():
-    keep = build_latin.latin_layer(_latin_test_font())
-    assert keep[0x42] == "last0"
+def test_fix_zone_order_leaves_none_and_missing_attributes_alone():
+    private = SimpleNamespace(OtherBlues=[-217, -222], FamilyBlues=None)
+    # FamilyOtherBlues is not set on this Private at all
+    font = _zone_font(private)
+
+    build_latin.fix_zone_order(font)
+
+    assert private.FamilyBlues is None
+    assert not hasattr(private, "FamilyOtherBlues")
 
 
-def test_latin_layer_drops_full_width_advance():
-    keep = build_latin.latin_layer(_latin_test_font())
-    assert 0x43 not in keep
+def test_fix_zone_order_leaves_empty_list_alone():
+    private = SimpleNamespace(BlueValues=[])
+    font = _zone_font(private)
+
+    build_latin.fix_zone_order(font)
+
+    assert private.BlueValues == []
 
 
-def test_latin_layer_drops_non_latin_fd():
-    keep = build_latin.latin_layer(_latin_test_font())
-    assert 0x44 not in keep
+def test_fix_zone_order_covers_every_fontdict():
+    p0 = SimpleNamespace(OtherBlues=[-217, -222])
+    p1 = SimpleNamespace(OtherBlues=[10, 5])
+    font = _zone_font(p0, p1)
+
+    build_latin.fix_zone_order(font)
+
+    assert p0.OtherBlues == [-222, -217]
+    assert p1.OtherBlues == [5, 10]
 
 
-def test_latin_layer_scp_cmap_none_keeps_everything_in_range():
-    keep = build_latin.latin_layer(_latin_test_font(), scp_cmap=None)
-    assert set(keep) == {0x41, 0x42, 0x2192, 0x23, 0xFF71}
+# --- typo / win metrics ----------------------------------------------------
+
+def _metrics_font(ascent=800, descent=-200, line_gap=0,
+                  win_ascent=0, win_descent=0):
+    fb = FontBuilder(1000, isTTF=True)
+    fb.setupGlyphOrder([".notdef", "a"])
+    fb.setupCharacterMap({ord("a"): "a"})
+    fb.setupGlyf({g: TTGlyphPen(None).glyph() for g in (".notdef", "a")})
+    fb.setupHorizontalMetrics({".notdef": (0, 0), "a": (600, 0)})
+    fb.setupHorizontalHeader(ascent=ascent, descent=descent, lineGap=line_gap)
+    fb.setupNameTable({"familyName": "Test", "styleName": "Regular"})
+    fb.setupOS2(usWinAscent=win_ascent, usWinDescent=win_descent)
+    fb.setupPost()
+    return fb.font
 
 
-def test_latin_layer_scp_cmap_keeps_mona_survivors_even_when_scp_lacks_them():
-    # SCP's own cmap doesn't cover any of these codepoints
-    keep = build_latin.latin_layer(_latin_test_font(), scp_cmap={})
-    assert 0x2192 in keep       # MONA_AMBIGUOUS: kept regardless of SCP
-    assert 0x23 in keep         # MONA_STANDALONE: kept regardless of SCP
-    assert 0xFF71 not in keep   # neither -> dropped
-    assert 0x41 not in keep     # plain Latin codepoint SCP lacks -> dropped
+def test_use_typo_metrics_matches_hhea_and_sets_fsselection_bit7():
+    # SCP-shaped mismatch: hhea 984/-273, typo starts out somewhere else
+    font = _metrics_font(ascent=984, descent=-273, line_gap=50)
+    font["OS/2"].sTypoAscender = 750
+    font["OS/2"].sTypoDescender = -250
+    font["OS/2"].sTypoLineGap = 0
+    font["OS/2"].fsSelection = 0x40   # regular, bit 7 not yet set
+
+    build_latin.use_typo_metrics(font)
+
+    os2, hhea = font["OS/2"], font["hhea"]
+    assert (os2.sTypoAscender, os2.sTypoDescender, os2.sTypoLineGap) == (
+        hhea.ascent, hhea.descent, hhea.lineGap)
+    assert os2.fsSelection & 0x80
+    assert os2.fsSelection & 0x40   # untouched bits survive
 
 
-def test_latin_layer_scp_cmap_keeps_codepoints_scp_covers():
-    keep = build_latin.latin_layer(_latin_test_font(), scp_cmap={0x41: "A"})
-    assert 0x41 in keep
+def test_fit_win_metrics_takes_the_max_of_existing_bbox_and_given():
+    font = _metrics_font(win_ascent=500, win_descent=100)
+    font["head"].yMax = 700
+    font["head"].yMin = -50
+
+    build_latin.fit_win_metrics(font, ascent=600, descent=80)
+
+    os2 = font["OS/2"]
+    assert os2.usWinAscent == 700     # bbox (700) beats existing (500) and given (600)
+    assert os2.usWinDescent == 100    # existing (100) beats bbox (50) and given (80)
 
 
-# --- KEEP_FEATURES / DROP_TABLES ---------------------------------------
+def test_fit_win_metrics_given_value_wins_when_it_is_largest():
+    font = _metrics_font(win_ascent=10, win_descent=10)
+    font["head"].yMax = 20
+    font["head"].yMin = -20
 
-def test_keep_features_includes_ours_and_scps_stylistic_sets():
-    wanted = {"calt", "liga", "cv99", "zero", "salt"}
-    wanted |= {f"ss{i:02d}" for i in range(1, 9)}
-    wanted |= {f"cv{i:02d}" for i in range(1, 18)}
-    wanted |= {f"ss{i:02d}" for i in range(11, 18)}
-    assert wanted <= set(build_latin.KEEP_FEATURES)
+    build_latin.fit_win_metrics(font, ascent=999, descent=888)
 
-
-def test_keep_features_excludes_cjk_and_width_features():
-    unwanted = {"hwid", "fwid", "ss09", "vert"}
-    assert not unwanted & set(build_latin.KEEP_FEATURES)
+    os2 = font["OS/2"]
+    assert os2.usWinAscent == 999
+    assert os2.usWinDescent == 888
 
 
-def test_drop_tables_includes_vertical_positioning_and_signature_tables():
-    assert {"GPOS", "vhea", "vmtx", "DSIG"} <= set(build_latin.DROP_TABLES)
+def test_fit_win_metrics_defaults_are_zero():
+    font = _metrics_font(win_ascent=50, win_descent=50)
+    font["head"].yMax = 10
+    font["head"].yMin = -5
+
+    build_latin.fit_win_metrics(font)   # ascent=0, descent=0
+
+    os2 = font["OS/2"]
+    assert os2.usWinAscent == 50
+    assert os2.usWinDescent == 50
+
+
+# --- harmonize_win_metrics --------------------------------------------------
+
+def _glyph_with_bbox(ymin, ymax):
+    pen = TTGlyphPen(None)
+    pen.moveTo((0, ymin))
+    pen.lineTo((100, ymin))
+    pen.lineTo((100, ymax))
+    pen.lineTo((0, ymax))
+    pen.closePath()
+    return pen.glyph()
+
+
+def _write_metrics_font(path, win_ascent, win_descent, ymin, ymax):
+    fb = FontBuilder(1000, isTTF=True)
+    fb.setupGlyphOrder([".notdef", "a"])
+    fb.setupCharacterMap({ord("a"): "a"})
+    fb.setupGlyf({".notdef": TTGlyphPen(None).glyph(),
+                 "a": _glyph_with_bbox(ymin, ymax)})
+    fb.setupHorizontalMetrics({".notdef": (0, 0), "a": (600, 0)})
+    fb.setupHorizontalHeader(ascent=800, descent=-200)
+    fb.setupNameTable({"familyName": "Test", "styleName": "Regular"})
+    fb.setupOS2(usWinAscent=win_ascent, usWinDescent=win_descent)
+    fb.setupPost()
+    fb.font.save(path)
+
+
+def test_harmonize_win_metrics_gives_every_face_the_same_max(tmp_path):
+    p1 = tmp_path / "a.ttf"
+    p2 = tmp_path / "b.ttf"
+    # p1 has the bigger usWinAscent, p2 the bigger usWinDescent; neither
+    # face's own bbox exceeds the eventual target, so the numbers stay
+    # exactly the plain max() of the two OS/2 tables
+    _write_metrics_font(p1, win_ascent=900, win_descent=200,
+                        ymin=-50, ymax=700)
+    _write_metrics_font(p2, win_ascent=1200, win_descent=150,
+                        ymin=-80, ymax=1100)
+
+    ascent, descent = build_latin.harmonize_win_metrics([str(p1), str(p2)])
+
+    assert (ascent, descent) == (1200, 200)
+
+    f1, f2 = TTFont(str(p1)), TTFont(str(p2))
+    assert (f1["OS/2"].usWinAscent, f1["OS/2"].usWinDescent) == (1200, 200)
+    assert (f2["OS/2"].usWinAscent, f2["OS/2"].usWinDescent) == (1200, 200)
+
+
+def test_harmonize_win_metrics_noop_when_already_matched(tmp_path):
+    p1 = tmp_path / "a.ttf"
+    p2 = tmp_path / "b.ttf"
+    _write_metrics_font(p1, win_ascent=1000, win_descent=200,
+                        ymin=-10, ymax=10)
+    _write_metrics_font(p2, win_ascent=1000, win_descent=200,
+                        ymin=-10, ymax=10)
+    before = p1.stat().st_mtime, p2.stat().st_mtime
+
+    ascent, descent = build_latin.harmonize_win_metrics([str(p1), str(p2)])
+
+    assert (ascent, descent) == (1000, 200)
+    # both faces already matched: neither file gets rewritten
+    assert (p1.stat().st_mtime, p2.stat().st_mtime) == before
+
+
+# --- credits_from ------------------------------------------------------
+
+class _FakeName:
+    def __init__(self, names):
+        self._names = names
+
+    def getDebugName(self, name_id):
+        return self._names.get(name_id)
+
+
+def _donor(names):
+    return {"name": _FakeName(names)}
+
+
+def test_credits_from_returns_scp_then_monaspace():
+    scp = _donor({0: "SCP Copyright", 9: "Paul D. Hunt, Teo Tuominen"})
+    mona = _donor({0: "Mona Copyright", 9: "Riley Cran"})
+
+    credits = build_latin.credits_from(scp, mona)
+
+    assert credits == [
+        ("Source Code Pro", "SCP Copyright", "Paul D. Hunt, Teo Tuominen"),
+        ("Monaspace", "Mona Copyright", "Riley Cran"),
+    ]
+
+
+def test_credits_from_monaspace_falls_back_to_nameid7_when_nameid0_absent():
+    scp = _donor({0: "SCP Copyright", 9: "Paul D. Hunt"})
+    mona = _donor({0: None, 7: "Trademark: Monaspace", 9: "Riley Cran"})
+
+    credits = build_latin.credits_from(scp, mona)
+
+    label, copyright_, designer = credits[1]
+    assert label == "Monaspace"
+    assert copyright_ == "Trademark: Monaspace"
+    assert designer == "Riley Cran"
+
+
+# --- remap_scp_stylistic_sets ----------------------------------------------
+
+def test_remap_scp_stylistic_sets_shifts_ss_and_sorts_the_feature_list():
+    tags_in = ("ss01", "ss03", "cv01", "zero", "calt")
+    records = [tb.FakeFeatureRecord(tag, tb.FakeFeature([]))
+               for tag in tags_in]
+    ls = tb.FakeLangSys(list(range(len(records))))
+    gsub = tb.FakeGSUB(records, [tb.FakeScriptRecord(tb.FakeScript(ls))])
+    font = {"GSUB": tb.FakeTable(gsub)}
+
+    build_latin.remap_scp_stylistic_sets(font)
+
+    tags_out = [fr.FeatureTag for fr in gsub.FeatureList.FeatureRecord]
+    assert tags_out == ["calt", "cv01", "ss11", "ss13", "zero"]
+    assert tags_out == sorted(tags_out)
+    # every record is still reachable from the LangSys, just renumbered
+    assert ls.FeatureCount == len(records)
+    assert set(ls.FeatureIndex) == set(range(len(records)))
+
+
+# --- PROFILES / FAMILY / PS_FAMILY -----------------------------------------
+
+def test_profiles_has_ship_and_term():
+    assert set(build_latin.PROFILES) == {"ship", "term"}
+
+
+def test_ship_profile():
+    subdir, family, ps_family, factor = build_latin.PROFILES["ship"]
+    assert subdir == ""
+    assert family == "Sumi Moji"
+    assert ps_family == "SumiMoji"
+    assert factor == pytest.approx(600 / 667)
+
+
+def test_term_profile_is_unscaled_and_distinctly_named():
+    subdir, family, ps_family, factor = build_latin.PROFILES["term"]
+    assert factor == 1.0
+    assert family != build_latin.PROFILES["ship"][1]
+    assert ps_family != build_latin.PROFILES["ship"][2]
+
+
+def test_family_constants_mirror_the_ship_profile():
+    assert build_latin.PROFILES["ship"][1] == build_latin.FAMILY
+    assert build_latin.PROFILES["ship"][2] == build_latin.PS_FAMILY
+
+
+# --- CELL / MONA_K constants -------------------------------------------
+
+def test_cell_is_scp_cell():
+    assert build_latin.CELL == 600
+    assert build_latin.CELL == build.SCP_CELL
+
+
+def test_mona_k_scales_from_scp_cell_to_monaspace_cell():
+    assert build_latin.MONA_K == 600 / build.MONA_CELL

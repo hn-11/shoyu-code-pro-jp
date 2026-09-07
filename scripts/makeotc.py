@@ -11,7 +11,16 @@ from pathlib import Path
 from fontTools.ttLib import TTCollection, TTFont
 
 DIST = Path(__file__).resolve().parent.parent / "dist"
-FAMILIES = ["ShoyuCodeProJP", "ShoyuCodeProJP35", "ShoyuCodeProJPTerm"]
+LATIN = DIST / "latin"
+FAMILIES = ["ShoyuCodeProJP", "ShoyuCodeProJP35", "ShoyuCodeProJPTerm", "SumiMoji"]
+
+# Per-family input directory to glob "<fam>-*.otf" faces from; every
+# family's .ttc still lands directly in dist/. SumiMoji is the Latin-only
+# family and its built faces live in dist/latin/ (not dist/) —
+# dist/latin/term/ holds the internal donor family "Sumi Moji Term" and
+# must never be bundled; Path.glob() is non-recursive, so pointing this
+# at dist/latin/ alone already excludes that subdirectory.
+SRC_DIR = {"SumiMoji": LATIN}
 
 WEIGHT_ORDER = ["Light", "Normal", "Regular", "Medium", "Bold", "Heavy"]
 EXPECTED = len(WEIGHT_ORDER) * 2  # weights x (upright, italic)
@@ -32,6 +41,14 @@ def check_cmap_parity(fam, faces, fonts):
     slant must not: a mismatch there means the faces came from different
     builds (stale dist/ files, a partial upstream refresh...), not a real
     per-weight design difference.
+
+    This grouping-by-slant is exactly what SumiMoji needs too: its faces
+    are built straight from Source Code Pro, whose Italic instance maps
+    fewer codepoints than the upright (missing Greek/Cyrillic, same as
+    the JP families' SCP-derived Latin coverage) — far fewer cmap entries
+    overall than the JP families, but the same upright/italic asymmetry.
+    Comparing only within each slant group, never upright against italic,
+    already accommodates that without any family-specific carve-out.
     """
     groups = {False: [], True: []}
     for p, tf in zip(faces, fonts):
@@ -55,7 +72,8 @@ def check_cmap_parity(fam, faces, fonts):
 
 def main():
     for fam in FAMILIES:
-        faces = sorted(DIST.glob(f"{fam}-*.otf"), key=lambda p: face_key(p, fam))
+        src = SRC_DIR.get(fam, DIST)
+        faces = sorted(src.glob(f"{fam}-*.otf"), key=lambda p: face_key(p, fam))
         if not faces:
             print(f"skip {fam}: no faces")
             continue
@@ -63,13 +81,14 @@ def main():
             present = sorted(p.stem[len(fam) + 1:] for p in faces)
             wanted = [w + s for w in WEIGHT_ORDER for s in ("", "Italic")]
             missing = sorted(set(wanted) - set(present))
+            builder = "build_latin.py" if fam in SRC_DIR else "build.py"
             raise SystemExit(
                 f"{fam}: expected {EXPECTED} faces, found {len(faces)}\n"
                 f"  present: {present}\n  missing: {missing}\n"
-                "  stale files left over in dist/ from an older roster are "
+                f"  stale files left over in {src} from an older roster are "
                 "the usual cause of an unexpected surplus; an unfiltered "
-                "`build.py` run clears dist/ShoyuCodeProJP*.otf first, so "
-                "rerun it without a FILTER before bundling")
+                f"`{builder}` run clears {src}/{fam}*.otf first, so rerun it "
+                "without a FILTER before bundling")
         fonts = [TTFont(p) for p in faces]
         check_cmap_parity(fam, faces, fonts)
         tc = TTCollection()

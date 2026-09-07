@@ -177,21 +177,41 @@ font-patcher がグリフを Unicode で引けないため、パッチ前に Fon
 
 ## Sumi Moji（欧文のみ、仮称）
 
-35 ファミリーの欧文レイヤー（Source Code Pro の文字 + Monaspace の記号・
-合字）だけを切り出した、和文を含まない単独フォント。ウェイト・合字は 35
-と同一で、Source Han Sans のグリフは一切残さない（`.notdef` も描き直し）
-ため、クレジットは Source Code Pro と Monaspace のみになる。合字と対になる
-`← → ↑ ↓ ⇐ ⇒ ⇔ ≠ ≤ ≥ …` は欧文フォントに全角の概念が無いため 1 セルの
-Monaspace 版が既定。行間などの縦メトリクスは SHCJ ではなく Source Code
-Pro 自身の hhea 値（984 / -273）。OS/2 の typo も同じ値にして USE_TYPO_METRICS を立て、win はファミリー全面のバウンディングボックスを覆う値（1133 / 400）にしてある。
+Shoyu Code Pro JP が使う欧文レイヤーを、VF から直接組み上げた和文なしの
+単独フォント。JP 側（`build.py`）はこのフォントを Source Han Sans に
+接ぎ木するだけになっており、欧文の設計判断は 1 か所に集まっている。
+
+ベースは Source Han Code JP の `=` バーに合わせた Source Code Pro VF の
+インスタンスを、fontTools の CFF2ToCFF で静的な CID-keyed CFF に変換した
+もの——SCP 自身のアウトライン・アライメントゾーン・GSUB（`cv01`〜`cv17`
+`zero` `salt`、SCP の stylistic set は `ss11`〜`ss17` に移動）・GPOS
+（マーク位置決め）はそのまま生きている。インスタンス化でヒントは失われる
+ため、SCP 自身のゾーンに対して otfautohint で全体を再ヒント。その上に
+Monaspace 由来の合字61種・ASCII 記号32字・1セル矢印（SCP に無い `⇔` も
+追加）を、太さとベースラインを揃えて接ぎ木し、cffsubr でサブルーチン化
+する。結合文字は SCP が出荷する形（スペーシング、GPOS mark で位置決め）
+のまま。
+
+2つのプロファイルが同じレシピから出る: `dist/latin/`（配布される Sumi
+Moji 本体。バー = SHCJ のバー × 600/667、35 と同じ太さ）と
+`dist/latin/term/`（Term ファミリー専用の内部ドナー。バー = SHCJ のバー
+そのまま 600 セルで——Term は欧文を縮めないぶん太めに対応させる必要が
+ある。配布はしない）。
+
+Regular は1,632グリフ・約140KB（Italic は1,335グリフ — SCP Italic VF の
+グリフ数が少ないぶん）。縦メトリクスは SCP 自身の hhea（984 / -273）を
+基準に、OS/2 の typo を hhea と同値にして `USE_TYPO_METRICS` を立て、win
+はファミリー全面のバウンディングボックスを覆う値（Regular ペアで
+1060 / 454）。
 
 ```sh
-python scripts/build.py        # 先に 35 を含む全ファミリーをビルド
-python scripts/build_latin.py  # dist/ShoyuCodeProJP35-*.otf -> dist/latin/SumiMoji-*.otf
+python scripts/build_latin.py  # SCP VF + Monaspace VF -> dist/latin{,/term}/SumiMoji*-*.otf
+python scripts/build.py        # dist/latin を Source Han Sans に接ぎ木
 ```
 
-`SCP_VF_U` / `SCP_VF_I`（Source Code Pro VF）を渡すとそこから縦メトリクスを
-取り直す。省略時は 35 面（Source Han Code JP 由来）の値のまま。
+`build_latin.py` には `SCP_VF_U` / `SCP_VF_I` / `MONA_VF` / `SHCJ_TTC` が
+必要（`build.py` と同じ変数）。先に走らせて `dist/latin` を作ってから
+`build.py` を実行する（CI・リリースとも同じ順序）。
 
 「Sumi Moji」はまだ仮称（PostScript 名は `SumiMoji-*`）。経緯・命名調査・
 今後の計画は [docs/sumi-moji-plan.md](docs/sumi-moji-plan.md) を参照。
@@ -237,14 +257,19 @@ OFL のライセンス全文（LICENSE）を同梱している。
 ## ビルド
 
 4つの上流（Source Han Sans JP / Source Code Pro VF / Monaspace VF /
-Source Han Code JP）を取得して環境変数で場所を渡す。具体的なコマンドは
-`.github/workflows/ci.yml` の手順がそのまま実行可能なリファレンス。
+Source Han Code JP）を取得して環境変数で場所を渡す。ビルドは2段階:
+まず `scripts/build_latin.py` が VF から Sumi Moji（`dist/latin`）を
+組み、その完成品を `scripts/build.py` が Source Han Sans に接ぎ木する。
+具体的なコマンドは `.github/workflows/ci.yml` の手順がそのまま実行可能な
+リファレンス。
 
 ```sh
 pip install -r requirements.txt
-SHS_DIR=... SCP_VF_U=... SCP_VF_I=... MONA_VF=... SHCJ_TTC=upstream/SourceHanCodeJP.ttc \
-  python scripts/build.py            # 全ファミリー（2:3 / 35 / Term × 12面）
-  python scripts/build.py "Regular"  # Regular系のみ（動作確認用）
+SCP_VF_U=... SCP_VF_I=... MONA_VF=... SHCJ_TTC=upstream/SourceHanCodeJP.ttc \
+  python scripts/build_latin.py           # dist/latin{,/term}/SumiMoji*-*.otf
+SHS_DIR=... SHCJ_TTC=upstream/SourceHanCodeJP.ttc \
+  python scripts/build.py                 # 全ファミリー（2:3 / 35 / Term × 12面）
+  python scripts/build.py "Regular"       # Regular系のみ（動作確認用）
 python scripts/verify.py dist/ShoyuCodeProJP-Regular.otf   # 回帰テスト
 python scripts/nerdpatch.py <FontPatcher dir>              # NF 変種
 python scripts/makeotc.py                                  # .ttc 化
@@ -252,9 +277,12 @@ python scripts/makeotc.py                                  # .ttc 化
 
 `SHCJ_TTC` は [Source Han Code JP の GitHub Releases](https://github.com/adobe-fonts/source-han-code-jp/releases)
 から `SourceHanCodeJP.ttc` をダウンロードして指すパス（`.github/workflows/ci.yml`
-と同じ取得元・同じ手順）。他の3変数（`SHS_DIR` / `SCP_VF_U` / `SCP_VF_I` /
-`MONA_VF`）も同様に、それぞれ Source Han Sans JP / Source Code Pro VF /
-Monaspace VF の Releases から取得する。
+と同じ取得元・同じ手順、`build_latin.py` / `build.py` 共通）。
+`SCP_VF_U` / `SCP_VF_I` / `MONA_VF` は `build_latin.py` だけが使い、
+それぞれ Source Code Pro VF / Monaspace VF の Releases から取得する。
+`build.py` は Source Code Pro / Monaspace の VF に直接触らず、代わりに
+`SHS_DIR`（Source Han Sans JP）と `LATIN_DIR`（既定 `dist/latin`、
+`build_latin.py` の出力先）を見る。
 
 `requirements.txt` には AFDKO（`otfautohint` でグラフト・拡幅したグリフに
 ヒントを付ける）も含まれる。ローカルでの試しビルドで時間を節約したい場合は
@@ -267,12 +295,17 @@ v3.2.0（4.66MB）より小さい。
 
 ## 仕組み
 
-- Source Han Sans JP（CID-keyed CFF）を土台に、SHCJ が半角にしている
-  477 コードポイントへ SCP VF 由来のグリフを接ぎ木し cmap を差し替える
-  （SCP に無い半角カナ等は SHCJ から複写）。追加 CID は疎な空間の空きを
-  昇順割当（サブセット OTF の CID は不連続なため）
-- 各面の `=` バー厚を実測し、SCP / Monaspace VF の wght を二分探索して
-  太さを一致させる。Italic は SCP Italic VF + slnt 追随
+- 欧文レイヤーは Sumi Moji（`scripts/build_latin.py`、VF から先に組んで
+  `dist/latin` に出力）から来る。Source Han Sans JP（CID-keyed CFF）を
+  土台に、SHCJ が半角にしている 477 コードポイントへ Sumi Moji 由来の
+  グリフを接ぎ木し cmap を差し替える（Sumi Moji に無い半角カナ等は
+  SHCJ から複写）。追加 CID は疎な空間の空きを昇順割当（サブセット OTF
+  の CID は不連続なため）
+- 太さの一致は Sumi Moji 側（`build_latin.py`）で完結している——各面の
+  `=` バー厚を実測して SCP / Monaspace VF の wght を二分探索で合わせ、
+  Italic は SCP Italic VF + slnt 追随。`build.py` は Sumi Moji を
+  667/600 セルへ再スケールするだけ（Term は内部専用の Term プロファイル
+  を使う）
 - 合字は LigatureSubst。`calt`/`liga` は結合ルックアップ1つ＋文脈ガード
   （各合字の入力列全体をカバーするトリガールールを最長一致順に並べる。
   一致範囲を1文字だけにしてネストした LigatureSubst に残りを委ねる形は

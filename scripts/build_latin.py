@@ -1,176 +1,165 @@
 #!/usr/bin/env python3
-"""Sumi Moji (provisional name): the Latin-only face, cut from the built
-35 family.
+"""Sumi Moji (provisional name): the Latin-only font, assembled straight
+from the variable fonts — Source Code Pro VF as the base, Monaspace VF
+for the punctuation, the ligatures and the one-cell arrows.
 
-The 35 family is Source Code Pro at native size (600 cell) with weights
-paired to Source Han Code JP, plus everything Monaspace contributes: the
-32 ASCII punctuation glyphs, the ligatures, the one-cell arrows. Its
-Latin layer IS the Latin font we want to ship on its own — so rather than
-assembling it a second time from the variable fonts, this script subsets
-each built 35 face down to that layer (every glyph in the Latin CID
-FontDict, i.e. everything build.py appended, at 0 or 600 advance), makes
-the one-cell Monaspace forms of ← → ↑ ↓ ⇐ ⇒ ⇔ ≠ ≤ ≥ … the defaults (a
-Latin font has no full width), and re-stamps names, STAT, metrics and
-vertical metrics (Source Code Pro's own, so it lines up with SCP in an
-editor rather than with a CJK font). Hints, subroutines, GSUB (calt/liga,
-ss01-ss08, cv99, SCP's zero/salt/cvNN/ss11-17) come through as built.
+This is the Latin layer every Shoyu Code Pro JP family carries, built
+once and on its own (docs/sumi-moji-plan.md, stage 1b): build.py grafts
+these faces into Source Han Sans instead of instancing the two VFs
+itself. Two weight profiles come out of the same recipe:
 
-docs/sumi-moji-plan.md, stage 1a. Stage 1b (build.py consuming this font
-instead of the VFs) is the next step; until then the 35 faces must exist.
+  dist/latin/       Sumi Moji        '=' bar = SHCJ's bar x 600/667 — the
+                                     35 family's weight, Source Code Pro at
+                                     its native size; the shipped font
+  dist/latin/term/  Sumi Moji Term   '=' bar = SHCJ's bar as-is at 600 —
+                                     what the Term family needs (its Latin
+                                     is not scaled down, so it is paired
+                                     heavier); an internal donor only
+
+The base is the SCP VF instance converted to a static CID-keyed CFF
+(fontTools CFF2ToCFF): SCP's own outlines, alignment zones, GSUB
+(cv01-cv17, zero, salt, its stylistic sets moved to ss11-ss17) and GPOS
+(mark positioning) survive untouched; the hints do not survive the
+instancer, so the whole font is re-hinted against SCP's zones. On top: the 61 ligatures and the 32
+ASCII punctuation glyphs from Monaspace, weight-matched to the same bar
+and baseline-aligned on '='; the ligature-paired symbols ← → ↑ ↓ ⇐ ⇒ ⇔ ≠
+≤ ≥ … as Monaspace's one-cell glyphs (a Latin font has no full width);
+calt/liga with the context guards, ss01-ss08, cv99. otfautohint hints
+everything against SCP's zones; cffsubr subroutinizes.
 
 Usage:
-  python scripts/build_latin.py [FILTER]     # dist/ShoyuCodeProJP35-*.otf
-                                             #   -> dist/latin/SumiMoji-*.otf
-Env (optional):
-  SCP_VF_U / SCP_VF_I  vertical metrics donor (Source Code Pro VF); when
-                       unset the 35 face's (Source Han Code JP's) are kept
-  SHOYU_VERSION        as for build.py
+  python scripts/build_latin.py [FILTER]   # same FILTER words as build.py
+Env (all required):
+  SCP_VF_U, SCP_VF_I, MONA_VF, SHCJ_TTC   as for build.py
+Env (optional): SHOYU_VERSION, SHOYU_SKIP_AUTOHINT
 """
 
+import concurrent.futures
+import io
 import os
-import re
 import sys
 from pathlib import Path
 
-from fontTools import subset
-from fontTools.cffLib import FDArrayIndex
-from fontTools.pens.t2CharStringPen import T2CharStringPen
+from fontTools.cffLib.CFF2ToCFF import convertCFF2ToCFF
 from fontTools.ttLib import TTFont
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import build  # noqa: E402
 
-FAMILY = "Sumi Moji"
-PS_FAMILY = "SumiMoji"
-SOURCE_FAMILY = "ShoyuCodeProJP35"
 CELL = build.SCP_CELL   # 600
+MONA_K = CELL / build.MONA_CELL
 
-# GSUB features that survive: ours (calt/liga, ss01-ss08, cv99), SCP's
-# variants (zero, salt, cv01-cv17, ss11-ss17) and ccmp. Source Han Sans's
-# CJK features (vert, jp78, hwid ...) and the width alternates (hwid/fwid/
-# ss09) have nothing to act on in a Latin-only font and are dropped.
-KEEP_FEATURES = (["calt", "liga", "ccmp", "cv99", "zero", "salt"]
-                 + [f"ss{i:02d}" for i in range(1, 9)]
-                 + [f"cv{i:02d}" for i in range(1, 18)]
-                 + [f"ss{i:02d}" for i in range(11, 18)])
-DROP_TABLES = ["vhea", "vmtx", "VORG", "BASE", "GPOS", "DSIG"]
+PROFILES = {
+    # subdir, family, PostScript family (build.LATIN_PROFILES, shared with
+    # build.py which reads these faces back), bar factor against SHCJ's
+    # 667 bar
+    "ship": (*build.LATIN_PROFILES["ship"], CELL / build.CELL),
+    "term": (*build.LATIN_PROFILES["term"], 1.0),
+}
+FAMILY = PROFILES["ship"][1]
+PS_FAMILY = PROFILES["ship"][2]
 
 
-def latin_layer(font, scp_cmap=None):
-    """{codepoint: glyph} of the Latin layer: glyphs in the Latin FontDict
-    (the last FD, see build.add_latin_fd) with a 0 or one-cell advance.
-    The full-width arrows and the CJK are left behind, and so are the few
-    half-width glyphs build.py copied from Source Han Code JP for
-    codepoints Source Code Pro lacks (when `scp_cmap` is given): this
-    font credits Source Code Pro and Monaspace only."""
+def static_base(scp):
+    """The matched Source Code Pro VF instance as a static CID-keyed CFF
+    font: CFF2 -> CFF, then a save/load round trip so every table is keyed
+    by the CFF charset's cid names (the VF's post names are gone with
+    CFF2's charset; fontTools rebuilds a format-3 post)."""
+    inst = scp
+    convertCFF2ToCFF(inst)
+    inst.recalcBBoxes = False
+    buf = io.BytesIO()
+    inst.save(buf)
+    buf.seek(0)
+    return TTFont(buf)
+
+
+def fix_zone_order(font):
+    """Instancing a CFF2 blends each alignment-zone edge separately, and
+    at some weights a pair comes out inverted (SCP Regular: OtherBlues
+    [-217, -222]); otfautohint refuses a zone with the wrong sign. Sort
+    every pair, and the pairs, on every FontDict."""
     cff = font["CFF "].cff
     td = cff[cff.fontNames[0]]
-    latin_fd = len(td.FDArray) - 1
-    hmtx = font["hmtx"]
-    return {cp: g for cp, g in font.getBestCmap().items()
-            if td.FDSelect[font.getGlyphID(g)] == latin_fd
-            and hmtx[g][0] in (0, CELL)
-            and (scp_cmap is None or cp in scp_cmap
-                 or chr(cp) in build.MONA_AMBIGUOUS
-                 or chr(cp) in build.MONA_STANDALONE)}
+    for fd in td.FDArray:
+        private = fd.Private
+        for key in ("BlueValues", "OtherBlues", "FamilyBlues", "FamilyOtherBlues"):
+            values = getattr(private, key, None)
+            if not values:
+                continue
+            pairs = sorted(tuple(sorted(values[i:i + 2]))
+                           for i in range(0, len(values) - 1, 2))
+            setattr(private, key, [v for pair in pairs for v in pair])
 
 
-def onecell_alternates(font):
-    """{codepoint: one-cell glyph} for the MONA_AMBIGUOUS symbols, read
-    back from the ss09 lookup build.add_width_alternates wired."""
-    gsub = font["GSUB"].table
+def add_missing_from_mona(font, mona, chars, dy, k):
+    """Characters Source Code Pro lacks but Monaspace has (⇔): append the
+    one-cell Monaspace glyph and map it."""
+    cff = font["CFF "].cff
+    td = cff[cff.fontNames[0]]
     cmap = font.getBestCmap()
-    alt = {}
-    for fr in gsub.FeatureList.FeatureRecord:
-        if fr.FeatureTag != "ss09":
+    mona_cm, mona_gs = mona.getBestCmap(), build.mona_glyphset(mona)
+    fd_index = td.FDSelect[font.getGlyphID(cmap[ord("A")])]
+    private = td.FDArray[fd_index].Private
+    new = {}
+    for ch in chars:
+        cp = ord(ch)
+        if cp in cmap or cp not in mona_cm:
             continue
-        for li in fr.Feature.LookupListIndex:
-            kind, subs = build._unwrap(gsub.LookupList.Lookup[li])
-            for src, dst in build._subst_pairs(kind, subs, "ss09"):
-                alt[src] = dst
-    return {ord(ch): alt[cmap[ord(ch)]] for ch in build.MONA_AMBIGUOUS
-            if ord(ch) in cmap and cmap[ord(ch)] in alt}
+        pen = build.T2CharStringPen(build.pen_width(private, CELL), mona_gs)
+        build.draw_clean([(mona_gs, mona_cm[cp], build.mona_transform(mona, 0, dy, k))], pen)
+        name = build.alloc_glyph_name(font)
+        build.append_glyph(font, td, name, pen.getCharString(private=private),
+                           fd_index, CELL, None, None)
+        new[cp] = name
+    for table in font["cmap"].tables:
+        if table.isUnicode():
+            for cp, name in new.items():
+                if cp <= 0xFFFF or table.format == 12:
+                    table.cmap[cp] = name
+    return new
 
 
-def draw_notdef(font, ps_name):
-    """Replace Source Han Sans's .notdef (its outline, and the only glyph
-    left in a Source Han Sans FontDict) with our own one-cell box, drawn
-    in the Latin FontDict; then the Latin FD is the only one and the
-    FDArray shrinks to it, renamed after this font."""
-    cff = font["CFF "].cff
-    td = cff[cff.fontNames[0]]
-    latin = td.FDArray[len(td.FDArray) - 1]
-    private = latin.Private
-    x0, x1, y0, y1, w = 50, CELL - 50, -100, 700, 50
-    pen = T2CharStringPen(build.pen_width(private, CELL), font.getGlyphSet())
-    for (a, b, c, d) in ((x0, y0, x1, y1), (x0 + w, y0 + w, x1 - w, y1 - w)):
-        pen.moveTo((a, c))
-        pen.lineTo((b, c) if (a, b, c, d) == (x0, y0, x1, y1) else (a, d))
-        pen.lineTo((b, d))
-        pen.lineTo((a, d) if (a, b, c, d) == (x0, y0, x1, y1) else (b, c))
-        pen.closePath()
-    name = font.getGlyphOrder()[0]
-    td.CharStrings.charStringsIndex[td.CharStrings.charStrings[name]] = \
-        pen.getCharString(private=private)
-    font["hmtx"][name] = (CELL, x0)
-    latin.FontName = f"{ps_name}-Latin"
-    fdarray = FDArrayIndex()
-    fdarray.append(latin)
-    td.FDArray = fdarray
-    td.FDSelect.gidArray[:] = [0] * len(td.FDSelect.gidArray)
+def remap_scp_stylistic_sets(font):
+    """SCP's ss01-ss07 become ss11-ss17 (their UI names come along), so
+    ss01-ss08 are free for the ligature groups — the same numbering the
+    JP families expose."""
+    gsub = font["GSUB"].table
+    for fr in gsub.FeatureList.FeatureRecord:
+        tag = build._remap_scp_tag(fr.FeatureTag)
+        if tag and tag != fr.FeatureTag:
+            fr.FeatureTag = tag
+    build.sort_feature_list(gsub)
 
 
-def donor_credits(font):
-    """(label, copyright, designer) for Source Code Pro and Monaspace,
-    parsed back out of the name IDs 0 / 9 build.set_names composed for
-    the 35 face ("...; Source Code Pro: ...; Monaspace: ..."). The
-    Source Han Sans part is dropped: no Source Han Sans glyph is left."""
-    name = font["name"]
-    out = {}
-    for nid, sep in ((0, " "), (9, "; ")):
-        text = name.getDebugName(nid) or ""
-        for label in ("Source Code Pro", "Monaspace"):
-            m = re.search(rf"(?:^|{re.escape(sep)}){re.escape(label)}: (.*?)"
-                          rf"(?={re.escape(sep)}(?:Source Han Sans|Source Code Pro|Monaspace): |$)",
-                          text, re.S)
-            out.setdefault(label, {})[nid] = m.group(1).strip() if m else None
-    return [(label, v.get(0), v.get(9)) for label, v in out.items()]
+def credits_from(scp, mona):
+    return [(label, donor["name"].getDebugName(0)
+             or donor["name"].getDebugName(7),
+             donor["name"].getDebugName(9))
+            for label, donor in (("Source Code Pro", scp), ("Monaspace", mona))]
 
 
-def copy_vertical_metrics(font, donor):
-    """Line metrics from `donor` (Source Code Pro): hhea ascent/descent
-    and OS/2 typo set to the same values (SCP ships hhea 984/-273 but
-    typo 750/-250, which only agree if nobody reads typo; here they
-    agree outright), USE_TYPO_METRICS set, and the win metrics widened to
-    the font's own bounding box afterwards (see fit_win_metrics) so GDI
-    never clips a tall ligature."""
-    hhea = donor["hhea"]
-    for tbl, attrs in (
-        ("hhea", (("ascent", hhea.ascent), ("descent", hhea.descent),
-                  ("lineGap", hhea.lineGap))),
-        ("OS/2", (("sTypoAscender", hhea.ascent),
-                  ("sTypoDescender", hhea.descent),
-                  ("sTypoLineGap", hhea.lineGap))),
-    ):
-        for a, v in attrs:
-            setattr(font[tbl], a, v)
-    font["OS/2"].fsSelection |= 0x80   # USE_TYPO_METRICS
+def use_typo_metrics(font):
+    """typo == hhea (SCP ships hhea 984/-273 but typo 750/-250, which only
+    agree if nobody reads typo) and USE_TYPO_METRICS on; the win metrics
+    are widened family-wide afterwards (harmonize_win_metrics)."""
+    hhea = font["hhea"]
+    os2 = font["OS/2"]
+    os2.sTypoAscender = hhea.ascent
+    os2.sTypoDescender = hhea.descent
+    os2.sTypoLineGap = hhea.lineGap
+    os2.fsSelection |= 0x80
 
 
-def fit_win_metrics(font, ascent=None, descent=None):
-    """usWinAscent/Descent cover the bounding box (never below the hhea
-    values): Windows clips ink outside them. `ascent`/`descent` (when
-    given) are the family-wide maxima, so every face agrees."""
+def fit_win_metrics(font, ascent=0, descent=0):
     head = font["head"]
     os2 = font["OS/2"]
-    os2.usWinAscent = max(os2.usWinAscent, head.yMax, ascent or 0)
-    os2.usWinDescent = max(os2.usWinDescent, -head.yMin, descent or 0)
+    os2.usWinAscent = max(os2.usWinAscent, head.yMax, ascent)
+    os2.usWinDescent = max(os2.usWinDescent, -head.yMin, descent)
 
 
 def harmonize_win_metrics(paths):
-    """Second pass over the faces just built: one usWinAscent/Descent
-    pair for the whole family (the max over every face's bbox), as the
-    OS/2 spec and font checkers expect from a family."""
+    """One usWinAscent/Descent pair per family: the max over every face."""
     fonts = {p: TTFont(p) for p in paths}
     ascent = max(f["OS/2"].usWinAscent for f in fonts.values())
     descent = max(f["OS/2"].usWinDescent for f in fonts.values())
@@ -181,81 +170,119 @@ def harmonize_win_metrics(paths):
     return ascent, descent
 
 
-def build_latin(src, out_dir, weight, italic, scp_vf=None, version=None):
-    font = TTFont(src)
-    scp = TTFont(scp_vf) if scp_vf else None
-    keep = latin_layer(font, scp.getBestCmap() if scp else None)
-    keep.update(onecell_alternates(font))
-    credits = donor_credits(font)
-    for table in font["cmap"].tables:
-        if table.isUnicode():
-            for cp, g in keep.items():
-                if cp in table.cmap:
-                    table.cmap[cp] = g
+def build_face(job):
+    profile, weight, ref_name, italic, env, out_dir = job
+    subdir, family, ps_family, factor = PROFILES[profile]
+    label = f"{weight}{' Italic' if italic else ''} [{profile}]"
+    ref = build._shcj_ref(env["SHCJ_TTC"], ref_name + (" Italic" if italic else ""))
+    target = build.bar_thickness(ref, ref.getBestCmap()[ord("=")]) * factor
+    scp_src = build._vf_source(env["SCP_VF_I" if italic else "SCP_VF_U"], 1.0,
+                               {"wght": 0})
+    scp = scp_src.matched(target)
+    ref_angle = (scp["post"].italicAngle or -12.0) if italic else None
+    mona_src = build._vf_source(env["MONA_VF"], MONA_K,
+                                {"wght": 0, "wdth": 100, "slnt": 0})
+    mona = mona_src.matched(target, ref_angle)
+    credits = credits_from(scp, mona)
 
-    opts = subset.Options()
-    opts.layout_features = list(KEEP_FEATURES)
-    opts.name_IDs = ["*"]
-    opts.name_languages = ["*"]
-    opts.notdef_outline = True
-    opts.hinting = True
-    opts.desubroutinize = False
-    opts.glyph_names = False
-    opts.drop_tables = list(opts.drop_tables) + DROP_TABLES
-    opts.recalc_bounds = True
-    opts.prune_unicode_ranges = True
-    subsetter = subset.Subsetter(opts)
-    subsetter.populate(unicodes=keep)
-    subsetter.subset(font)
+    base = static_base(_copy_instance(scp))
+    fix_zone_order(base)
+    dy = build.mona_baseline_shift(base, mona, MONA_K)
+    alts = {}
+    added = build.add_glyphs(base, mona, alts, build.LIGATURES, dy, cell=CELL)
+    build.replace_from_mona(base, mona,
+                            build.MONA_STANDALONE + build.MONA_AMBIGUOUS, dy, MONA_K)
+    add_missing_from_mona(base, mona, build.MONA_AMBIGUOUS, dy, MONA_K)
+    remap_scp_stylistic_sets(base)
+    build.add_gsub(base, added, alts, None, build.LIGATURES, None)
+    if "DSIG" in base:
+        del base["DSIG"]
+    use_typo_metrics(base)
+    base["OS/2"].recalcUnicodeRanges(base)
+    build.recalc_codepage_range(base)
+    build.set_monospace_metadata(base)
+    build.set_latin_heights(base)
+    ps = build.set_names(base, "", weight, italic,
+                         ref_angle if ref_angle is not None else -12.0,
+                         version=env.get("SHOYU_VERSION"), credits=credits,
+                         family_base=family, ps_base=ps_family, base_credit=None)
+    build.add_stat(base, weight, italic)
+    build.update_bbox(base)
+    fit_win_metrics(base)
+    out_path = Path(out_dir) / subdir
+    out_path.mkdir(parents=True, exist_ok=True)
+    out = out_path / f"{ps}.otf"
+    base.save(out)
+    # every glyph: fontTools' CFF2 instancing leaves the SCP outlines
+    # without their hints (the VF's charstrings carry them inside blended
+    # subroutines that the instancer flattens), so the whole font is
+    # hinted here against SCP's own alignment zones
+    build.autohint_face(out, base.getGlyphOrder())
+    build.subroutinize_face(out)
+    return (f"{label}: bar {target:.1f} ligs={len(added)} "
+            f"glyphs={base['maxp'].numGlyphs} -> {out.relative_to(out_dir)}", str(out))
 
-    ps_name = f"{PS_FAMILY}-{weight}{'Italic' if italic else ''}"
-    draw_notdef(font, ps_name)
-    if scp is not None:
-        copy_vertical_metrics(font, scp)
-    build.recalc_codepage_range(font)
-    font["OS/2"].recalcUnicodeRanges(font)
-    build.set_monospace_metadata(font)
-    build.set_latin_heights(font)
-    angle = font["post"].italicAngle or -12.0
-    ps = build.set_names(font, "", weight, italic, angle, version=version,
-                         credits=credits, family_base=FAMILY,
-                         ps_base=PS_FAMILY, base_credit=None)
-    build.add_stat(font, weight, italic)
-    build.update_bbox(font)
-    fit_win_metrics(font)
-    out = Path(out_dir) / f"{ps}.otf"
-    font.save(out)
-    return out, font["maxp"].numGlyphs, len(font.getBestCmap())
+
+def _copy_instance(scp):
+    """VFSource caches its converged instance; convertCFF2ToCFF mutates,
+    so work on a fresh load of the same bytes."""
+    buf = io.BytesIO()
+    scp.save(buf)
+    buf.seek(0)
+    return TTFont(buf)
 
 
 def main():
     only = sys.argv[1] if len(sys.argv) > 1 else None
-    dist = build.ROOT / "dist"
-    out_dir = dist / "latin"
+    env = {k: os.environ.get(k) for k in
+           ("SCP_VF_U", "SCP_VF_I", "MONA_VF", "SHCJ_TTC")}
+    missing = [k for k, v in env.items() if not v or not Path(v).exists()]
+    if missing:
+        sys.exit(f"missing env: {missing}")
+    env["SHOYU_VERSION"] = os.environ.get("SHOYU_VERSION")
+    out_dir = build.ROOT / "dist" / "latin"
     out_dir.mkdir(parents=True, exist_ok=True)
-    version = os.environ.get("SHOYU_VERSION")
-    scp = {False: os.environ.get("SCP_VF_U"), True: os.environ.get("SCP_VF_I")}
     jobs = []
-    for weight, _, _ in build.FACES:
-        for italic in (False, True):
-            label = f"{weight}{' Italic' if italic else ''}"
-            if not build.face_matches(only, weight, label, ""):
-                continue
-            src = dist / f"{SOURCE_FAMILY}-{weight}{'Italic' if italic else ''}.otf"
-            if not src.exists():
-                print(f"skip {label}: {src.name} not built")
-                continue
-            jobs.append((src, weight, italic))
+    for profile in PROFILES:
+        for weight, ref_name, _ in build.FACES:
+            for italic in (False, True):
+                label = f"{weight}{' Italic' if italic else ''}"
+                if not build.face_matches(only, weight, label, ""):
+                    continue
+                jobs.append((profile, weight, ref_name, italic, env, str(out_dir)))
     if not jobs:
-        sys.exit("no 35 faces to cut from; run scripts/build.py first")
-    outs = []
-    for src, weight, italic in jobs:
-        out, n, ncmap = build_latin(src, out_dir, weight, italic,
-                                    scp[italic], version)
-        print(f"{src.name} -> {out.name}: {n} glyphs, {ncmap} codepoints")
-        outs.append(out)
-    ascent, descent = harmonize_win_metrics(outs)
-    print(f"win metrics for the family: {ascent}/{descent}")
+        sys.exit(f"no face matches {only!r}")
+    outs = {p: [] for p in PROFILES}
+    failures = []
+
+    def done(job, result):
+        msg, path = result
+        print(msg)
+        outs[job[0]].append(path)
+
+    if only:
+        for job in jobs:
+            try:
+                done(job, build_face(job))
+            except Exception as exc:
+                failures.append((job[1], job[0], exc))
+    else:
+        with concurrent.futures.ProcessPoolExecutor() as pool:
+            futures = {pool.submit(build_face, j): j for j in jobs}
+            for fut in concurrent.futures.as_completed(futures):
+                job = futures[fut]
+                try:
+                    done(job, fut.result())
+                except Exception as exc:
+                    failures.append((job[1], job[0], exc))
+    for profile, paths in outs.items():
+        if paths:
+            a, d = harmonize_win_metrics(paths)
+            print(f"{profile}: win metrics {a}/{d} over {len(paths)} faces")
+    if failures:
+        for weight, profile, exc in failures:
+            print(f"FAILED {weight} [{profile}]: {exc!r}", file=sys.stderr)
+        sys.exit(f"{len(failures)}/{len(jobs)} faces failed")
 
 
 if __name__ == "__main__":

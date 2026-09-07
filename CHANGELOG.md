@@ -3,22 +3,31 @@
 ## v3.3.0
 
 - 欧文のみの新ファミリー Sumi Moji（仮称、PostScript 名 `SumiMoji-*`）を
-  追加。35 ファミリーから欧文レイヤー（build.py が追加したグリフ全部:
-  SCP の文字、Monaspace の記号32字と合字61種、SCP の cv/ss バリアント）
-  を切り出したもので、Source Han Sans のグリフは一切残らず（`.notdef` も
-  描き直し）クレジットは Source Code Pro と Monaspace のみ。合字と対に
-  なる11字は Monaspace の1セル版が既定。縦メトリクスは SHCJ ではなく
-  Source Code Pro 自身の宣言値。GSUB は calt/liga・ss01〜08・cv99・
-  zero/salt/cv01〜17/ss11〜17 を維持し、CJK 系と幅の代替
-  （hwid/fwid/ss09）は落とす。名前・STAT・等幅メタデータ・
-  x-height/cap-height・ヒント・サブルーチン化は JP ファミリーと同じ
-  仕組み。6ウェイト×2スタイルの12面（Regular は1,242グリフ/1,100
-  コードポイント/約105KB、Italic は957グリフ/851コードポイント —
-  SCP Italic VF のグリフ数がそもそも少ない）。CI（`ci.yml`）は Regular
-  ペアをビルド・検証、リリース（`release.yml`）は12面をビルドし2面を
-  検証したうえで `SumiMoji.zip`（LICENSE 同梱）をリリース資産に追加。
-  Nerd Fonts 変種・TTC、および build.py 側がこの欧文フォントを
-  消費するようにする段階（docs/sumi-moji-plan.md 段階1b）は未着手
+  追加し、`build.py` はこれを Source Han Sans に接ぎ木する側に変更
+  （VF に直接触らなくなった）。`scripts/build_latin.py` が VF から直接
+  組む: Source Han Code JP の `=` バーに合わせた Source Code Pro VF の
+  インスタンスを fontTools の CFF2ToCFF で静的 CID-keyed CFF に変換した
+  ものをベースに（SCP のアウトライン・アライメントゾーン・GSUB
+  （`cv01`〜`cv17` `zero` `salt`、SCP の stylistic set は `ss11`〜`ss17`
+  に移動）・GPOS のマーク位置決めはそのまま生存）、インスタンス化で
+  失われるヒントを SCP 自身のゾーンに対して otfautohint で付け直し、
+  Monaspace の合字61種・ASCII 記号32字・1セル矢印（SCP に無い `⇔` も
+  追加）を接ぎ木し、cffsubr でサブルーチン化する。プロファイルは2つ:
+  配布物 `dist/latin`（バー = SHCJ のバー × 600/667、35 と同じ太さ）と
+  内部専用 `dist/latin/term`（バー = SHCJ のバー を 600 のまま、Term
+  ファミリー用ドナー）。結合文字は SCP が出荷する形（スペーシング、
+  GPOS mark で位置決め）のまま。縦メトリクスは SCP 自身の hhea
+  （984/-273）、typo を hhea と同値にして `USE_TYPO_METRICS` を立て、
+  win はファミリー全面のバウンディングボックス（Regular ペアで
+  1060/454）。Regular は1,632グリフ/約140KB、Italic は1,335グリフ
+  （SCP Italic VF のグリフ数がそもそも少ない）。CI（`ci.yml`）は
+  `build_latin.py` を先に走らせてから Regular ペアをビルド・検証、
+  リリース（`release.yml`）も同じ順序で12面をビルドし2面を検証した
+  うえで `SumiMoji.zip`（LICENSE 同梱）をリリース資産に追加。JP 側の
+  出力は roundoff（±1〜2ユニット）を除き従来の VF 直接ビルドと同一に
+  なるよう意図しており、`scripts/golden.py` が2つの dist ディレクトリ
+  間で cmap・送り幅・シェーピング・アウトライン（許容誤差つき）・
+  メタデータ・ヒントを比較する。Nerd Fonts 変種・TTC はまだ無い
 - 合字を50種から61種に拡張。Monaspace が描いているが `data/mona_ligs.json`
   が未収録だった11種を追加: 真の合字5つ `!~` `=~`（正規表現マッチ、ss01）、
   `~~>`（ss02）、`<!--`（ss03、4セル）、`&&=`（ss08）と、`::`/`:=` と同じ

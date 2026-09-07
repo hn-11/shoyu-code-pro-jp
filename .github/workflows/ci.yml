@@ -56,18 +56,20 @@ jobs:
           curl -sSfL -o /tmp/FontPatcher.zip \
             https://github.com/ryanoasis/nerd-fonts/releases/download/${FONTPATCHER_TAG}/FontPatcher.zip
           unzip -qo /tmp/FontPatcher.zip -d FontPatcher
+      # the Latin layer (Sumi Moji, provisional name) is assembled first
+      # from the VFs; build.py grafts it into Source Han Sans
+      - run: python scripts/build_latin.py "Regular"
+      - run: python scripts/verify_latin.py dist/latin/SumiMoji-Regular.otf
+      - run: python scripts/verify_latin.py dist/latin/SumiMoji-RegularItalic.otf
+      - run: python scripts/verify_latin.py dist/latin/term/SumiMojiTerm-Regular.otf
       - run: python scripts/build.py "Regular"
       - run: python scripts/verify.py dist/ShoyuCodeProJP-Regular.otf
       - run: python scripts/verify.py dist/ShoyuCodeProJP35-Regular.otf
       - run: python scripts/verify.py dist/ShoyuCodeProJP-RegularItalic.otf
       - run: python scripts/verify.py dist/ShoyuCodeProJPTerm-Regular.otf
-      # Latin-only faces (Sumi Moji, provisional name) are cut from the
-      # 35 faces just built
-      - run: python scripts/build_latin.py "Regular"
-      - run: python scripts/verify_latin.py dist/latin/SumiMoji-Regular.otf
-      - run: python scripts/verify_latin.py dist/latin/SumiMoji-RegularItalic.otf
       # Light is the only weight that hits Monaspace's wght floor and takes
       # the erosion path (mona_glyphset / erode_path) — cover it here too.
+      - run: python scripts/build_latin.py "Light Italic"
       - run: python scripts/build.py "Light Italic"
       - run: python scripts/verify.py dist/ShoyuCodeProJP-LightItalic.otf
       - name: Nerd-patch smoke test (one font)

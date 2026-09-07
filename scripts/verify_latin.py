@@ -32,8 +32,15 @@ def main():
 
     name = tf["name"]
     fam = name.getDebugName(16) or name.getDebugName(1)
-    check(fam == build_latin.FAMILY, f"family name {fam!r}")
-    check((name.getDebugName(6) or "").startswith(build_latin.PS_FAMILY + "-"),
+    # a Nerd Fonts variant (e.g. "Sumi Moji NF") splices "NF" in as its own
+    # token after the family, same convention verify.py uses for the JP
+    # families — strip it before matching against the known family names.
+    is_nf = bool(fam) and " NF" in fam
+    base_fam = " ".join(t for t in (fam or "").split(" ") if t != "NF")
+    families = {p[1]: p[2] for p in build_latin.PROFILES.values()}
+    check(base_fam in families, f"family name {fam!r}")
+    ps_family = families.get(base_fam, "?") + ("NF" if is_nf else "")
+    check((name.getDebugName(6) or "").startswith(ps_family + "-"),
           f"PostScript name {name.getDebugName(6)!r}")
     n0 = name.getDebugName(0) or ""
     check("Source Code Pro:" in n0 and "Monaspace:" in n0
@@ -56,22 +63,38 @@ def main():
 
     cff = tf["CFF "].cff
     td = cff[cff.fontNames[0]]
-    check(len(td.FDArray) == 1 and td.FDArray[0].FontName.endswith("-Latin"),
-          f"one FontDict: {[fd.FontName for fd in td.FDArray]}")
-    cs = td.CharStrings[cmap[ord("H")]]
-    cs.decompile()
-    ops = [t for t in cs.program if isinstance(t, str)]
-    check(any(o in ops for o in ("hstem", "vstem", "hstemhm", "vstemhm",
-                                 "hintmask", "callsubr")),
-          "'H' carries hints")
+    check(len(td.FDArray) == 1,
+          f"one FontDict ({[getattr(fd, 'FontName', '?') for fd in td.FDArray]})")
+    private = td.FDArray[0].Private
+
+    def hinted(cs, depth=0):
+        """Hint operators, following (cffsubr's) subroutine calls."""
+        cs.decompile()
+        prog = cs.program
+        for i, t in enumerate(prog):
+            if t in ("hstem", "vstem", "hstemhm", "vstemhm", "hintmask"):
+                return True
+            if t in ("callsubr", "callgsubr") and depth < 6:
+                subrs = private.Subrs if t == "callsubr" else cff.GlobalSubrs
+                n = len(subrs)
+                bias = 107 if n < 1240 else 1131 if n < 33900 else 32768
+                if hinted(subrs[prog[i - 1] + bias], depth + 1):
+                    return True
+        return False
+    for ch in "HAx=":
+        check(hinted(td.CharStrings[cmap[ord(ch)]]), f"{ch!r} carries hints")
 
     tags = {fr.FeatureTag for fr in tf["GSUB"].table.FeatureList.FeatureRecord}
     for tag in ("calt", "liga", "ss01", "ss08", "cv99", "zero", "cv01", "ss11"):
         check(tag in tags, f"GSUB has {tag}")
     for tag in ("vert", "hwid", "fwid", "ss09", "jp78", "pwid"):
-        check(tag not in tags, f"GSUB dropped {tag}")
-    for tbl in ("vhea", "vmtx", "VORG", "BASE", "GPOS", "DSIG"):
+        check(tag not in tags, f"GSUB has no {tag}")
+    for tbl in ("vhea", "vmtx", "VORG", "DSIG"):
         check(tbl not in tf, f"no {tbl} table")
+    gpos = {fr.FeatureTag for fr in tf["GPOS"].table.FeatureList.FeatureRecord} \
+        if "GPOS" in tf else set()
+    check("mark" in gpos and "kern" not in gpos,
+          f"GPOS keeps SCP's mark positioning, no kern ({sorted(gpos)})")
     check("STAT" in tf, "STAT present")
 
     os2 = tf["OS/2"]

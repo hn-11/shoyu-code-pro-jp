@@ -3,18 +3,21 @@
 
 Recipe (Source Han Mono's approach, re-executed against latest releases):
   - Japanese / full-width layer: Source Han Sans JP (latest, per weight)
-  - Half-width Latin layer:      Source Code Pro VF, scaled 10/9 to 667
+  - Half-width Latin layer:      Sumi Moji (dist/latin, scripts/build_latin.py):
+                                 Source Code Pro VF + Monaspace's punctuation,
+                                 ligatures and one-cell arrows, already
+                                 weight-paired to Source Han Code JP's '=' bar
+                                 at the 600 cell; scaled 10/9 to 667 here
                                  (Adobe's own SHCJ derivation, re-run)
-  - Ligatures (50), = < > | ~:   Monaspace VF (data/mona_ligs.json)
-  - Source Han Code JP serves as the PAIRING REFERENCE — each face's '='
-    bar thickness decides the SCP/Monaspace wght instance — and as the
-    donor for half-width glyphs SCP lacks (half-width kana etc.), plus
-    the vertical line metrics, so the rendered result stays continuous
-    with what SHCJ users know.
+  - Source Han Code JP serves as the PAIRING REFERENCE (build_latin.py
+    matches the VF wght to each face's '=' bar) and as the donor for
+    half-width glyphs SCP lacks (half-width kana etc.), plus the vertical
+    line metrics, so the rendered result stays continuous with what SHCJ
+    users know.
 
-All weight pairing is by measurement (binary search on the VF wght axis),
-not by name. Italic faces take SCP Italic VF + upright Japanese, matching
-SHCJ's own behavior.
+Italic faces take the Sumi Moji Italic + upright Japanese, matching
+SHCJ's own behavior. The Term family (Latin not scaled down, so paired
+heavier) takes the internal "term" profile from dist/latin/term.
 
 Families (suffix -> half-width cell):
   ""     667  2:3 (SHCJ metrics) — editor AND terminal, as SHCJ always was
@@ -39,9 +42,10 @@ Usage:
   never deletes anything.
 
 Env (all required):
-  SHS_DIR  = dir with SourceHanSansJP-<Weight>.otf
-  SCP_VF_U = SourceCodeVF-Upright.otf   SCP_VF_I = SourceCodeVF-Italic.otf
-  SHCJ_TTC = upstream/SourceHanCodeJP.ttc (default)   MONA_VF = Monaspace VF
+  SHS_DIR   = dir with SourceHanSansJP-<Weight>.otf
+  SHCJ_TTC  = upstream/SourceHanCodeJP.ttc (default)
+  LATIN_DIR = dist/latin (default) — scripts/build_latin.py's output; it
+              needs SCP_VF_U / SCP_VF_I / MONA_VF and must run first
 
 Env (optional):
   SHOYU_VERSION = our own release version, e.g. "3.1.0" — stamps
@@ -109,10 +113,27 @@ WEIGHT_CLASS = {"Light": 300, "Normal": 350, "Regular": 400,
                 "Medium": 500, "Bold": 700, "Heavy": 900}
 
 
+# The Latin donor faces scripts/build_latin.py writes: profile -> (subdir
+# under LATIN_DIR, family name, PostScript family). "ship" is the Sumi
+# Moji that is released; "term" is paired to SHCJ's bar at 600 unscaled,
+# for the Term family only.
+LATIN_PROFILES = {
+    "ship": ("", "Sumi Moji", "SumiMoji"),
+    "term": ("term", "Sumi Moji Term", "SumiMojiTerm"),
+}
+
+
+def latin_face_path(latin_dir, profile, weight, italic):
+    subdir, _, ps_family = LATIN_PROFILES[profile]
+    return (Path(latin_dir) / subdir
+            / f"{ps_family}-{weight}{'Italic' if italic else ''}.otf")
+
+
 class Variant(NamedTuple):
     cell: int    # half-width advance
-    comp: bool   # re-match stroke weight AFTER rescale so Latin keeps
-                 # SHCJ's CJK pairing (69/1000em bar). Without comp a
+    comp: bool   # take the "term" Latin profile: paired to SHCJ's bar at
+                 # 600 unscaled, so after the rescale the Latin keeps
+                 # SHCJ's CJK pairing (69/1000em bar). Without comp the
                  # rescaled Latin keeps Source Code Pro's native weight.
     term: bool   # widen full-width advances to 2 cells (centered); EAW-
                  # ambiguous codepoints take a one-cell Monaspace / SCP glyph
@@ -628,12 +649,16 @@ def graft_halfwidth(base, scp, ref):
 
 
 def _remap_scp_tag(tag):
-    """SCP feature tags, shifted around our own: ssNN -> ss(NN+10) because
-    ss01-ss08 are the ligature groups; cv/zero/salt keep their names."""
+    """SCP feature tags, shifted around our own: ss01-ss10 -> ss11-ss20
+    because ss01-ss08 are the ligature groups; ss11 and up are already
+    shifted (Sumi Moji carries them that way); cv/zero/salt keep their
+    names. Everything else (case, frac, sups...) is not a glyph variant
+    we mount."""
     if tag in ("zero", "salt") or tag.startswith("cv"):
         return tag
-    if tag.startswith("ss"):
-        return f"ss{int(tag[2:]) + 10:02d}"
+    if tag.startswith("ss") and tag[2:].isdigit():
+        n = int(tag[2:])
+        return f"ss{n + 10:02d}" if n <= 10 else tag
     return None
 
 
@@ -695,6 +720,8 @@ def import_scp_variants(base, scp, default_map):
     tag_maps = {}
     tag_names = {}
     for fr in gsub.FeatureList.FeatureRecord:
+        if fr.FeatureTag in GROUP_NAMES:   # Sumi Moji's own ss01-ss08 / cv99
+            continue
         tag = _remap_scp_tag(fr.FeatureTag)
         if tag is None:
             continue
@@ -805,6 +832,106 @@ def mona_onecell(font, cell, mona, chars=MONA_AMBIGUOUS):
                      fd_index, cell, None, vdon)
         out[cp] = name
     return out
+
+
+def latin_onecell(font, cell, latin, chars=MONA_AMBIGUOUS):
+    """One-cell glyphs for `chars` copied from the Latin donor (Monaspace's
+    designs, already weight-paired and baseline-aligned there) at this
+    family's cell. Appends them and returns {codepoint: glyph name}; the
+    cmap is NOT touched — Term makes them the default (narrow_ambiguous),
+    the 2:3 / 35 families expose them under hwid / ss09."""
+    cff = font["CFF "].cff
+    td = cff[cff.fontNames[0]]
+    cmap = font.getBestCmap()
+    fd_index = td.FDSelect[font.getGlyphID(cmap[ord("A")])]
+    private = td.FDArray[fd_index].Private
+    vdon = vmtx_donor(font, fullwidth=False)
+    lcm, lgs = latin.getBestCmap(), latin.getGlyphSet()
+    k = cell / SCP_CELL
+    out = {}
+    for ch in chars:
+        cp = ord(ch)
+        if cp not in cmap or cp not in lcm:
+            continue
+        pen = T2CharStringPen(pen_width(private, cell), lgs)
+        draw_clean([(lgs, lcm[cp], (k, 0, 0, k, 0, 0))], pen)
+        name = alloc_glyph_name(font)
+        append_glyph(font, td, name, pen.getCharString(private=private),
+                     fd_index, cell, None, vdon)
+        out[cp] = name
+    return out
+
+
+def latin_ligatures(font, latin, latin_path, alts, ligatures=None):
+    """Append the ligature glyphs by copying them out of the Latin donor:
+    each sequence is shaped there (HarfBuzz, calt+liga) to find its glyph,
+    and again with cv99 for the alternate design. Drawn at CELL per input
+    character (the donor's 600 scaled 10/9). Returns {seq: glyph name};
+    alternates land in `alts`."""
+    import uharfbuzz as hb
+    ligatures = LIGATURES if ligatures is None else ligatures
+    cff = font["CFF "].cff
+    td = cff[cff.fontNames[0]]
+    cmap = font.getBestCmap()
+    fd_index = td.FDSelect[font.getGlyphID(cmap[0x2260])]
+    private = td.FDArray[fd_index].Private
+    vdon = vmtx_donor(font, fullwidth=False)
+    lgs = latin.getGlyphSet()
+    order = latin.getGlyphOrder()
+    hbfont = hb.Font(hb.Face(hb.Blob.from_file_path(str(latin_path))))
+
+    def shaped(text, feats):
+        buf = hb.Buffer()
+        buf.add_str(text)
+        buf.guess_segment_properties()
+        hb.shape(hbfont, buf, feats)
+        return [order[i.codepoint] for i in buf.glyph_infos]
+
+    added = {}
+    n_alt = 0
+    for seq, spec in ligatures.items():
+        glyphs = shaped(seq, {"calt": True, "liga": True})
+        if len(glyphs) != 1:
+            print(f"  skip {seq!r}: the Latin donor shapes it to {len(glyphs)} glyphs")
+            continue
+        if any(ord(c) not in cmap for c in seq):
+            print(f"  skip {seq!r}: component not in target cmap")
+            continue
+        width = CELL * spec["cells"]
+        pen = T2CharStringPen(pen_width(private, width), lgs)
+        draw_clean([(lgs, glyphs[0], (SCP_K, 0, 0, SCP_K, 0, 0))], pen)
+        name = alloc_glyph_name(font)
+        append_glyph(font, td, name, pen.getCharString(private=private),
+                     fd_index, width, None, vdon)
+        added[seq] = name
+        alt = shaped(seq, {"calt": True, "liga": True, "cv99": True})
+        if len(alt) == 1 and alt[0] != glyphs[0]:
+            pen = T2CharStringPen(pen_width(private, width), lgs)
+            draw_clean([(lgs, alt[0], (SCP_K, 0, 0, SCP_K, 0, 0))], pen)
+            alt_name = alloc_glyph_name(font)
+            append_glyph(font, td, alt_name, pen.getCharString(private=private),
+                         fd_index, width, None, vdon)
+            alts[name] = alt_name
+            n_alt += 1
+    print(f"  ligatures from the Latin donor: {len(added)}, cv99 alternates: {n_alt}")
+    return added
+
+
+def donor_credits(latin):
+    """(label, copyright, designer) for Source Code Pro and Monaspace,
+    parsed back out of the Latin donor's name IDs 0 / 9, which
+    build_latin.py composed as "...; Source Code Pro: ...; Monaspace: ..."."""
+    import re
+    name = latin["name"]
+    out = {}
+    for nid, sep in ((0, " "), (9, "; ")):
+        text = name.getDebugName(nid) or ""
+        for label in ("Source Code Pro", "Monaspace"):
+            m = re.search(rf"(?:^|{re.escape(sep)}){re.escape(label)}: (.*?)"
+                          rf"(?={re.escape(sep)}(?:Source Code Pro|Monaspace): |$)",
+                          text, re.S)
+            out.setdefault(label, {})[nid] = m.group(1).strip() if m else None
+    return [(label, v.get(0), v.get(9)) for label, v in out.items()]
 
 
 def _rect_path(x0, y0, x1, y1):
@@ -940,18 +1067,19 @@ def stretch_arrows(font, added, slant=0.0, chars=ARROWS_H + ARROWS_V):
     return swapped
 
 
-def narrow_ambiguous(font, cell, scp, mona):
+def narrow_ambiguous(font, cell, latin):
     """Term (1:2) only: settle the East-Asian-Width Ambiguous/Narrow
     codepoints that carry full-width (1000) glyphs, the way HackGen Console
     / PlemolJP Console / Moralerspace HW do:
 
-      - MONA_AMBIGUOUS (arrows, ≠ ≤ ≥ …): Monaspace's one-cell glyph, from
-        the same instance as the ligatures they sit next to.
-      - SCP has the character (× ÷ ° ■ Greek, accented Latin, Cyrillic, and
-        all 160 box-drawing / block elements): SCP's own one-cell glyph,
-        already weight-matched — a real half-width design instead of a
-        shrunken full-width one. SCP's box drawing runs -400..1000 so it
-        tiles under any line spacing.
+      - MONA_AMBIGUOUS (arrows, ≠ ≤ ≥ …): Sumi Moji's one-cell glyph —
+        Monaspace's, from the same instance as the ligatures they sit
+        next to.
+      - Sumi Moji has the character (× ÷ ° ■ Greek, accented Latin,
+        Cyrillic, and all 160 box-drawing / block elements): its (Source
+        Code Pro's) one-cell glyph, already weight-matched — a real
+        half-width design instead of a shrunken full-width one. SCP's box
+        drawing runs -400..1000 so it tiles under any line spacing.
       - everything else (① ※ ⌘ ★ ...): left full-width. Terminals that
         count ambiguous as narrow overprint the next cell, exactly as they
         do with HackGen; `compatibility.ambiguousWidth: wide` (Windows
@@ -968,9 +1096,9 @@ def narrow_ambiguous(font, cell, scp, mona):
     fd_index = td.FDSelect[font.getGlyphID(cmap[ord("A")])]
     private = td.FDArray[fd_index].Private
     vdon = vmtx_donor(font, fullwidth=False)
-    scp_cm, scp_gs = scp.getBestCmap(), scp.getGlyphSet()
+    scp_cm, scp_gs = latin.getBestCmap(), latin.getGlyphSet()
     scp_k = cell / SCP_CELL
-    onecell = mona_onecell(font, cell, mona)
+    onecell = latin_onecell(font, cell, latin)
     n_mona = len(onecell)
     swapped = {}
     made = {}  # scp glyph -> one-cell glyph (dedup shared sources)
@@ -1236,16 +1364,17 @@ def mona_baseline_shift(font, mona, k=MONA_K):
 MONA_STANDALONE = string.punctuation   # !"#$%&'()*+,-./:;<=>?@[\]^_`{|}~
 
 
-def replace_from_mona(font, mona, chars=MONA_STANDALONE, dy=None):
+def replace_from_mona(font, mona, chars=MONA_STANDALONE, dy=None, k=MONA_K):
     """Swap the outlines of `chars` for Monaspace's, keeping name, advance
-    and cmap. Same instance, scale, shear and baseline as the ligatures."""
+    and cmap. Same instance, scale (`k`), shear and baseline as the
+    ligatures. Characters missing on either side are skipped."""
     cff = font["CFF "].cff
     td = cff[cff.fontNames[0]]
     cmap = font.getBestCmap()
     mona_cmap = mona.getBestCmap()
     mona_gs = mona_glyphset(mona)
     if dy is None:
-        dy = mona_baseline_shift(font, mona)
+        dy = mona_baseline_shift(font, mona, k)
     replaced = []
     for ch in chars:
         name = cmap.get(ord(ch))
@@ -1257,7 +1386,7 @@ def replace_from_mona(font, mona, chars=MONA_STANDALONE, dy=None):
         private = td.FDArray[td.FDSelect[gid]].Private
         adv = font["hmtx"].metrics[name][0]
         pen = T2CharStringPen(pen_width(private, adv), font.getGlyphSet())
-        draw_clean([(mona_gs, src, mona_transform(mona, 0, dy))], pen)
+        draw_clean([(mona_gs, src, mona_transform(mona, 0, dy, k))], pen)
         cs = pen.getCharString(private=private)
         td.CharStrings.charStringsIndex[td.CharStrings.charStrings[name]] = cs
         font["hmtx"].metrics[name] = (adv, charstring_lsb(cs))
@@ -1266,10 +1395,12 @@ def replace_from_mona(font, mona, chars=MONA_STANDALONE, dy=None):
     return replaced
 
 
-def add_glyphs(font, mona, alts, ligatures=None, dy=None):
-    """Append the imported ligature glyphs; return {seq: glyph name}.
-    Alternate (.alt) designs are appended too and recorded in `alts`."""
+def add_glyphs(font, mona, alts, ligatures=None, dy=None, cell=CELL):
+    """Append the imported ligature glyphs at `cell` per input character;
+    return {seq: glyph name}. Alternate (.alt) designs are appended too
+    and recorded in `alts`."""
     ligatures = LIGATURES if ligatures is None else ligatures
+    k = cell / MONA_CELL
     cff = font["CFF "].cff
     td = cff[cff.fontNames[0]]
     cmap = font.getBestCmap()
@@ -1278,7 +1409,7 @@ def add_glyphs(font, mona, alts, ligatures=None, dy=None):
     vdon = vmtx_donor(font, fullwidth=False)
 
     if dy is None:
-        dy = mona_baseline_shift(font, mona)
+        dy = mona_baseline_shift(font, mona, k)
     # FD assignment: reuse the FD of an existing symbol glyph
     fd_index = td.FDSelect[font.getGlyphID(cmap[0x2260])]
     private = td.FDArray[fd_index].Private
@@ -1293,20 +1424,19 @@ def add_glyphs(font, mona, alts, ligatures=None, dy=None):
             print(f"  skip {seq!r}: component not in target cmap")
             continue
         cells = spec["cells"]
-        width = CELL * cells
+        width = cell * cells
         if len(spec["glyphs"]) == 1:
             # a single spanning glyph is drawn in its final cell; shift right
-            offsets = [(cells - 1) * MONA_CELL * MONA_K]
+            offsets = [(cells - 1) * cell]
         else:
             # composed sequences: one part per cell, unless "at" says which
             # cell each part sits in ('&&=' is ampersand.init in cell 0 and
             # the 2-cell ampersand_equal, drawn in its final cell, at 2)
-            offsets = [c * MONA_CELL * MONA_K
-                       for c in spec.get("at", range(len(spec["glyphs"])))]
+            offsets = [c * cell for c in spec.get("at", range(len(spec["glyphs"])))]
         pen = T2CharStringPen(pen_width(private, width), font.getGlyphSet())
         # composed sequences (':=' etc.) overlap by construction — the same
         # pathops pass the .alt path uses removes the seams
-        draw_clean([(mona_gs, gname, mona_transform(mona, dx, dy))
+        draw_clean([(mona_gs, gname, mona_transform(mona, dx, dy, k))
                     for gname, dx in zip(spec["glyphs"], offsets)], pen)
         name = alloc_glyph_name(font)
         append_glyph(font, td, name, pen.getCharString(private=private),
@@ -1319,7 +1449,7 @@ def add_glyphs(font, mona, alts, ligatures=None, dy=None):
                       for g in spec["glyphs"]]
         if any(g.endswith(".alt") for g in alt_glyphs):
             pen = T2CharStringPen(pen_width(private, width), font.getGlyphSet())
-            draw_clean([(mona_gs, gname, mona_transform(mona, dx, dy))
+            draw_clean([(mona_gs, gname, mona_transform(mona, dx, dy, k))
                         for gname, dx in zip(alt_glyphs, offsets)], pen)
             alt_name = alloc_glyph_name(font)
             append_glyph(font, td, alt_name, pen.getCharString(private=private),
@@ -1904,30 +2034,23 @@ def build_face(job):
     (suffix, cell, comp, term, weight, ref_name, shs_file, italic,
      env, shcj_ttc, out_dir) = job
     face_label = f"{weight}{' Italic' if italic else ''}"
-    mona_src = _vf_source(env["MONA_VF"], MONA_K,
-                          {"wght": 0, "wdth": 100, "slnt": 0})
-    scp_src = _vf_source(env["SCP_VF_I" if italic else "SCP_VF_U"], SCP_K,
-                         {"wght": 0})
+    latin_path = latin_face_path(env["LATIN_DIR"], "term" if comp else "ship",
+                                 weight, italic)
+    if not latin_path.exists():
+        raise FileNotFoundError(f"{latin_path}: run scripts/build_latin.py first")
+    latin = TTFont(latin_path)
     ref = _shcj_ref(shcj_ttc, ref_name + (" Italic" if italic else ""))
-    target = bar_thickness(ref, ref.getBestCmap()[ord("=")])
-    if comp:
-        target *= CELL / cell  # pre-inflate; rescale undoes it
-    scp = scp_src.matched(target)
     base = TTFont(Path(env["SHS_DIR"]) / shs_file)
-    n_scp, n_ref, default_map, marks = graft_halfwidth(base, scp, ref)
+    n_scp, n_ref, default_map, marks = graft_halfwidth(base, latin, ref)
     classify_marks(base, marks)
-    variant_maps, variant_names = import_scp_variants(base, scp, default_map)
+    variant_maps, variant_names = import_scp_variants(base, latin, default_map)
     copy_line_metrics(base, ref)
-    # the outlines' real slant lives in the SCP Italic instance; SHCJ's
-    # italic faces declare italicAngle=0, so they can't be the source
-    ref_angle = (scp["post"].italicAngle or ref["post"].italicAngle or -12.0) \
+    # the outlines' real slant lives in the Latin donor (SCP Italic's);
+    # SHCJ's italic faces declare italicAngle=0, so they can't be the source
+    ref_angle = (latin["post"].italicAngle or ref["post"].italicAngle or -12.0) \
         if italic else None
-    mona = mona_src.matched(target, ref_angle)
-    # dy is measured once, on SCP's '=' before either import swaps it out
-    dy = mona_baseline_shift(base, mona)
     alts = {}
-    added = add_glyphs(base, mona, alts, LIGATURES, dy)
-    replace_from_mona(base, mona, dy=dy)
+    added = latin_ligatures(base, latin, latin_path, alts, LIGATURES)
     add_gsub(base, added, alts, variant_maps, LIGATURES, variant_names)
     if cell != CELL:
         rescale(base, cell, also_rescale=marks)
@@ -1944,7 +2067,7 @@ def build_face(job):
         # ambiguous-width first (adv==1000 probe), then widen CJK; the
         # replaced full-width forms of the ligature-paired 11 stay
         # reachable under fwid
-        swapped = narrow_ambiguous(base, cell, scp, mona)
+        swapped = narrow_ambiguous(base, cell, latin)
         widen_fullwidth(base, cell)
         add_width_alternates(base, fwid={
             new: old for cp, (old, new) in swapped.items()
@@ -1953,7 +2076,7 @@ def build_face(job):
         # full-width stays the default (SHCJ's look), but the arrows are
         # redrawn from Monaspace at full width, and every ligature-paired
         # symbol has a one-cell Monaspace form under hwid / ss09
-        onecell = mona_onecell(base, cell, mona)
+        onecell = latin_onecell(base, cell, latin)
         stretch_arrows(base, added, ref_angle if ref_angle is not None else 0.0)
         cmap_now = base.getBestCmap()
         halfwidth = {cmap_now[cp]: name for cp, name in onecell.items()}
@@ -1964,11 +2087,7 @@ def build_face(job):
     set_monospace_metadata(base)
     set_latin_heights(base)
     add_latin_fd(base)
-    credits = [(label, donor["name"].getDebugName(0)
-                or donor["name"].getDebugName(7),
-                donor["name"].getDebugName(9))
-               for label, donor in (("Source Code Pro", scp),
-                                    ("Monaspace", mona))]
+    credits = donor_credits(latin)
     ps = set_names(base, suffix, weight, italic,
                    ref_angle if ref_angle is not None else -12.0,
                    version=env.get("SHOYU_VERSION"), credits=credits)
@@ -2009,10 +2128,10 @@ def _shcj_ref(ttc_path, name):
 
 def main():
     only = sys.argv[1] if len(sys.argv) > 1 else None
-    env = {k: os.environ.get(k) for k in
-           ("SHS_DIR", "SCP_VF_U", "SCP_VF_I", "MONA_VF")}
+    env = {"SHS_DIR": os.environ.get("SHS_DIR")}
     env["SHCJ_TTC"] = os.environ.get(
         "SHCJ_TTC", str(ROOT / "upstream" / "SourceHanCodeJP.ttc"))
+    env["LATIN_DIR"] = os.environ.get("LATIN_DIR", str(ROOT / "dist" / "latin"))
     missing = [k for k, v in env.items() if not v or not Path(v).exists()]
     if missing:
         sys.exit(f"missing env: {missing}")
