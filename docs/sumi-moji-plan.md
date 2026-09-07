@@ -43,6 +43,9 @@ Shoyu Code Pro JP の欧文層（Source Code Pro の文字 + Monaspace の記号
 5. `scripts/verify.py` の `FAMILY_METRICS` 判定（ファミリー名のトークン）
 6. README / CHANGELOG / LICENSE の名前と、リポジトリ名・`git remote`
 
+命名上の注意:
+
+
 - OFL の Reserved Font Name により `Source` と `Monaspace` はフォント名に
   使えない。OFL FAQ 5.4 は「RFN の単語全体は不可、単語の一部は可だが非推奨」
   で、`Monasource` は `Source` を丸ごと含むため不可側。`Sumi Moji` は
@@ -58,7 +61,7 @@ Shoyu Code Pro JP の欧文層（Source Code Pro の文字 + Monaspace の記号
 
 - Source Code Pro VF の全レパートリー（ラテン・ギリシャ・キリル・記号・
   結合文字・罫線）。SCP 原寸（600 セル、1000 em）
-- ASCII 記号 32 字と合字 50 種は Monaspace（現行と同じ選定、`data/mona_ligs.json`）
+- ASCII 記号 32 字と合字 61 種は Monaspace（現行と同じ選定、`data/mona_ligs.json`）
 - `← → ↑ ↓ ⇐ ⇒ ⇔ ≠ ≤ ≥ …` は **1 セルの Monaspace 版を既定**にする
   （欧文フォントに全角は無い。JP で使う全角版は JP 側で合字グリフから切り出す、
   現行 `stretch_arrows` のまま）
@@ -67,17 +70,18 @@ Shoyu Code Pro JP の欧文層（Source Code Pro の文字 + Monaspace の記号
 
 ### 3.2 GSUB / GPOS
 
-- `calt` / `liga`: 合字 50 種 + 文脈ガード（入力列を全構成グリフでカバーする
+- `calt` / `liga`: 合字 61 種 + 文脈ガード（入力列を全構成グリフでカバーする
   トリガールール、最長一致順）
 - `ss01`〜`ss08`: 合字グループ、`cv99`: .alt 字形。`ss09` は JP 専用
   （欧文版は既定が 1 セルなので不要）
 - SCP 由来: `zero` `salt` `cv01`〜`cv17` `ss11`〜`ss17`（+10 マウントは JP との
   整合のため維持）
-- GPOS は持たない（等幅。SCP VF の `kern` は取り込まない）
+- GPOS は SCP 自身のもの（結合文字の `mark` / `mkmk`、`frac`、`size`）を保持。`kern` は無い（等幅）
 
 ### 3.3 メトリクス
 
-- 送り 600、UPM 1000、行間は SCP の宣言値（hhea / OS/2 typo・win）。JP に
+- 送り 600、UPM 1000。行間は SCP の hhea 値（984 / -273）で、OS/2 typo を同じ値にして
+  USE_TYPO_METRICS を立て、win はファミリー全面のバウンディングボックスの最大値。JP に
   載せるときは現行どおり SHCJ の行間に差し替える
 - `post.isFixedPitch=1`、PANOSE proportion 9、xAvgCharWidth は実計算、
   sxHeight / sCapHeight は実測（JP と同じ関数）
@@ -94,8 +98,10 @@ Shoyu Code Pro JP の欧文層（Source Code Pro の文字 + Monaspace の記号
 
 ### 3.5 ヒント
 
-- 面ごとに専用 FontDict（測定したゾーン）+ otfautohint、cffsubr でサブルーチン化
-  （現行 v3.3.0 の仕組みをそのまま移す）
+- SCP VF をインスタンス化するとヒントが落ちる（fontTools の CFF2 インスタンサ）ため、
+  SCP 自身のアライメントゾーン（Private の BlueValues 等。インスタンス化で
+  ペアが逆順になることがあるので並べ直す）に対して全グリフを otfautohint で
+  ヒント付けし、cffsubr でサブルーチン化。JP 側は接ぎ木後に自分のゾーンで付け直す
 - VF（CFF2）は otfautohint が対応しているが、ヒントはデフォルト
   マスターのみに乗る。静的インスタンスを配布するならインスタンス後に付け直す
 
