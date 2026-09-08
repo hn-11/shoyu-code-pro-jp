@@ -184,7 +184,7 @@ cmap・GSUB の shaping 結果が roundoff（±1〜2ユニット）を除いて�
 1. ✅ デザインスペース: SCP VF 自身のマスター位置——**wght 200 / 400**
    （事前の見積りは「約 458」だったが、CFF2 の VarStore 領域のピークを
    avar/fvar 経由で逆算すると実際は 400 だった。決め打ちせず
-   `build_latin.confirm_scp_master_wghts` が毎回読み直す）に **Regular
+   `build_latin_vf.confirm_scp_master_wghts` が毎回読み直す）に **Regular
    と Heavy の位置**（既定マスターと軸の上限。SCP の 900 マスターは上限
    の外）と **Monaspace の下限位置**（Monaspace の wght 200 のバーが
    SCP のバーと一致する SCP wght。これより細い側は Monaspace が下限で

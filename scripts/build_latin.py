@@ -93,12 +93,8 @@ def fix_zone_order(font):
 def add_missing_from_mona(font, mona, chars, dy, k):
     """Characters Source Code Pro lacks but Monaspace has (⇔): append the
     one-cell Monaspace glyph and map it."""
-    cff = font["CFF "].cff
-    td = cff[cff.fontNames[0]]
-    cmap = font.getBestCmap()
+    td, cmap, fd_index, private, vdon = build.append_context(font)
     mona_cm, mona_gs = mona.getBestCmap(), build.mona_glyphset(mona)
-    fd_index = td.FDSelect[font.getGlyphID(cmap[ord("A")])]
-    private = td.FDArray[fd_index].Private
     new = {}
     for ch in chars:
         cp = ord(ch)
@@ -108,7 +104,7 @@ def add_missing_from_mona(font, mona, chars, dy, k):
         build.draw_clean([(mona_gs, mona_cm[cp], build.mona_transform(mona, 0, dy, k))], pen)
         name = build.alloc_glyph_name(font)
         build.append_glyph(font, td, name, pen.getCharString(private=private),
-                           fd_index, CELL, None, None)
+                           fd_index, CELL, None, vdon)
         new[cp] = name
     build.set_cmap(font, new, add_new=True)
     print(f"  one-cell glyphs SCP lacks, from Monaspace: {len(new)}")

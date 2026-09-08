@@ -4,6 +4,8 @@ packaging scripts) that need no font files."""
 import sys
 from pathlib import Path
 
+from fontTools.misc.psCharStrings import T2CharString
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 import verifylib  # noqa: E402
@@ -36,3 +38,39 @@ def test_checker_tallies_and_prints(capsys):
 def test_hint_ops_cover_every_type2_hint_operator():
     want = {"hstem", "vstem", "hstemhm", "vstemhm", "hintmask", "cntrmask"}
     assert set(verifylib.HINT_OPS) == want
+
+
+# --- glyph_has_hint ----------------------------------------------------------
+
+class _Private:
+    def __init__(self, subrs):
+        self.Subrs = subrs
+
+
+def _cs(program, private=None, global_subrs=None):
+    cs = T2CharString(program=list(program), private=private,
+                      globalSubrs=global_subrs if global_subrs is not None else [])
+    return cs
+
+
+def test_glyph_has_hint_sees_a_direct_hint_and_a_bare_outline():
+    assert verifylib.glyph_has_hint(_cs([10, 20, "hstem", 0, 0, "rmoveto", "endchar"]))
+    assert not verifylib.glyph_has_hint(_cs([0, 0, "rmoveto", 100, "hlineto", "endchar"]))
+
+
+def test_glyph_has_hint_follows_local_and_global_subroutines():
+    # bias 107 for small subr indexes: operand -107 -> subr 0
+    local = [_cs([10, 20, "vstem", "return"])]
+    glob = [_cs(["hintmask", "return"])]
+    via_local = _cs([-107, "callsubr", "endchar"], private=_Private(local), global_subrs=glob)
+    via_global = _cs([-107, "callgsubr", "endchar"], private=_Private(local), global_subrs=glob)
+    plain = _cs(["endchar"], private=_Private(local), global_subrs=glob)
+    assert verifylib.glyph_has_hint(via_local)
+    assert verifylib.glyph_has_hint(via_global)
+    assert not verifylib.glyph_has_hint(plain)
+
+
+def test_glyph_has_hint_does_not_loop_on_a_recursive_subroutine():
+    local = [_cs([-107, "callsubr", "return"])]      # subr 0 calls itself
+    cs = _cs([-107, "callsubr", "endchar"], private=_Private(local))
+    assert not verifylib.glyph_has_hint(cs)

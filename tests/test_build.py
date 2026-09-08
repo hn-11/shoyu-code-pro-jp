@@ -920,9 +920,13 @@ def test_env_paths_reads_defaults_and_exits_on_missing(tmp_path, monkeypatch, ca
         build.env_paths({"SHS_DIR": None, "SHCJ_TTC": str(b)})
 
 
+_SEEN_IN_THIS_PROCESS = []
+
+
 def _face_worker(job):
     if job == "bad":
         raise KeyError("reference face not found")
+    _SEEN_IN_THIS_PROCESS.append(job)   # visible to the test only if in-process
     return f"built {job}"
 
 
@@ -938,11 +942,22 @@ def test_run_faces_collects_every_failure_across_the_pool(capsys):
 
 def test_run_faces_small_run_stays_in_process(capsys):
     results = []
+    _SEEN_IN_THIS_PROCESS.clear()
     with pytest.raises(SystemExit, match="1/2 faces failed"):
         build.run_faces(["bad", "y"], _face_worker,
                         label=lambda j: j, on_result=lambda j, r: results.append(r))
     assert results == ["built y"]
-    assert "FAILED bad: KeyError" in capsys.readouterr().err
+    assert _SEEN_IN_THIS_PROCESS == ["y"]           # the worker ran here
+    err = capsys.readouterr().err
+    assert "FAILED bad: KeyError" in err
+    assert "Traceback" in err and "_face_worker" in err   # the traceback survives
+
+
+def test_run_faces_larger_run_uses_the_pool():
+    _SEEN_IN_THIS_PROCESS.clear()
+    build.run_faces(["x", "y", "z"], _face_worker,
+                    label=lambda j: j, on_result=lambda j, r: None)
+    assert _SEEN_IN_THIS_PROCESS == []               # the workers ran elsewhere
 
 
 def test_run_faces_result_handler_errors_are_not_face_failures():

@@ -19,7 +19,9 @@
     列挙する `verifylib.static_faces` に置き換え
   - Sumi Moji VF: `head` の外接矩形が既定マスター（Regular）だけの値
     だったのをマスター全体の和にした。GSUB の FeatureParams を付け替えた
-    後に元の name レコード 73 件が参照されないまま残っていたのを削除。
+    後に元の name レコード（Upright で 73 件）が参照されないまま残って
+    いたのと、SCP 由来の STAT / fvar の文字列 5 件を削除（`prune_orphan_names`、
+    静的面にも適用）。
     `harmonize_win_metrics` は実行した面だけでなく出力ディレクトリ内の
     ファミリー全面を対象にする（CI は Regular と Light Italic を別ステップ
     で組む）。SCP VF のマスター位置の読み取りを wght 軸に限定

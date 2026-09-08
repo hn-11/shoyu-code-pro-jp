@@ -128,13 +128,15 @@ def main():
     # must agree with hmtx: a glyph appended under one FD and re-homed to
     # another (add_latin_fd) would carry a stale width — invisible to
     # renderers, which read hmtx, but wrong for anything reading the CFF
-    gs = tf.getGlyphSet()
+    # (a TTFont glyph set's .width is hmtx's; the charstring's own decoded
+    # width is what has to be compared)
+    charstrings = tf["CFF "].cff[0].CharStrings
     off = []
     for name in tf.getGlyphOrder():
-        g = gs[name]
-        g.draw(NullPen())
-        if g.width != hmtx[name][0]:
-            off.append((name, g.width, hmtx[name][0]))
+        cs = charstrings[name]
+        cs.draw(NullPen())
+        if cs.width != hmtx[name][0]:
+            off.append((name, cs.width, hmtx[name][0]))
     assert not off, f"{FONT}: CFF width != hmtx for {len(off)} glyphs, e.g. {off[:5]}"
     print(f"ok   CFF charstring widths agree with hmtx ({len(tf.getGlyphOrder())} glyphs)")
 

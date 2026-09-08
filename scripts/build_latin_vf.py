@@ -12,7 +12,7 @@ Source Code Pro's own Upright/Italic split:
                                         Italic faces
 
 Masters sit at the SCP VF's own master locations, read back from the CFF2
-VarStore (build_latin.confirm_scp_master_wghts) — not assumed — plus the
+VarStore (confirm_scp_master_wghts) — not assumed — plus the
 Regular and Heavy positions (see the axis paragraph below). Monaspace
 is bar-matched per master with erosion DISABLED (VFSource.matched
 erode=False): erosion is a pathops boolean op on a fixed outline, not an
@@ -45,7 +45,7 @@ avar bends the axis, so e.g. user 300 sits only 27% of the way from the
 SCP's user wght would put every intermediate weight in the wrong place
 (the first cut of this script did: its Light was a 58u bar instead of
 the static Light's 41u). The masters are SCP's own (read back from the
-CFF2 VarStore, build_latin.confirm_scp_master_wghts) plus SCP instanced
+CFF2 VarStore, confirm_scp_master_wghts) plus SCP instanced
 at the Regular and Heavy positions — the Regular one is the default
 master (a VF's default must be a master), the Heavy one is the axis
 maximum (SCP's own 900 master sits above it, out of range; instancing
@@ -334,8 +334,8 @@ def harmonize_feature_names(font):
             canon = 900 + i
             name.setName(text, canon, 3, 1, 0x409)
             setattr(params, attr, canon)
-    # the records the old IDs pointed at now hang from nothing — 70-odd
-    # strings of SCP's feature names; build.prune_orphan_names drops them
+    # the records the old IDs pointed at now hang from nothing — dozens
+    # of SCP's feature-name strings; build.prune_orphan_names drops them
     # (with SCP's own STAT/fvar leftovers) once the merged VF has its
     # final tables
 

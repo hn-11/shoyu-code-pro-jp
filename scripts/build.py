@@ -11,10 +11,11 @@ Recipe (Source Han Mono's approach, re-executed against latest releases):
                                  (Adobe's own SHCJ derivation, re-run)
   - Source Han Code JP serves as the PAIRING REFERENCE (build_latin.py
     matches the VF wght to each face's '=' bar) and as the donor for the
-    few 667-cell symbols SCP lacks (￢ ￤ ¥ ...), plus the vertical line
-    metrics, so the rendered result stays continuous with what SHCJ
-    users know. (The half-width kana are Source Han Sans's own glyphs,
-    re-centred into the 600 cell by fit_halfwidth_forms().)
+    few 667-cell glyphs SCP lacks (‑ U+2011, ␣ U+2423), plus the vertical
+    line metrics, so the rendered result stays continuous with what SHCJ
+    users know. (The half-width kana are Source Han Sans's own glyphs:
+    500 wide in the 2:3 family as in SHCJ, re-centred into the cell by
+    fit_halfwidth_forms() in the 600-cell families.)
 
 Italic faces take the Sumi Moji Italic + upright Japanese, matching
 SHCJ's own behavior. The Term family (Latin not scaled down, so paired
@@ -67,6 +68,7 @@ import string
 import subprocess
 import sys
 import tempfile
+import traceback
 import unicodedata
 from pathlib import Path
 from typing import NamedTuple
@@ -355,7 +357,13 @@ class VFSource:
 
     def matched_wght(self, target_units, slant=None):
         """The wght matched() converges on for `target_units`, as a plain
-        number (build_latin_vf.py places fvar instances and masters by it)."""
+        number (build_latin_vf.py places fvar instances and masters by it,
+        so they sit exactly where the static faces are). Nine halvings of
+        the axis: ~1.4 wght on SCP's 700-wide axis, well under 1u of bar.
+        Targets are cached by their rounded value, so two weights whose
+        SHCJ bars round together would share one wght — the six SHCJ
+        faces are 15u+ apart, and build_latin_vf.user_axis rejects a
+        non-monotonic pairing anyway."""
         return self.matched(target_units, slant, erode=False).wght
 
     def floor_bar(self, slant=None):
@@ -585,7 +593,10 @@ def append_context(font, probe="A", fullwidth=False):
     """What appending a glyph next to `probe`'s needs: (top dict, cmap,
     FD index, that FD's Private dict, vmtx donor). The FD (and its
     nominalWidthX, which pen_width() offsets against) is the one `probe`
-    already lives in — 'A' for Latin, '≠' for the symbol/ligature set."""
+    already lives in. Every appender probes 'A': in the JP faces
+    add_latin_fd() later moves all appended glyphs into a copy of A's FD,
+    and a width encoded against any other FD's nominalWidthX would then
+    be wrong (the ligatures were, by 510u); the Latin faces have one FD."""
     cff = font["CFF "].cff
     td = cff[cff.fontNames[0]]
     cmap = font.getBestCmap()
@@ -616,7 +627,7 @@ def graft_halfwidth(base, scp, ref):
     Three kinds of codepoint get a new 667-advance glyph:
       - SHCJ maps it to its 667 cell: outline from the SCP instance scaled
         10/9 when SCP has it, else copied verbatim from the SHCJ reference
-        face (￢ ￤ ¥ and a handful of other symbols SCP never had). SHCJ's
+        face (‑ U+2011 and ␣ U+2423 — all that SCP never had). SHCJ's
         half-width kana are NOT in this set — SHCJ draws them at 500, so
         they stay Source Han Sans's own glyphs and fit_halfwidth_forms()
         re-centres them in the 600-cell families;
@@ -668,16 +679,16 @@ def graft_halfwidth(base, scp, ref):
         elif (ref_adv == FULLWIDTH and cp in bcm
               and bhm[bcm[cp]][0] not in (0, FULLWIDTH)):
             # SHCJ made it full-width; SHS's own glyph is proportional
-            src = ("ref", g)
-            if src not in made:
+            key = (("ref", g), False)
+            if key not in made:
                 pen = T2CharStringPen(pen_width(private, FULLWIDTH), ref_gs)
                 draw_clean([(ref_gs, g, (1, 0, 0, 1, 0, 0))], pen)
                 name = alloc_glyph_name(base)
                 append_glyph(base, td, name, pen.getCharString(private=private),
                              fd_index, FULLWIDTH, None, vmtx_donor(base))
-                made[src] = name
+                made[key] = name
                 from_ref += 1
-            new_map[cp] = made[src]
+            new_map[cp] = made[key]
             continue
         else:
             continue
@@ -1423,7 +1434,7 @@ def add_glyphs(font, mona, alts, ligatures, dy=None, cell=CELL):
     return {seq: glyph name}. Alternate (.alt) designs are appended too
     and recorded in `alts`."""
     k = cell / MONA_CELL
-    td, cmap, fd_index, private, vdon = append_context(font, probe="≠")
+    td, cmap, fd_index, private, vdon = append_context(font)
     mona_gs = mona_glyphset(mona)
     mona_names = set(mona.getGlyphOrder())
 
@@ -2007,8 +2018,8 @@ def referenced_name_ids(font):
             params = fr.Feature.FeatureParams
             if params is None:
                 continue
-            for attr in ("UINameID", "FeatUILabelNameID",
-                         "FeatUITooltipTextNameID", "SampleTextNameID"):
+            for attr in ("UINameID", "FeatUILabelNameID", "FeatUITooltipTextNameID",
+                         "SampleTextNameID", "SubfamilyNameID"):   # the last: 'size'
                 used.add(getattr(params, attr, 0))
             first = getattr(params, "FirstParamUILabelNameID", 0)
             used.update(range(first, first + getattr(params, "NumNamedParameters", 0)))
@@ -2138,7 +2149,7 @@ def run_faces(jobs, worker, label, on_result):
         try:
             value = result()
         except Exception as exc:
-            failures.append((label(job), exc))
+            failures.append((label(job), exc, traceback.format_exception(exc)))
             return
         on_result(job, value)
 
@@ -2151,8 +2162,8 @@ def run_faces(jobs, worker, label, on_result):
             for fut in concurrent.futures.as_completed(futures):
                 take(futures[fut], fut.result)
     if failures:
-        for face, exc in failures:
-            print(f"FAILED {face}: {exc!r}", file=sys.stderr)
+        for face, exc, tb in failures:
+            print(f"FAILED {face}: {exc!r}\n" + "".join(tb), file=sys.stderr)
         sys.exit(f"{len(failures)}/{len(jobs)} faces failed")
 
 
