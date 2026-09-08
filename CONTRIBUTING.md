@@ -38,7 +38,15 @@ SCP_VF_U=... SCP_VF_I=... MONA_VF=... SHCJ_TTC=... \
 SHS_DIR=... SHCJ_TTC=... \
   python scripts/build.py                 # 全ファミリー
   python scripts/build.py "Regular"       # Regular 系のみ（動作確認用、速い）
+  python scripts/build.py "Light Upright Term"   # 1 面だけ
 ```
+
+フィルタは語の組み合わせで、面がすべての語に合うものを組みます:
+ウェイト名（`Light` … `Heavy`）、書体（`Upright` / `Italic`）、変種
+（`35` / `Term`。`build_latin.py` には変種が無い）。`"Regular"` は Regular と
+Regular Italic の全ファミリー、`"Light Italic"` はファミリーごとに 1 面、
+`""`（空文字列）は変種なしの基本ファミリーです。リリースワークフローは
+`"<ウェイト> <書体>"` を 1 ジョブずつ組みます。
 
 可変フォント版の Sumi Moji は `python scripts/build_latin_vf.py`
 （`build_latin.py` と同じ環境変数）で `dist/latin/SumiMoji[wght].otf` /
@@ -56,7 +64,11 @@ python scripts/verify.py dist/ShoyuCodeProJP-Regular.otf
 グリフの合成漏れやメトリクスの崩れなど、シェイピングまわりの回帰を
 チェックします。変更を提出する前に、少なくとも `Regular` 面で通ることを
 確認してください。CI（`.github/workflows/ci.yml`）でも push / PR 時に
-同じ検証が走ります。ビルド前後の出力を比べたいときは
+同じ検証が走ります（Regular / Regular Italic / Light Italic / Nerd Font /
+可変フォントを並列のジョブで組み、5 分程度。リリース
+`release.yml` はウェイト × 書体の 12 ジョブと可変フォント 2 ジョブのあと
+`package` ジョブが `harmonize_latin.py` → `makeotc.py` → zip → GitHub
+Release を作ります）。ビルド前後の出力を比べたいときは
 `python scripts/golden.py <前の dist> <今の dist>` が cmap・送り幅・
 シェーピング・アウトライン・メタデータ・ヒントを突き合わせます。
 

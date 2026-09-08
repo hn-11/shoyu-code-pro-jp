@@ -1,0 +1,52 @@
+# The steps every build job of ci.yml / release.yml starts with: Python and
+# the requirements, the pinned upstreams (fetch-upstreams, cached) exported
+# as the build scripts' environment variables, and — for the jobs that
+# Nerd-patch — FontForge plus the cached FontPatcher.
+name: Set up a build job
+description: >
+  Python + requirements, the pinned upstream fonts exported as SHCJ_TTC /
+  SHS_DIR / SCP_VF_U / SCP_VF_I / MONA_VF, and optionally FontForge with
+  the Nerd Fonts FontPatcher.
+inputs:
+  fontforge:
+    description: Install FontForge and fetch FontPatcher (for nerdpatch.py)
+    default: "false"
+  fontpatcher-tag:
+    description: Nerd Fonts release whose FontPatcher.zip to use
+    default: v3.4.0
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+      with:
+        python-version: "3.12"
+        cache: pip
+    - shell: bash
+      run: pip install -r requirements.txt
+    - name: Fetch upstreams
+      id: upstreams
+      uses: ./.github/actions/fetch-upstreams
+    - name: Export upstream paths
+      shell: bash
+      run: |
+        echo "SHCJ_TTC=${{ steps.upstreams.outputs.shcj_ttc }}" >> "$GITHUB_ENV"
+        echo "SHS_DIR=${{ steps.upstreams.outputs.shs_dir }}" >> "$GITHUB_ENV"
+        echo "SCP_VF_U=${{ steps.upstreams.outputs.scp_vf_u }}" >> "$GITHUB_ENV"
+        echo "SCP_VF_I=${{ steps.upstreams.outputs.scp_vf_i }}" >> "$GITHUB_ENV"
+        echo "MONA_VF=${{ steps.upstreams.outputs.mona_vf }}" >> "$GITHUB_ENV"
+    - if: inputs.fontforge == 'true'
+      shell: bash
+      run: sudo apt-get update -qq && sudo apt-get install -y -qq fontforge python3-fontforge
+    - if: inputs.fontforge == 'true'
+      name: Fetch FontPatcher (cached)
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      id: fp
+      with:
+        path: FontPatcher
+        key: fontpatcher-${{ inputs.fontpatcher-tag }}
+    - if: inputs.fontforge == 'true' && steps.fp.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        curl -sSfL -o /tmp/FontPatcher.zip \
+          "https://github.com/ryanoasis/nerd-fonts/releases/download/${{ inputs.fontpatcher-tag }}/FontPatcher.zip"
+        unzip -qo /tmp/FontPatcher.zip -d FontPatcher

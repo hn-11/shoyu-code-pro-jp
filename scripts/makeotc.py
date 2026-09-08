@@ -91,6 +91,11 @@ def main():
                 f"`{builder}` run clears {src}/{fam}*.otf first, so rerun it "
                 "without a FILTER before bundling")
         fonts = [TTFont(p) for p in faces]
+        for f in fonts:
+            # the faces are bundled as built: no outline changes, so no
+            # save-time extents recalc (which would draw every glyph of
+            # every face three times — five minutes for the four families)
+            f.recalcBBoxes = False
         check_cmap_parity(fam, faces, fonts)
         tc = TTCollection()
         tc.fonts = fonts

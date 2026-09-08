@@ -37,8 +37,8 @@ env:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    # Generous: most of the wall clock is spent waiting on CI's own 20-minute
-    # build of the Regular faces.
+    # Generous: most of the wall clock is spent waiting on CI's own build
+    # of the Regular faces (a few minutes across its parallel jobs).
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0

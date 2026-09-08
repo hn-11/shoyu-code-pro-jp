@@ -47,7 +47,34 @@
   `nerdpatch.py` は面ごとの FontForge 実行をコア数分並列に、
   `build_latin_vf.py` は Upright と Italic を並列に組む。CI は可変フォント
   を別ジョブで並行して組む。JP の Regular 6 面はローカル 4 コアで
-  2 分（以前は 9 分）
+  2 分（以前は 9 分）。
+  さらに、保存のたびに fontTools が外接矩形と hhea / vhea の広がりを
+  求め直すために全グリフ（JP 1 面あたり約 1.9 万）を 3 回描き、描いた
+  charstring を全部コンパイルし直していたのをやめ、`update_bbox` が
+  1 回の走査で head / CFF FontBBox / hhea / vhea を揃えて（値は fontTools
+  の再計算と同一）、以後の保存（面の保存、otfautohint、cffsubr、
+  `makeotc.py`、`nerdpatch.py`）は再計算なし。走査で解いた charstring の
+  バイトコードは戻すので、触っていないグリフは読んだままの形で書き出す。
+  otfautohint は子プロセスではなく同一プロセスで呼ぶ（その保存も再計算
+  なし）。`=` バーの二分探索は VF をインスタンス化せず
+  `getGlyphSet(location=)` で各位置のアウトラインを直接読む（1 プローブ
+  0.8〜2.3 秒 → ほぼ 0 秒。丸めなしのバーを見るので、収束位置が以前と
+  1 wght 前後ずれ、静的 Sumi Moji のアウトラインが 1〜2u 動く）。
+  ローカル 4 コアで、JP Regular 6 面 55 秒（2 分 → ）、Sumi Moji Regular
+  6 面 15 秒（64 秒 → ）、VF Upright 21 秒（3 分 → ）、`verify_latin_vf.py`
+  61 秒（112 秒 → ）、TTC 6 面 3 秒（42 秒 → ）。
+  ワークフローはマトリクスに分割: CI は Regular / Regular Italic /
+  Light Italic / Nerd Font（Term Regular と Sumi Moji Regular のパッチ）/
+  可変フォントを並列の 5 ジョブで組み、`build` ジョブが集約する
+  （`upstream-sync.yml` が待つジョブ名は変わらない）。リリースは
+  ウェイト × 書体の 12 ジョブがそれぞれ Latin ドナー・JP 3 面・NF
+  パッチまで組んで検証し、可変フォント 2 ジョブと並行、`package`
+  ジョブがアーティファクトを集めて Sumi Moji（静的・NF）の
+  usWinAscent/Descent をファミリー全体で揃え（`harmonize_latin.py`）、
+  VF を静的面と突き合わせ、TTC・zip・リリースを作る。面フィルタは
+  語の組み合わせになり、「Light Upright」「Regular Upright Term」の
+  ように書体（Upright / Italic）と変種を絞れる。共通の準備手順は
+  `.github/actions/setup-build`
 - リファクタリング: 7 箇所に複製されていたグリフ追加の前置き
   （`append_context`）、方針の違う 4 箇所の cmap 書き込み（`set_cmap`）、
   `build.py` / `build_latin.py` の `main()` と面の後処理

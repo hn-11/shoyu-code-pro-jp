@@ -165,6 +165,10 @@ def fix_names(patched: Path, src: Path) -> Path:
     if "CFF " in font:
         font["CFF "].cff.fontNames[0] = ps
     out = patched.parent / f"{ps}.otf"
+    # the fitted icons moved: extents from the outlines (build.update_bbox),
+    # not fontTools' save-time recalc (three full draws of the face)
+    build.update_bbox(font)
+    font.recalcBBoxes = False
     font.save(out)
     if out != patched and patched.exists():
         patched.unlink()
