@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v4.0.0
 
 - ファミリー名を Shoyu Code Pro JP から **Sumi Moji JP** に改名
   （PostScript 名 `SumiMojiJP*`、NF は `Sumi Moji JP NF` など、
