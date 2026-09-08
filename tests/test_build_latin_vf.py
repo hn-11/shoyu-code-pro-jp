@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 from fontTools.fontBuilder import FontBuilder
-from fontTools.pens.ttGlyphPen import TTGlyphPen
 from fontTools.ttLib import newTable
 from fontTools.ttLib.tables import otTables
 from fontTools.varLib.models import piecewiseLinearMap
@@ -17,6 +16,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 import build  # noqa: E402
 import build_latin_vf as vf  # noqa: E402
+from conftest import make_font  # noqa: E402
 
 # Source Code Pro's own upright VF, as shipped: wght 200-900 with the
 # default at 200 and an avar that bends user 300 to only ~10% of the way
@@ -29,21 +29,13 @@ POS = {"Light": 317.0, "Normal": 374.0, "Regular": 406.0,
 
 def _vf_meta(avar=SCP_AVAR, lo=200, default=200, hi=900):
     """A TTFont carrying just fvar (+ avar): what scp_design_axis reads."""
-    fb = FontBuilder(1000, isTTF=True)
-    fb.setupGlyphOrder([".notdef"])
-    fb.setupCharacterMap({})
-    fb.setupGlyf({".notdef": TTGlyphPen(None).glyph()})
-    fb.setupHorizontalMetrics({".notdef": (500, 0)})
-    fb.setupHorizontalHeader()
-    fb.setupNameTable({"familyName": "T", "styleName": "R"})
-    fb.setupOS2()
-    fb.setupPost()
-    fb.setupFvar([("wght", lo, default, hi, "Weight")], [])
+    font = make_font([".notdef"], {}, {".notdef": 500}, family="T", style="R")
+    FontBuilder(font=font).setupFvar([("wght", lo, default, hi, "Weight")], [])
     if avar:
         table = newTable("avar")
         table.segments = {"wght": dict(avar)}
-        fb.font["avar"] = table
-    return fb.font
+        font["avar"] = table
+    return font
 
 
 # --- scp_design_axis --------------------------------------------------------
@@ -219,24 +211,16 @@ def test_add_stat_family_form_italic_file_declares_ital_1():
 # --- build.classify_unicode_marks -------------------------------------------
 
 def _font_with_gdef(cmap, classes):
-    fb = FontBuilder(1000, isTTF=True)
-    order = [".notdef"] + sorted(set(cmap.values()))
-    fb.setupGlyphOrder(order)
-    fb.setupCharacterMap(cmap)
-    fb.setupGlyf({g: TTGlyphPen(None).glyph() for g in order})
-    fb.setupHorizontalMetrics({g: (600, 0) for g in order})
-    fb.setupHorizontalHeader()
-    fb.setupNameTable({"familyName": "T", "styleName": "R"})
-    fb.setupOS2()
-    fb.setupPost()
+    order = [".notdef", *sorted(set(cmap.values()))]
+    font = make_font(order, cmap, dict.fromkeys(order, 600), family="T", style="R")
     gdef = newTable("GDEF")
     gdef.table = otTables.GDEF()
     gdef.table.Version = 0x00010000
     gdef.table.GlyphClassDef = otTables.GlyphClassDef()
     gdef.table.GlyphClassDef.classDefs = dict(classes)
     gdef.table.AttachList = gdef.table.LigCaretList = gdef.table.MarkAttachClassDef = None
-    fb.font["GDEF"] = gdef
-    return fb.font
+    font["GDEF"] = gdef
+    return font
 
 
 def test_classify_unicode_marks_marks_only_unclassified_mn():

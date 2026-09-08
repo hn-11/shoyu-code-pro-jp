@@ -9,7 +9,7 @@
     読むので見た目には出ないが、CFF を読む処理には誤った幅が見えていた）。
     `latin_ligatures` も他の追加処理と同じ A の FD で追加するようにし、
     `verify.py` が全グリフの CFF 幅と hmtx の一致を検査する
-  - 600 セルの 35 / Term ファミリーで半角記号 ￩￪￫￬￭￮（U+FFE9〜FFEE）の
+  - 600 セルの 35 / Term ファミリーで半角記号 ￨￩￪￫￬￭￮（U+FFE8〜FFEE）の
     送り幅が 500 のままだった（`HALFWIDTH_FORMS` が U+FFDC で止まって
     いた）。East Asian Width "H" の 2 範囲を対象にし、`verify.py` が
     U+FFE9 を検査する

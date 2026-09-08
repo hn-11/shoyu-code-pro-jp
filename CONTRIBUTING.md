@@ -21,7 +21,7 @@ Monaspace VF から欧文レイヤー Sumi Moji（仮称）を `dist/latin` に�
 | `SCP_VF_U` | `build_latin.py` / `build_latin_vf.py` | `SourceCodeVF-Upright.otf` へのパス | [Source Code Pro Releases](https://github.com/adobe-fonts/source-code-pro/releases) |
 | `SCP_VF_I` | 同上 | `SourceCodeVF-Italic.otf` へのパス | 同上 |
 | `MONA_VF` | 同上 | Monaspace の可変フォント（例: `Monaspace Neon Var.ttf`） | [Monaspace Releases](https://github.com/githubnext/monaspace/releases) |
-| `SHCJ_TTC` | 両方 | `SourceHanCodeJP.ttc` へのパス | [Source Han Code JP Releases](https://github.com/adobe-fonts/source-han-code-jp/releases) |
+| `SHCJ_TTC` | 両方（`build.py` は省略時 `upstream/SourceHanCodeJP.ttc`） | `SourceHanCodeJP.ttc` へのパス | [Source Han Code JP Releases](https://github.com/adobe-fonts/source-han-code-jp/releases) |
 | `SHS_DIR` | `build.py` | `SourceHanSansJP-<Weight>.otf` が入ったディレクトリ | [Source Han Sans Releases](https://github.com/adobe-fonts/source-han-sans/releases) |
 | `LATIN_DIR` | `build.py`（任意、既定 `dist/latin`） | `build_latin.py` の出力先 | — |
 | `SHOYU_VERSION` | 3つとも（任意） | リリース版番号（例 `3.3.0`）。未設定なら上流のリビジョンを name に残す | — |

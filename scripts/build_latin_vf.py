@@ -505,7 +505,7 @@ def build_style(style, env, out_dir):
         inst.postScriptFontName = f"{PS_FAMILY}-{weight}{'Italic' if italic else ''}"
         doc.addInstance(inst)
 
-    # STAT built by hand afterward (build_stat); MVAR/HVAR excluded --
+    # STAT built afterward (build.add_stat); MVAR/HVAR excluded --
     # nothing in this recipe varies OS/2 metrics or advances by weight
     vf, _model, _masters = varlib_build(doc, exclude=["MVAR", "HVAR", "STAT"])
     if "avar" not in vf:

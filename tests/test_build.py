@@ -9,7 +9,6 @@ import uharfbuzz as hb
 from fontTools.fontBuilder import FontBuilder
 from fontTools.misc.roundTools import otRound
 from fontTools.pens.t2CharStringPen import T2CharStringPen
-from fontTools.pens.ttGlyphPen import TTGlyphPen
 from fontTools.ttLib import newTable
 from fontTools.ttLib.tables import otTables
 
@@ -17,6 +16,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import build  # noqa: E402
+from conftest import make_font  # noqa: E402
 
 # --- SCP feature tag remapping -------------------------------------------
 
@@ -451,18 +451,8 @@ def test_mona_glyphset_only_erodes_when_floor_was_hit():
 # --- tiny TTF fixtures for the tests below --------------------------------
 
 def _tt_font(glyph_order, cmap, widths, ascent=800, descent=-200):
-    """A minimal, empty-outline FontBuilder TTF — enough for GSUB/OS2/post
-    plumbing tests. `widths`: {glyph name: advance}, lsb always 0."""
-    fb = FontBuilder(1000, isTTF=True)
-    fb.setupGlyphOrder(list(glyph_order))
-    fb.setupCharacterMap(cmap)
-    fb.setupGlyf({g: TTGlyphPen(None).glyph() for g in glyph_order})
-    fb.setupHorizontalMetrics({g: (widths.get(g, 0), 0) for g in glyph_order})
-    fb.setupHorizontalHeader(ascent=ascent, descent=descent)
-    fb.setupNameTable({"familyName": "Test", "styleName": "Regular"})
-    fb.setupOS2()
-    fb.setupPost()
-    return fb.font
+    """conftest.make_font with this file's argument order (see there)."""
+    return make_font(glyph_order, cmap, widths, ascent=ascent, descent=descent)
 
 
 # --- _guard_subtables: the DirectWrite-safe context guards ---------------
