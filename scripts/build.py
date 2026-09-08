@@ -1981,6 +1981,24 @@ def glyph_bounds(font):
     return bounds
 
 
+def sync_lsb(font):
+    """hmtx left side bearings from the outlines (round(xMin), like
+    charstring_lsb; 0 for a blank glyph). A CFF font's lsb is nothing
+    fontTools maintains: an instanced VF keeps the default master's
+    hmtx while its outlines move, so build_latin.static_base's faces
+    carried SCP's wght-200 bearings at every weight. Returns the number
+    of glyphs whose lsb changed."""
+    bounds = glyph_bounds(font)
+    metrics = font["hmtx"].metrics
+    changed = 0
+    for name, (adv, lsb) in list(metrics.items()):
+        want = round(bounds[name][0]) if name in bounds else 0
+        if want != lsb:
+            metrics[name] = (adv, want)
+            changed += 1
+    return changed
+
+
 def update_bbox(font):
     """Recompute the font's extents from its outlines, in one pass:
     the CFF FontBBox, head's box and the hhea / vhea extents

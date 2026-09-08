@@ -14,7 +14,12 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import build  # noqa: E402
 import build_latin  # noqa: E402
 from verify import CASES  # noqa: E402
-from verifylib import Checker, glyph_has_hint, make_shaper  # noqa: E402
+from verifylib import (  # noqa: E402
+    Checker,
+    glyph_has_hint,
+    hmtx_mismatches,
+    make_shaper,
+)
 
 FONT = Path(sys.argv[1]) if len(sys.argv) > 1 else (
     ROOT / "dist" / "latin" / "SumiMoji-Regular.otf")
@@ -55,6 +60,10 @@ def main():
         if ord(ch) in cmap:
             check(hmtx[cmap[ord(ch)]][0] == CELL, f"{ch!r} is one cell")
     check(hmtx[tf.getGlyphOrder()[0]][0] == CELL, ".notdef is one cell")
+    widths, bearings = hmtx_mismatches(tf)
+    check(not widths, f"CFF charstring widths agree with hmtx ({widths[:3]})")
+    check(not bearings, f"hmtx bearings are the outlines' xMin ({len(bearings)} off, "
+                        f"e.g. {bearings[:3]})")
 
     cff = tf["CFF "].cff
     td = cff[cff.fontNames[0]]

@@ -69,3 +69,13 @@ def test_glyph_has_hint_does_not_loop_on_a_recursive_subroutine():
     local = [_cs([-107, "callsubr", "return"])]      # subr 0 calls itself
     cs = _cs([-107, "callsubr", "endchar"], private=_Private(local))
     assert not verifylib.glyph_has_hint(cs)
+
+
+def test_hmtx_mismatches_reports_widths_and_bearings():
+    from test_build import _extents_font
+    font, _ = _extents_font()
+    assert verifylib.hmtx_mismatches(font) == ([], [])
+    font["hmtx"].metrics["A"] = (650, 0)       # width off by 50, lsb off by 20
+    widths, bearings = verifylib.hmtx_mismatches(font)
+    assert widths == [("A", 600, 650)]
+    assert bearings == [("A", 20, 0)]

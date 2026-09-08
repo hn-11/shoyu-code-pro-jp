@@ -84,6 +84,11 @@
   Term」「Regular Italic base」のように書体（Upright / Italic）と変種を
   絞れる（`build_latin.py` では `ship` / `term`）。共通の準備手順は
   `.github/actions/setup-build`
+- Sumi Moji 静的面（とその VF のマスター）の hmtx 左サイドベアリングが
+  SCP VF の既定マスター（wght 200）の値のままだった（CFF の lsb は
+  fontTools が保守しない。インスタンス化でアウトラインだけ動く）。
+  `static_base` がアウトラインから測り直す（`build.sync_lsb`）。
+  `verify.py` / `verify_latin.py` が全グリフの lsb と xMin の一致も検査する
 - Nerd Fonts 変種: FontForge の往復で消えていた元の面のメタデータを
   `nerdpatch.py` が戻す — STAT テーブル（FontForge は書き出さない）、
   post.isFixedPitch / PANOSE の等幅宣言、usWeightClass・fsSelection・

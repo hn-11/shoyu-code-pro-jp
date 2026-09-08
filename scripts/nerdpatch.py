@@ -181,14 +181,16 @@ def restore_metadata(font, src_font):
         setattr(font["post"], field, getattr(src_font["post"], field))
     if "STAT" in src_font:
         font["STAT"] = src_font["STAT"]   # its name IDs are the ones copied above
-    # the fitted icons moved: extents from the outlines (build.update_bbox),
-    # not fontTools' save-time recalc (three full draws of the face). The
-    # win metrics follow the source's own policy: Sumi Moji's hold its
+    # extents from the outlines (build.update_bbox), not fontTools'
+    # save-time recalc (three full draws of the face): the fitted icons
+    # moved, and font-patcher replaces glyphs the face already had (SCP's
+    # own Powerline symbols), so the source's box is no shortcut
+    build.update_bbox(font)
+    # the win metrics follow the source's own policy: Sumi Moji's hold its
     # whole box (build_latin.fit_win_metrics), so they widen to whatever
     # the icons add; the JP faces carry Source Han Code JP's line metrics
     # (build.copy_line_metrics), which do not cover SHS's outliers, and
     # keep them as they are
-    build.update_bbox(font)
     src_head = src_font["head"]
     if (src_os2.usWinAscent >= src_head.yMax
             and src_os2.usWinDescent >= -src_head.yMin):

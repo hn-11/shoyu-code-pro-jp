@@ -1093,7 +1093,7 @@ def _extents_font():
     glyph_order = [".notdef", "A", "B", "space"]
     charstrings = {}
     for g in glyph_order:
-        pen = T2CharStringPen(600, None)
+        pen = T2CharStringPen(700 if g == "B" else 600, None)
         if g in boxes:
             x0, y0, x1, y1 = boxes[g]
             pen.moveTo((x0, y0))
@@ -1163,3 +1163,16 @@ def test_update_bbox_sets_head_cff_hhea_and_vhea_like_fonttools():
 def test_update_bbox_leaves_an_inkless_font_alone():
     font = make_font([".notdef", "a"], {ord("a"): "a"}, {"a": 600})
     assert build.update_bbox(font) is None
+
+
+def test_sync_lsb_sets_bearings_from_the_outlines():
+    font, boxes = _extents_font()
+    metrics = font["hmtx"].metrics
+    metrics["A"] = (600, 0)          # stale: the outline starts at 20
+    metrics["space"] = (600, 7)      # blank glyph: 0
+
+    assert build.sync_lsb(font) == 2
+
+    assert metrics["A"] == (600, 20) and metrics["B"] == (700, -40)
+    assert metrics["space"] == (600, 0)
+    assert build.sync_lsb(font) == 0

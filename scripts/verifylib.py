@@ -7,6 +7,7 @@ scripts (makeotc.py, nerdpatch.py) share.
 from pathlib import Path
 
 import uharfbuzz as hb
+from fontTools.pens.boundsPen import BoundsPen
 
 # every Type 2 hint operator; a glyph carrying any of them counts as hinted
 HINT_OPS = frozenset({"hstem", "vstem", "hstemhm", "vstemhm", "hintmask", "cntrmask"})
@@ -78,6 +79,28 @@ def glyph_has_hint(cs, local_subrs=None, global_subrs=None, seen=None):
         elif isinstance(tok, (int, float)):
             stack.append(tok)
     return False
+
+
+def hmtx_mismatches(font):
+    """Glyphs whose hmtx disagrees with their CFF charstring: (name,
+    charstring width, hmtx advance) where the advances differ, and
+    (name, round(xMin), hmtx lsb) where the bearings do (a blank glyph's
+    bearing is 0). Every glyph is drawn once."""
+    cff = font["CFF "].cff
+    charstrings = cff[cff.fontNames[0]].CharStrings
+    hmtx = font["hmtx"].metrics
+    widths, bearings = [], []
+    for name in font.getGlyphOrder():
+        cs = charstrings[name]
+        pen = BoundsPen(None)
+        cs.draw(pen)
+        adv, lsb = hmtx[name]
+        if cs.width != adv:
+            widths.append((name, cs.width, adv))
+        want = round(pen.bounds[0]) if pen.bounds else 0
+        if want != lsb:
+            bearings.append((name, want, lsb))
+    return widths, bearings
 
 
 def static_faces(src_dir, family):

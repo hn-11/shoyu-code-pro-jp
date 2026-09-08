@@ -63,14 +63,18 @@ def static_base(scp):
     """The matched Source Code Pro VF instance as a static CID-keyed CFF
     font: CFF2 -> CFF, then a save/load round trip so every table is keyed
     by the CFF charset's cid names (the VF's post names are gone with
-    CFF2's charset; fontTools rebuilds a format-3 post)."""
+    CFF2's charset; fontTools rebuilds a format-3 post), and hmtx left
+    side bearings measured from the instanced outlines (the instancer
+    leaves the VF's default-master bearings in place — build.sync_lsb)."""
     inst = scp
     convertCFF2ToCFF(inst)
     inst.recalcBBoxes = False
     buf = io.BytesIO()
     inst.save(buf)
     buf.seek(0)
-    return TTFont(buf)
+    base = TTFont(buf)
+    build.sync_lsb(base)
+    return base
 
 
 def fix_zone_order(font):
