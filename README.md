@@ -213,6 +213,27 @@ python scripts/build.py        # dist/latin を Source Han Sans に接ぎ木
 必要（`build.py` と同じ変数）。先に走らせて `dist/latin` を作ってから
 `build.py` を実行する（CI・リリースとも同じ順序）。
 
+**Sumi Moji VF（可変フォント）**: `scripts/build_latin_vf.py` は同じ
+レシピを CFF2 可変フォントとして組む——`dist/latin/SumiMoji[wght].otf`
+（Upright）と `dist/latin/SumiMoji-Italic[wght].otf`（Italic）。マスターは
+SCP VF 自身のマスター位置（wght 200 / 400 / 900——CFF2 の VarStore から
+実測、決め打ちしない）にそのまま置き、各マスターで Monaspace を太さ
+一致でインスタンス化する。ただし重なり除去（`pathops.simplify`）とヒント
+付け・サブルーチン化はしない——重なりは Adobe が SCP 自身の VF でして
+いるのと同じ扱いで残し（マスター間で点の対応が壊れるため）、ヒントは
+インスタンス化で失われるので配布用の静的インスタンスを別途作る側の
+仕事のままにする。fvar の6つの名前付きインスタンス（Light / Normal /
+Regular / Medium / Bold / Heavy）と STAT の値は静的版と同じ「SHCJ の
+`=` バー × 600/667」に一致する SCP wght に置く。
+
+wght 軸の範囲は 200〜900（SCP 自身の範囲）。ただし SCP wght がおよそ
+366 を下回ると、Monaspace 側の記号・合字は自身の wght 200 の下限（＝
+静的版が erosion で削っている太さ）より薄くできない——erosion は
+pathops の非線形なブーリアン演算で、マスター間の補間では再現できない
+ため VF のマスターには使えない。したがって VF の軽量側（Light 相当）
+では記号・合字だけが下限の太さで止まり、erosion 済みの静的 Light より
+心持ち太くなる。静的 Light は引き続き erosion 版を配布する。
+
 「Sumi Moji」はまだ仮称（PostScript 名は `SumiMoji-*`）。経緯・命名調査・
 今後の計画は [docs/sumi-moji-plan.md](docs/sumi-moji-plan.md) を参照。
 

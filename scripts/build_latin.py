@@ -60,6 +60,39 @@ FAMILY = PROFILES["ship"][1]
 PS_FAMILY = PROFILES["ship"][2]
 
 
+def confirm_scp_master_wghts(vf_path):
+    """The SCP VF's own wght master locations, read back from the CFF2
+    VarStore's region peaks through avar/fvar rather than assumed — used
+    by scripts/build_latin_vf.py to place the variable Sumi Moji's masters
+    exactly where SCP's own masters are (so no interpolation error is
+    introduced on the SCP side; only Monaspace needs matching per master).
+
+    A region's PeakCoord is in POST-avar normalized space; forward-map a
+    fine wght grid through fvar-normalize + avar and take, for each peak,
+    the raw wght whose forward map lands closest to it. Always includes
+    the axis default (peak 0.0, not itself stored as a region)."""
+    from fontTools.varLib.models import normalizeValue, piecewiseLinearMap
+
+    vf = TTFont(vf_path)
+    axis = next(a for a in vf["fvar"].axes if a.axisTag == "wght")
+    avar = vf["avar"].segments.get("wght", {}) if "avar" in vf else {}
+    cff2 = vf["CFF2"].cff
+    td = cff2[cff2.fontNames[0]]
+    peaks = sorted({round(a.PeakCoord, 6)
+                    for r in td.VarStore.otVarStore.VarRegionList.Region
+                    for a in r.VarRegionAxis} | {0.0})
+
+    def forward(wght):
+        lin = normalizeValue(wght, (axis.minValue, axis.defaultValue, axis.maxValue))
+        return piecewiseLinearMap(lin, avar) if avar else lin
+
+    grid = [axis.minValue + i * (axis.maxValue - axis.minValue) / 7000
+            for i in range(7001)]
+    wghts = {round(min(grid, key=lambda w: abs(forward(w) - peak)))
+             for peak in peaks}
+    return sorted(wghts)
+
+
 def static_base(scp):
     """The matched Source Code Pro VF instance as a static CID-keyed CFF
     font: CFF2 -> CFF, then a save/load round trip so every table is keyed

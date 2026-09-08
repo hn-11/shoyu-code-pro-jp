@@ -337,8 +337,8 @@ class VFSource:
         instantiateVariableFont(inst, axes, inplace=True)
         return inst
 
-    def matched(self, target_units, slant=None):
-        key = (round(target_units), slant if slant is None else round(slant))
+    def matched(self, target_units, slant=None, erode=True):
+        key = (round(target_units), slant if slant is None else round(slant), erode)
         if key in self._cache:
             return self._cache[key]
         pre_scale_target = target_units / self.scale
@@ -370,16 +370,29 @@ class VFSource:
         # the axis floor may stop short of a thin target (Monaspace's
         # wght 200 is 59u at our scale; SHCJ Light measures 47u). Record
         # the surplus per side, in this font's units, and mona_glyphset()
-        # erodes the outlines by it — see erode_path().
-        inst.erode = max(0.0, (t - pre_scale_target) / 2)
-        if abs(t - pre_scale_target) > 1.0 and not inst.erode:
-            print(f"  WARNING: wght search off by {t - pre_scale_target:+.1f}u "
-                  f"(target {pre_scale_target:.1f}, wght={wght:.1f}) in "
-                  f"{Path(self.vf_path).name}")
-        elif inst.erode > 0.5:
-            print(f"  wght floor {wght:.0f} leaves {2 * inst.erode:.1f}u surplus "
-                  f"(donor units) in {Path(self.vf_path).name}; eroding "
-                  f"{inst.erode:.1f}u/side")
+        # erodes the outlines by it — see erode_path(). A VF master can't
+        # take that path (erosion is a pathops boolean op on a fixed
+        # outline, not an interpolatable deformation — see docs/
+        # sumi-moji-plan.md 段階2): erode=False clamps at the floor
+        # (the binary search already can't go past the axis bounds) and
+        # only reports the shortfall, leaving `erode` unset so
+        # mona_glyphset() hands back the outline as instanced.
+        shortfall = t - pre_scale_target
+        if erode:
+            inst.erode = max(0.0, shortfall / 2)
+            if abs(shortfall) > 1.0 and not inst.erode:
+                print(f"  WARNING: wght search off by {shortfall:+.1f}u "
+                      f"(target {pre_scale_target:.1f}, wght={wght:.1f}) in "
+                      f"{Path(self.vf_path).name}")
+            elif inst.erode > 0.5:
+                print(f"  wght floor {wght:.0f} leaves {2 * inst.erode:.1f}u surplus "
+                      f"(donor units) in {Path(self.vf_path).name}; eroding "
+                      f"{inst.erode:.1f}u/side")
+        elif shortfall > 1.0:
+            print(f"  wght floor {wght:.0f} leaves {shortfall:.1f}u short of "
+                  f"target {pre_scale_target:.1f} (donor units) in "
+                  f"{Path(self.vf_path).name}; no erosion (VF master), "
+                  f"clamped at the floor")
         self._cache[key] = inst   # only the converged instance is kept
         return inst
 
@@ -390,12 +403,24 @@ def glyph_vcenter(font, gname, scale=1.0):
     return (pen.bounds[1] + pen.bounds[3]) / 2 * scale
 
 
-def draw_clean(draws, pen):
+def draw_clean(draws, pen, simplify=True):
     """Draw (glyphset, glyph, transform) triples through skia-pathops
     simplify before hitting the charstring pen. Variable-font instancing
     leaves self-intersecting outlines (A/K/x/R... — masters keep overlaps
     for interpolation; Adobe removes them only in static releases), and
-    some rasterizers render seams at the overlaps."""
+    some rasterizers render seams at the overlaps.
+
+    simplify=False skips the pathops pass entirely (straight through
+    TransformPen): building a VARIABLE font's masters needs point-for-point
+    compatible outlines across weights, and pathops.simplify's boolean ops
+    do not guarantee that — a self-intersection's topology can resolve
+    differently at different weights, at which point the master glyphs are
+    no longer interpolatable at all (confirmed: this is what
+    scripts/build_latin_vf.py's masters need)."""
+    if not simplify:
+        for gs, gname, t in draws:
+            gs[gname].draw(TransformPen(pen, t))
+        return
     path = pathops.Path()
     for gs, gname, t in draws:
         gs[gname].draw(TransformPen(path.getPen(), t))
@@ -1286,7 +1311,10 @@ def set_names(font, suffix, weight, italic, italic_angle=-12.0, version=None,
     font["OS/2"].usWeightClass = WEIGHT_CLASS[weight]
     if "DSIG" in font:
         del font["DSIG"]
-    cff = font["CFF "].cff
+    # a variable font (build_latin_vf.py) carries CFF2, not CFF; CFF2's
+    # TopDict has no FamilyName/FullName/version (guarded below), only the
+    # placeholder fontNames[0] this still overwrites
+    cff = font["CFF2"].cff if "CFF2" in font else font["CFF "].cff
     cff.fontNames[0] = ps
     td = cff.topDictIndex.items[0]
     if hasattr(td, "FamilyName"):
@@ -1835,8 +1863,11 @@ def update_bbox(font):
     if xmin is None:
         return None
     box = [math.floor(xmin), math.floor(ymin), math.ceil(xmax), math.ceil(ymax)]
-    cff = font["CFF "].cff
-    cff.topDictIndex.items[0].FontBBox = box
+    # CFF2 (a variable font, build_latin_vf.py) has no FontBBox — head's
+    # box is the only one that exists there
+    if "CFF2" not in font:
+        cff = font["CFF "].cff
+        cff.topDictIndex.items[0].FontBBox = box
     head = font["head"]
     head.xMin, head.yMin, head.xMax, head.yMax = box
     return box

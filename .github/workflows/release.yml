@@ -56,6 +56,9 @@ jobs:
             https://github.com/ryanoasis/nerd-fonts/releases/download/${FONTPATCHER_TAG}/FontPatcher.zip
           unzip -qo /tmp/FontPatcher.zip -d FontPatcher
       - run: python scripts/build_latin.py
+      - run: python scripts/build_latin_vf.py
+      - run: python scripts/verify_latin_vf.py "dist/latin/SumiMoji[wght].otf"
+      - run: python scripts/verify_latin_vf.py "dist/latin/SumiMoji-Italic[wght].otf"
       - run: python scripts/build.py
       - run: python scripts/verify.py dist/ShoyuCodeProJP-Regular.otf
       - run: python scripts/verify.py dist/ShoyuCodeProJP-Light.otf

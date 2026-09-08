@@ -2,6 +2,38 @@
 
 ## v3.3.0
 
+- `scripts/build_latin_vf.py` を追加: Sumi Moji を CFF2 可変フォントとして
+  組む（`dist/latin/SumiMoji[wght].otf` / `SumiMoji-Italic[wght].otf`）。
+  マスターは SCP VF 自身のマスター位置（wght 200 / 400 / 900、CFF2 の
+  VarStore から実測——決め打ちしない）にそのまま置き、各マスターで
+  Monaspace を太さ一致でインスタンス化するが、erosion（Monaspace の
+  wght 下限対策）は非線形なブーリアン演算でマスター間の補間に使えない
+  ため無効化し（`VFSource.matched(erode=False)`、下限で単にクランプ）、
+  重なり除去（`pathops.simplify`、`draw_clean(simplify=False)`）も
+  マスター間の点対応を崩すため行わない——重なりは SCP 自身の VF と同じ
+  扱いで残す。ヒント付け・サブルーチン化もしない。fvar の6つの名前付き
+  インスタンス（Light/Normal/Regular/Medium/Bold/Heavy）と STAT の値は
+  静的版と同じ「SHCJ の `=` バー×600/667」に一致する SCP wght
+  （実測: Upright で 317/374/406/546/669/857、Italic で
+  330/391/448/599/708/900）。name テーブルは SCP VF 自身の慣習
+  （`SourceCodeVF-Upright.otf` / `-Italic.otf`）に倣い、nameID 6 に
+  `SumiMoji-Roman` / `SumiMoji-Italic`、nameID 25 に `SumiMoji`
+  （バリエーション PostScript 名接頭辞）、nameID 16/17 は省略（fvar +
+  STAT が既に家族を説明するため）。MVAR/HVAR は除外（このレシピでは
+  送り幅もOS/2の縦メトリクスも太さで変化しないため、可変にする対象が
+  無い）。SCP wght がおよそ366を下回ると Monaspace 側の記号・合字は
+  自身の wght 200 の下限（静的版が erosion で削っている太さ）より
+  薄くできないため、VF の軽量側では記号だけが下限の太さで止まり、
+  erosion 済みの静的 Light よりわずかに太くなる——静的 Light は引き続き
+  erosion 版を配布する。`scripts/verify_latin_vf.py` を追加（fvar/STAT/
+  name の形状、6つの名前付きインスタンス全てでの合字シェイピング、
+  Regular/Italic インスタンスの `=` バーと `A` の外接矩形を対応する
+  静的面と比較）。CI（`ci.yml`）は `build_latin.py` の Regular 検証の
+  直後に Upright VF のビルドと検証を追加（時間短縮のため Upright のみ）、
+  リリース（`release.yml`）は Upright・Italic 両方をビルド・検証し、
+  `SumiMoji.zip` にも自動的に含まれる（zip 手順は `dist/latin` 内の
+  `*.otf` を素朴に glob しているため）
+
 - 欧文のみの新ファミリー Sumi Moji（仮称、PostScript 名 `SumiMoji-*`）を
   追加し、`build.py` はこれを Source Han Sans に接ぎ木する側に変更
   （VF に直接触らなくなった）。`scripts/build_latin.py` が VF から直接

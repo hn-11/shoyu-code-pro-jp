@@ -62,6 +62,9 @@ jobs:
       - run: python scripts/verify_latin.py dist/latin/SumiMoji-Regular.otf
       - run: python scripts/verify_latin.py dist/latin/SumiMoji-RegularItalic.otf
       - run: python scripts/verify_latin.py dist/latin/term/SumiMojiTerm-Regular.otf
+      # variable Sumi Moji (upright only here, Italic is covered in release.yml)
+      - run: python scripts/build_latin_vf.py upright
+      - run: python scripts/verify_latin_vf.py "dist/latin/SumiMoji[wght].otf"
       - run: python scripts/build.py "Regular"
       - run: python scripts/verify.py dist/ShoyuCodeProJP-Regular.otf
       - run: python scripts/verify.py dist/ShoyuCodeProJP35-Regular.otf
