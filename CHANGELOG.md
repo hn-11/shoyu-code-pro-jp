@@ -90,7 +90,9 @@
   出力は roundoff（±1〜2ユニット）を除き従来の VF 直接ビルドと同一に
   なるよう意図しており、`scripts/golden.py` が2つの dist ディレクトリ
   間で cmap・送り幅・シェーピング・アウトライン（許容誤差つき）・
-  メタデータ・ヒントを比較する。Nerd Fonts 変種・TTC はまだ無い
+  メタデータ・ヒントを比較する。`makeotc.py` / `nerdpatch.py` も
+  Sumi Moji を扱い、リリースは `SumiMoji.ttc` と `SumiMoji-NerdFont.zip`
+  も添付する
 - 合字を50種から61種に拡張。Monaspace が描いているが `data/mona_ligs.json`
   が未収録だった11種を追加: 真の合字5つ `!~` `=~`（正規表現マッチ、ss01）、
   `~~>`（ss02）、`<!--`（ss03、4セル）、`&&=`（ss08）と、`::`/`:=` と同じ

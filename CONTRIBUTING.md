@@ -11,36 +11,54 @@ Monaspace / Source Han Code JP）を CI 上で合成して作られています�
 pip install -r requirements.txt
 ```
 
-以下の環境変数（すべて必須）を渡して `scripts/build.py` を実行します。
+ビルドは2段階です。まず `scripts/build_latin.py` が Source Code Pro VF と
+Monaspace VF から欧文レイヤー Sumi Moji（仮称）を `dist/latin` に組み、
+次に `scripts/build.py` がそれを Source Han Sans JP に接ぎ木します。
+それぞれが読む環境変数:
 
-| 変数 | 内容 | 入手元 |
-|------|------|--------|
-| `SHS_DIR` | `SourceHanSansJP-<Weight>.otf` が入ったディレクトリ | [Source Han Sans Releases](https://github.com/adobe-fonts/source-han-sans/releases) |
-| `SCP_VF_U` | `SourceCodeVF-Upright.otf` へのパス | [Source Code Pro Releases](https://github.com/adobe-fonts/source-code-pro/releases) |
-| `SCP_VF_I` | `SourceCodeVF-Italic.otf` へのパス | 同上 |
-| `MONA_VF` | Monaspace の可変フォント（例: `Monaspace Neon Var.ttf`） | [Monaspace Releases](https://github.com/githubnext/monaspace/releases) |
-| `SHCJ_TTC` | `SourceHanCodeJP.ttc` へのパス（省略時 `upstream/SourceHanCodeJP.ttc`） | [Source Han Code JP Releases](https://github.com/adobe-fonts/source-han-code-jp/releases) |
+| 変数 | 読むスクリプト | 内容 | 入手元 |
+|------|------|------|--------|
+| `SCP_VF_U` | `build_latin.py` / `build_latin_vf.py` | `SourceCodeVF-Upright.otf` へのパス | [Source Code Pro Releases](https://github.com/adobe-fonts/source-code-pro/releases) |
+| `SCP_VF_I` | 同上 | `SourceCodeVF-Italic.otf` へのパス | 同上 |
+| `MONA_VF` | 同上 | Monaspace の可変フォント（例: `Monaspace Neon Var.ttf`） | [Monaspace Releases](https://github.com/githubnext/monaspace/releases) |
+| `SHCJ_TTC` | 両方 | `SourceHanCodeJP.ttc` へのパス | [Source Han Code JP Releases](https://github.com/adobe-fonts/source-han-code-jp/releases) |
+| `SHS_DIR` | `build.py` | `SourceHanSansJP-<Weight>.otf` が入ったディレクトリ | [Source Han Sans Releases](https://github.com/adobe-fonts/source-han-sans/releases) |
+| `LATIN_DIR` | `build.py`（任意、既定 `dist/latin`） | `build_latin.py` の出力先 | — |
+| `SHOYU_VERSION` | 3つとも（任意） | リリース版番号（例 `3.3.0`）。未設定なら上流のリビジョンを name に残す | — |
+| `SHOYU_SKIP_AUTOHINT` | `build.py` / `build_latin.py`（任意） | `1` でヒント付けをスキップ（試しビルドの時短用） | — |
 
-取得元の URL パターンや正確なタグは `.github/workflows/ci.yml` /
-`release.yml` の `Fetch upstreams` ステップを参照してください（そのまま
-実行可能なリファレンスです）。
+取得元の URL パターンや正確なタグは `.github/actions/fetch-upstreams/action.yml`
+と `.github/workflows/ci.yml` を参照してください（そのまま実行可能な
+リファレンスです）。
 
 ```sh
-SHS_DIR=... SCP_VF_U=... SCP_VF_I=... MONA_VF=... SHCJ_TTC=... \
-  python scripts/build.py            # 全ファミリー
-  python scripts/build.py "Regular"  # Regular系のみ（動作確認用、速い）
+SCP_VF_U=... SCP_VF_I=... MONA_VF=... SHCJ_TTC=... \
+  python scripts/build_latin.py           # dist/latin{,/term}/SumiMoji*-*.otf
+  python scripts/build_latin.py "Regular" # Regular 系のみ
+SHS_DIR=... SHCJ_TTC=... \
+  python scripts/build.py                 # 全ファミリー
+  python scripts/build.py "Regular"       # Regular 系のみ（動作確認用、速い）
 ```
+
+可変フォント版の Sumi Moji は `python scripts/build_latin_vf.py`
+（`build_latin.py` と同じ環境変数）で `dist/latin/SumiMoji[wght].otf` /
+`SumiMoji-Italic[wght].otf` を作ります。
 
 ## テスト・検証
 
 ```sh
+python -m pytest tests/ -q                                  # 単体テスト
+python scripts/verify_latin.py dist/latin/SumiMoji-Regular.otf
+python scripts/verify_latin_vf.py "dist/latin/SumiMoji[wght].otf"
 python scripts/verify.py dist/ShoyuCodeProJP-Regular.otf
 ```
 
 グリフの合成漏れやメトリクスの崩れなど、シェイピングまわりの回帰を
 チェックします。変更を提出する前に、少なくとも `Regular` 面で通ることを
 確認してください。CI（`.github/workflows/ci.yml`）でも push / PR 時に
-同じ検証が走ります。
+同じ検証が走ります。ビルド前後の出力を比べたいときは
+`python scripts/golden.py <前の dist> <今の dist>` が cmap・送り幅・
+シェーピング・アウトライン・メタデータ・ヒントを突き合わせます。
 
 NF（Nerd Fonts）変種の生成を試す場合:
 
@@ -51,7 +69,10 @@ python scripts/nerdpatch.py <FontPatcher dir>
 ## 合字を追加・変更する（`data/mona_ligs.json`）
 
 合字の定義は `data/mona_ligs.json` にあり、`scripts/build.py` の
-`add_glyphs()` / `add_gsub()` が読み取ります。1エントリの形式:
+`load_ligatures()` が読み込みます。グリフは `build_latin.py` が
+`build.add_glyphs()` で Monaspace から Sumi Moji に描き、`build.py` は
+その完成グリフを `latin_ligatures()` で JP 側へ写し、両方が共通の
+`add_gsub()` で calt/liga と stylistic set を組みます。1エントリの形式:
 
 ```jsonc
 "!=": {
