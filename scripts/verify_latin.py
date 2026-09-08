@@ -58,8 +58,9 @@ def main():
 
     cff = tf["CFF "].cff
     td = cff[cff.fontNames[0]]
-    check(len(td.FDArray) == 1,
-          f"one FontDict ({[getattr(fd, 'FontName', '?') for fd in td.FDArray]})")
+    if hasattr(td, "FDArray"):   # CID-keyed as built; the NF patch is flattened
+        check(len(td.FDArray) == 1,
+              f"one FontDict ({[getattr(fd, 'FontName', '?') for fd in td.FDArray]})")
 
     for ch in "HAx=":
         check(glyph_has_hint(td.CharStrings[cmap[ord(ch)]]), f"{ch!r} carries hints")

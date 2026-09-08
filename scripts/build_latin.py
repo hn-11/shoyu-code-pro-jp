@@ -29,8 +29,9 @@ calt/liga with the context guards, ss01-ss08, cv99. otfautohint hints
 everything against SCP's zones; cffsubr subroutinizes.
 
 Usage:
-  python scripts/build_latin.py [FILTER]   # build.py's weight / face words
-                                           # (no variant suffixes here)
+  python scripts/build_latin.py [FILTER]   # build.py's weight / style words;
+                                           # the profile ("ship" / "term")
+                                           # stands in for its variant word
 Env (all required):
   SCP_VF_U, SCP_VF_I, MONA_VF, SHCJ_TTC   as for build.py
 Env (optional): SHOYU_VERSION, SHOYU_SKIP_AUTOHINT
@@ -238,7 +239,9 @@ def main():
         for weight, ref_name, _ in build.FACES:
             for italic in (False, True):
                 label = f"{weight}{' Italic' if italic else ''}"
-                if not build.face_matches(only, weight, label, ""):
+                # the profile name is this script's "variant" word:
+                # "Regular Upright term" is the one Term donor face
+                if not build.face_matches(only, weight, label, profile):
                     continue
                 jobs.append((profile, weight, ref_name, italic, env, str(out_dir)))
     if not jobs:
@@ -256,7 +259,9 @@ def main():
         built.add(job[0])
 
     try:
-        build.run_faces(jobs, build_face,
+        # a weight-and-style job builds two faces (ship and term): side
+        # by side, not one after the other
+        build.run_faces(jobs, build_face, pool_from=2,
                         label=lambda job: f"{job[1]} [{job[0]}]", on_result=done)
     finally:
         # over every face of the family in the output directory (see

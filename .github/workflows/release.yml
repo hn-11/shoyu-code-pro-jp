@@ -3,9 +3,10 @@
 # variable fonts), verify, Nerd-patch everything, zip, GitHub release.
 #
 # One weight and style per job — its Latin donors, its three JP faces,
-# their Nerd Fonts patches, verified and uploaded as an artifact — with the
-# two variable fonts built beside them; the package job assembles dist/
-# from the artifacts, harmonizes the Latin families' win metrics (a per-job
+# their Nerd Fonts patches (the Sumi Moji one patched while the JP faces
+# build), verified side by side and uploaded as an artifact — with the two
+# variable fonts built beside them; the package job assembles dist/ from
+# the artifacts, harmonizes the Latin families' win metrics (a per-job
 # build never sees a family whole), bundles the collections and publishes.
 name: Release
 on:
@@ -16,6 +17,10 @@ on:
       tag:
         description: "Release tag to create (e.g. v2.4.0)"
         required: true
+      dry-run:
+        description: "Build and package only: no tag, no release (timing the workflow)"
+        type: boolean
+        default: false
 permissions:
   contents: write
 env:
@@ -23,7 +28,7 @@ env:
 jobs:
   faces:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -37,20 +42,17 @@ jobs:
           fontforge: "true"
       - run: echo "SHOYU_VERSION=${SHOYU_VERSION_TAG#v}" >> "$GITHUB_ENV"
       - run: python scripts/build_latin.py "${{ matrix.weight }} ${{ matrix.style }}"
-      - run: python scripts/build.py "${{ matrix.weight }} ${{ matrix.style }}"
-      # every face in dist/ is this job's: the three JP faces and the
-      # Sumi Moji face (the Term donor in dist/latin/term/ is never patched)
-      - run: python scripts/nerdpatch.py FontPatcher
-      - name: Verify
+      - name: Build the JP faces, patching Sumi Moji meanwhile
         run: |
-          rc=0
-          for f in dist/latin/SumiMoji-*.otf dist/nerd/latin/SumiMojiNF-*.otf; do
-            python scripts/verify_latin.py "$f" || rc=1
-          done
-          for f in dist/*.otf dist/nerd/*.otf; do
-            python scripts/verify.py "$f" || rc=1
-          done
-          exit $rc
+          python scripts/nerdpatch.py FontPatcher SumiMoji- > nerd-latin.log 2>&1 &
+          latin=$!
+          python scripts/build.py "${{ matrix.weight }} ${{ matrix.style }}"
+          python scripts/nerdpatch.py FontPatcher ShoyuCodeProJP
+          wait $latin || { cat nerd-latin.log; exit 1; }
+          cat nerd-latin.log
+      - run: >-
+          python scripts/verify_many.py
+          dist/*.otf dist/nerd/*.otf dist/latin/*.otf dist/nerd/latin/*.otf
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: faces-${{ matrix.weight }}-${{ matrix.style }}
@@ -64,7 +66,7 @@ jobs:
           retention-days: 7
   variable:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -90,7 +92,7 @@ jobs:
           retention-days: 7
   package:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     needs: [faces, variable]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -108,15 +110,11 @@ jobs:
       - run: python scripts/harmonize_latin.py
       - name: Verify the variable fonts against the static faces
         run: |
-          python scripts/verify_latin_vf.py "dist/latin/SumiMoji[wght].otf" > upright.log 2>&1 &
-          python scripts/verify_latin_vf.py "dist/latin/SumiMoji-Italic[wght].otf" > italic.log 2>&1 &
-          rc=0
-          wait -n || rc=1
-          wait -n || rc=1
-          cat upright.log italic.log
-          exit $rc
-      - run: python scripts/verify_latin.py dist/latin/SumiMoji-Regular.otf
-      - run: python scripts/verify_latin.py dist/nerd/latin/SumiMojiNF-BoldItalic.otf
+          python scripts/verify_latin_vf.py "dist/latin/SumiMoji[wght].otf"
+          python scripts/verify_latin_vf.py "dist/latin/SumiMoji-Italic[wght].otf"
+      - run: >-
+          python scripts/verify_many.py
+          dist/latin/SumiMoji-Regular.otf dist/nerd/latin/SumiMojiNF-BoldItalic.otf
       - run: python scripts/makeotc.py
       - run: |
           cp LICENSE dist/LICENSE
@@ -134,7 +132,8 @@ jobs:
             flag && /^## / {flag=0}
             flag
           ' CHANGELOG.md > release_notes.md
-      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+      - if: ${{ !inputs.dry-run }}
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           # on dispatch the tag doesn't exist yet; gh-release creates it
           # at the built commit. Tag pushes keep working unchanged.

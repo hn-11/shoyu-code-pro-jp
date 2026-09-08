@@ -35,11 +35,12 @@ for anyone who wants it back.
 Usage:
   python scripts/build.py [FILTER]
   FILTER is a run of words a face must all match: a weight name ("Bold"),
-  a style ("Italic" / "Upright") or a variant suffix ("35" / "Term";
-  "" alone is the base family). "Regular" takes Regular and Regular
-  Italic of every family, "Light Italic" one face per family, "Light
-  Upright Term" one face (the release workflow builds a weight and style
-  per job). Whole words, never a substring match (see face_matches).
+  a style ("Italic" / "Upright") or a variant ("35" / "Term" / "base" for
+  the suffix-less family; "" alone is that family). "Regular" takes
+  Regular and Regular Italic of every family, "Light Italic" one face per
+  family, "Light Upright Term" one face (CI builds a face per job, the
+  release a weight and style per job). Whole words, never a substring
+  match (see face_matches).
   With no FILTER, dist/ShoyuCodeProJP*.otf is cleared before building, so a
   full build never leaves faces from an older roster behind. A filtered run
   never deletes anything.
@@ -381,13 +382,23 @@ class VFSource:
     def matched_wght(self, target_units, slant=None):
         """The wght matched() converges on for `target_units`, as a plain
         number (build_latin_vf.py places fvar instances and masters by it,
-        so they sit exactly where the static faces are). Nine halvings of
-        the axis: ~1.4 wght on SCP's 700-wide axis, well under 1u of bar.
-        Targets are cached by their rounded value, so two weights whose
-        SHCJ bars round together would share one wght — the six SHCJ
-        faces are 15u+ apart, and build_latin_vf.user_axis rejects a
-        non-monotonic pairing anyway."""
-        return self.matched(target_units, slant, erode=False).wght
+        so they sit exactly where the static faces are) — the search
+        alone, no instance built. Nine halvings of the axis: ~1.4 wght on
+        SCP's 700-wide axis, well under 1u of bar."""
+        return self._converge(target_units / self.scale, self._axes_for(slant))
+
+    def _converge(self, pre_scale_target, axes):
+        """Nine halvings of the wght axis on the '=' bar (in the donor's
+        units), probing the VF's glyph set at each step."""
+        lo, hi = self.axis_range("wght", (200.0, 800.0))
+        lo, hi = float(lo), float(hi)
+        for _ in range(9):
+            mid = (lo + hi) / 2
+            if self._probe_bar(dict(axes, wght=mid)) < pre_scale_target:
+                lo = mid
+            else:
+                hi = mid
+        return (lo + hi) / 2
 
     def floor_bar(self, slant=None):
         """The '=' bar, in the consumer's units, at the wght axis floor:
@@ -400,16 +411,8 @@ class VFSource:
         if key in self._cache:
             return self._cache[key]
         pre_scale_target = target_units / self.scale
-        lo, hi = self.axis_range("wght", (200.0, 800.0))
-        lo, hi = float(lo), float(hi)
         axes = self._axes_for(slant)
-        for _ in range(9):
-            mid = (lo + hi) / 2
-            if self._probe_bar(dict(axes, wght=mid)) < pre_scale_target:
-                lo = mid
-            else:
-                hi = mid
-        wght = (lo + hi) / 2
+        wght = self._converge(pre_scale_target, axes)
         inst = self._instance(dict(axes, wght=wght))
         inst.wght = wght
         # slant the axis could not deliver (SCP Italic is -12, Monaspace's
@@ -2325,7 +2328,8 @@ class _WarningCounter(logging.Handler):
 def face_matches(only, weight, face_label, suffix):
     """Command-line filter: words, every one of which the face must match.
     A weight name ("Regular"), the style words "Italic" / "Upright", or a
-    variant suffix ("Term", "35"); "" is the base (suffix-less) family.
+    variant suffix ("Term", "35", or "base" for the suffix-less family;
+    "" alone is that family too).
     So "Regular" takes Regular and Regular Italic, "Light Italic" one
     face per family, "Light Upright Term" exactly one face (the release
     workflow builds one weight and style per job) — whole words only,
@@ -2345,6 +2349,8 @@ def face_matches(only, weight, face_label, suffix):
             ok = not italic
         elif word in weights:
             ok = word == weight
+        elif word == "base":
+            ok = suffix == ""     # the suffix-less family, next to other words
         else:
             ok = word == suffix
         if not ok:

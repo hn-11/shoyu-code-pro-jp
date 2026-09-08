@@ -63,18 +63,33 @@
   ローカル 4 コアで、JP Regular 6 面 55 秒（2 分 → ）、Sumi Moji Regular
   6 面 15 秒（64 秒 → ）、VF Upright 21 秒（3 分 → ）、`verify_latin_vf.py`
   61 秒（112 秒 → ）、TTC 6 面 3 秒（42 秒 → ）。
+  `verify_latin_vf.py` は VF をインスタンス化せず（40 回していた）、
+  `getGlyphSet(location=)` のアウトラインと HarfBuzz の variations で
+  各位置を検証する（61 秒 → 2 秒）。`makeotc.py` はファミリーごとに
+  プロセスを分ける。
   ワークフローはマトリクスに分割: CI は Regular / Regular Italic /
-  Light Italic / Nerd Font（Term Regular と Sumi Moji Regular のパッチ）/
-  可変フォントを並列の 5 ジョブで組み、`build` ジョブが集約する
-  （`upstream-sync.yml` が待つジョブ名は変わらない）。リリースは
-  ウェイト × 書体の 12 ジョブがそれぞれ Latin ドナー・JP 3 面・NF
-  パッチまで組んで検証し、可変フォント 2 ジョブと並行、`package`
-  ジョブがアーティファクトを集めて Sumi Moji（静的・NF）の
-  usWinAscent/Descent をファミリー全体で揃え（`harmonize_latin.py`）、
-  VF を静的面と突き合わせ、TTC・zip・リリースを作る。面フィルタは
-  語の組み合わせになり、「Light Upright」「Regular Upright Term」の
-  ように書体（Upright / Italic）と変種を絞れる。共通の準備手順は
+  Light Italic の各面を 1 ジョブ 1 面（9 ジョブ）、可変フォント、Sumi Moji
+  Regular への Nerd Fonts パッチ（記号セット 1 つ: `SHOYU_NERD_SETS`。
+  `--complete` は面の大きさによらず 1 面 1 分かかるため、全面・全セットは
+  リリースで）を並列に組んで 1 分程度（`upstream-sync.yml` の
+  `REQUIRED_CHECKS` はこのジョブ名一覧）。リリースはウェイト × 書体の
+  12 ジョブがそれぞれ Latin ドナー・JP 3 面・NF パッチ（Sumi Moji の
+  パッチは JP 面のビルドと並行）まで組んで `verify_many.py` で並列に
+  検証し、可変フォント 2 ジョブと並行、`package` ジョブが
+  アーティファクトを集めて Sumi Moji（静的・NF）の usWinAscent/Descent
+  をファミリー全体で揃え（`harmonize_latin.py`）、VF を静的面と
+  突き合わせ、TTC・zip・リリースを作る。FontForge は apt ではなく
+  展開済みの AppImage をキャッシュして使う（12〜15 秒 → 1 秒）。
+  面フィルタは語の組み合わせになり、「Light Upright」「Regular Upright
+  Term」「Regular Italic base」のように書体（Upright / Italic）と変種を
+  絞れる（`build_latin.py` では `ship` / `term`）。共通の準備手順は
   `.github/actions/setup-build`
+- Nerd Fonts 変種: FontForge の往復で消えていた元の面のメタデータを
+  `nerdpatch.py` が戻す — STAT テーブル（FontForge は書き出さない）、
+  post.isFixedPitch / PANOSE の等幅宣言、usWeightClass・fsSelection・
+  ベンダー ID・typo / win メトリクス（Sumi Moji は外接矩形全体を覆う方針
+  なのでアイコンの分まで広げる。JP 各面は Source Han Code JP の値のまま）。
+  `verify_latin.py` は平坦化された NF 面の FDArray 検査を飛ばす
 - リファクタリング: 7 箇所に複製されていたグリフ追加の前置き
   （`append_context`）、方針の違う 4 箇所の cmap 書き込み（`set_cmap`）、
   `build.py` / `build_latin.py` の `main()` と面の後処理

@@ -155,6 +155,8 @@ def test_rescaled_advance_all_ligature_widths():
     ("Term Regular Italic", "Regular", "Regular Italic", "Term", True),
     ("Upright", "Bold", "Bold", "35", True),
     ("Upright", "Bold", "Bold Italic", "35", False),
+    ("Regular Upright base", "Regular", "Regular", "", True),
+    ("Regular Upright base", "Regular", "Regular", "35", False),
     ("Semibold", "Bold", "Bold", "", False),  # not a weight, suffix or style
     ("Regular Term Extra", "Regular", "Regular", "Term", False),
 ])

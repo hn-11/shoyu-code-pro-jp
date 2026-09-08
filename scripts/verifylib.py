@@ -12,12 +12,16 @@ import uharfbuzz as hb
 HINT_OPS = frozenset({"hstem", "vstem", "hstemhm", "vstemhm", "hintmask", "cntrmask"})
 
 
-def make_shaper(source):
+def make_shaper(source, variations=None):
     """shape(text, feats) -> (glyph infos, glyph positions) for a font
-    given as a path or as the font's bytes."""
+    given as a path or as the font's bytes; `variations` ({axis tag:
+    user value}) sets a variable font's location — HarfBuzz shapes the
+    VF itself there, no instancing needed."""
     blob = (hb.Blob(source) if isinstance(source, (bytes, bytearray))
             else hb.Blob.from_file_path(str(source)))
     font = hb.Font(hb.Face(blob))
+    if variations:
+        font.set_variations(variations)
 
     def shape(text, feats):
         buf = hb.Buffer()

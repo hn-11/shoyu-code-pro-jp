@@ -6,6 +6,7 @@ identical tables across faces (CFF stays per-face, but name/cmap-adjacent
 tables and identical structures collapse).
 """
 
+import concurrent.futures
 from pathlib import Path
 
 from fontTools.ttLib import TTCollection, TTFont
@@ -71,38 +72,46 @@ def check_cmap_parity(fam, faces, fonts):
             "comes from the same build")
 
 
+def bundle(fam):
+    """One family's collection (dist/<fam>.ttc); returns its report line,
+    or None when the family has no faces. Raises SystemExit on a wrong
+    roster or a cmap mismatch (see check_cmap_parity)."""
+    src = SRC_DIR.get(fam, DIST)
+    faces = sorted(static_faces(src, fam), key=lambda p: face_key(p, fam))
+    if not faces:
+        return None
+    if len(faces) != EXPECTED:
+        present = sorted(p.stem[len(fam) + 1:] for p in faces)
+        wanted = [w + s for w in WEIGHT_ORDER for s in ("", "Italic")]
+        missing = sorted(set(wanted) - set(present))
+        builder = "build_latin.py" if fam in SRC_DIR else "build.py"
+        raise SystemExit(
+            f"{fam}: expected {EXPECTED} faces, found {len(faces)}\n"
+            f"  present: {present}\n  missing: {missing}\n"
+            f"  stale files left over in {src} from an older roster are "
+            "the usual cause of an unexpected surplus; an unfiltered "
+            f"`{builder}` run clears {src}/{fam}*.otf first, so rerun it "
+            "without a FILTER before bundling")
+    fonts = [TTFont(p) for p in faces]
+    for f in fonts:
+        # the faces are bundled as built: no outline changes, so no
+        # save-time extents recalc (which would draw every glyph of
+        # every face three times — five minutes for the four families)
+        f.recalcBBoxes = False
+    check_cmap_parity(fam, faces, fonts)
+    tc = TTCollection()
+    tc.fonts = fonts
+    out = DIST / f"{fam}.ttc"
+    tc.save(out, shareTables=True)
+    mb = out.stat().st_size / 1e6
+    return f"{out.name}: {len(faces)} faces, {mb:.1f} MB"
+
+
 def main():
-    for fam in FAMILIES:
-        src = SRC_DIR.get(fam, DIST)
-        faces = sorted(static_faces(src, fam), key=lambda p: face_key(p, fam))
-        if not faces:
-            print(f"skip {fam}: no faces")
-            continue
-        if len(faces) != EXPECTED:
-            present = sorted(p.stem[len(fam) + 1:] for p in faces)
-            wanted = [w + s for w in WEIGHT_ORDER for s in ("", "Italic")]
-            missing = sorted(set(wanted) - set(present))
-            builder = "build_latin.py" if fam in SRC_DIR else "build.py"
-            raise SystemExit(
-                f"{fam}: expected {EXPECTED} faces, found {len(faces)}\n"
-                f"  present: {present}\n  missing: {missing}\n"
-                f"  stale files left over in {src} from an older roster are "
-                "the usual cause of an unexpected surplus; an unfiltered "
-                f"`{builder}` run clears {src}/{fam}*.otf first, so rerun it "
-                "without a FILTER before bundling")
-        fonts = [TTFont(p) for p in faces]
-        for f in fonts:
-            # the faces are bundled as built: no outline changes, so no
-            # save-time extents recalc (which would draw every glyph of
-            # every face three times — five minutes for the four families)
-            f.recalcBBoxes = False
-        check_cmap_parity(fam, faces, fonts)
-        tc = TTCollection()
-        tc.fonts = fonts
-        out = DIST / f"{fam}.ttc"
-        tc.save(out, shareTables=True)
-        mb = out.stat().st_size / 1e6
-        print(f"{out.name}: {len(faces)} faces, {mb:.1f} MB")
+    # one process per family: the collections are independent
+    with concurrent.futures.ProcessPoolExecutor(len(FAMILIES)) as pool:
+        for fam, line in zip(FAMILIES, pool.map(bundle, FAMILIES)):
+            print(line or f"skip {fam}: no faces")
 
 
 if __name__ == "__main__":

@@ -1,7 +1,8 @@
 # The steps every build job of ci.yml / release.yml starts with: Python and
 # the requirements, the pinned upstreams (fetch-upstreams, cached) exported
 # as the build scripts' environment variables, and — for the jobs that
-# Nerd-patch — FontForge plus the cached FontPatcher.
+# Nerd-patch — FontForge (the project's AppImage, extracted and cached: a
+# second, versus the 12-15 s of apt-get) plus the cached FontPatcher.
 name: Set up a build job
 description: >
   Python + requirements, the pinned upstream fonts exported as SHCJ_TTC /
@@ -9,8 +10,14 @@ description: >
   the Nerd Fonts FontPatcher.
 inputs:
   fontforge:
-    description: Install FontForge and fetch FontPatcher (for nerdpatch.py)
+    description: Put FontForge on PATH and fetch FontPatcher (for nerdpatch.py)
     default: "false"
+  fontforge-release:
+    description: FontForge release whose x86_64 AppImage to use
+    default: 20230101
+  fontforge-appimage:
+    description: The AppImage file name in that release
+    default: FontForge-2023-01-01-a1dad3e-x86_64.AppImage
   fontpatcher-tag:
     description: Nerd Fonts release whose FontPatcher.zip to use
     default: v3.4.0
@@ -35,18 +42,30 @@ runs:
         echo "SCP_VF_I=${{ steps.upstreams.outputs.scp_vf_i }}" >> "$GITHUB_ENV"
         echo "MONA_VF=${{ steps.upstreams.outputs.mona_vf }}" >> "$GITHUB_ENV"
     - if: inputs.fontforge == 'true'
-      shell: bash
-      run: sudo apt-get update -qq && sudo apt-get install -y -qq fontforge python3-fontforge
-    - if: inputs.fontforge == 'true'
-      name: Fetch FontPatcher (cached)
+      name: Fetch FontForge and FontPatcher (cached)
       uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-      id: fp
+      id: ff
       with:
-        path: FontPatcher
-        key: fontpatcher-${{ inputs.fontpatcher-tag }}
-    - if: inputs.fontforge == 'true' && steps.fp.outputs.cache-hit != 'true'
+        path: |
+          fontforge
+          FontPatcher
+        key: fontforge-${{ inputs.fontforge-release }}-fontpatcher-${{ inputs.fontpatcher-tag }}
+    - if: inputs.fontforge == 'true' && steps.ff.outputs.cache-hit != 'true'
       shell: bash
       run: |
+        set -e
+        curl -sSfL -o /tmp/FontForge.AppImage \
+          "https://github.com/fontforge/fontforge/releases/download/${{ inputs.fontforge-release }}/${{ inputs.fontforge-appimage }}"
+        chmod +x /tmp/FontForge.AppImage
+        mkdir -p fontforge/bin
+        (cd fontforge && /tmp/FontForge.AppImage --appimage-extract > /dev/null)
+        printf '#!/bin/sh\nexec "$(dirname "$0")/../squashfs-root/AppRun" "$@"\n' > fontforge/bin/fontforge
+        chmod +x fontforge/bin/fontforge
         curl -sSfL -o /tmp/FontPatcher.zip \
           "https://github.com/ryanoasis/nerd-fonts/releases/download/${{ inputs.fontpatcher-tag }}/FontPatcher.zip"
         unzip -qo /tmp/FontPatcher.zip -d FontPatcher
+    - if: inputs.fontforge == 'true'
+      shell: bash
+      run: |
+        echo "$PWD/fontforge/bin" >> "$GITHUB_PATH"
+        fontforge/bin/fontforge -lang=py -c "import fontforge; print('fontforge', fontforge.version())"
