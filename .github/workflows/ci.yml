@@ -46,8 +46,8 @@ jobs:
       # from the VFs; build.py grafts it into Source Han Sans
       - name: Build the donors and the faces
         run: |
-          (python scripts/build_latin.py "${{ matrix.face }} ship"
-           && python scripts/build.py "${{ matrix.face }} base 35") > ship.log 2>&1 &
+          (python scripts/build_latin.py "${{ matrix.face }} ship" &&
+           python scripts/build.py "${{ matrix.face }} base 35") > ship.log 2>&1 &
           ship=$!
           python scripts/build_latin.py "${{ matrix.face }} term"
           python scripts/build.py "${{ matrix.face }} Term"
