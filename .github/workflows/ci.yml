@@ -39,13 +39,10 @@ jobs:
         include:
           - family: base
             latin: ship
-            ps: ShoyuCodeProJP
           - family: 35
             latin: ship
-            ps: ShoyuCodeProJP35
           - family: Term
             latin: term
-            ps: ShoyuCodeProJPTerm
     name: face (${{ matrix.face }} ${{ matrix.family }})
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -54,7 +51,9 @@ jobs:
       # from the VFs; build.py grafts it into Source Han Sans
       - run: python scripts/build_latin.py "${{ matrix.face }} ${{ matrix.latin }}"
       - run: python scripts/build.py "${{ matrix.face }} ${{ matrix.family }}"
-      - run: python scripts/verify_many.py dist/latin/*/*.otf dist/latin/*.otf dist/*.otf
+      # the donor (dist/latin/ or dist/latin/term/) and the face — verify_many
+      # expands the patterns itself, so the empty directory is no error
+      - run: python scripts/verify_many.py 'dist/latin/*/*.otf' 'dist/latin/*.otf' 'dist/*.otf'
   # the variable Sumi Moji needs only the upstreams (upright only here,
   # Italic is covered in release.yml); verify_latin_vf.py's static-face
   # comparison skips when dist/latin has no statics and its check against

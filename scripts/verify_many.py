@@ -5,10 +5,13 @@ Moji face), verify.py for everything else (a JP face), each output
 printed whole once its run ends. Exits non-zero if any run did.
 
 Usage:
-  python scripts/verify_many.py FONT [FONT ...]
+  python scripts/verify_many.py FONT [FONT ...]   # globs expanded here too
+                                                 # (a pattern matching nothing
+                                                 # is skipped, not an error)
 """
 
 import concurrent.futures
+import glob
 import os
 import subprocess
 import sys
@@ -30,9 +33,10 @@ def run(path):
 
 
 def main():
-    paths = sys.argv[1:]
+    paths = [p for arg in sys.argv[1:] for p in (sorted(glob.glob(arg)) or
+                                                 ([arg] if Path(arg).exists() else []))]
     if not paths:
-        sys.exit("usage: verify_many.py FONT [FONT ...]")
+        sys.exit("usage: verify_many.py FONT [FONT ...] (nothing matched)")
     failed = []
     with concurrent.futures.ThreadPoolExecutor(os.cpu_count() or 2) as pool:
         for path, rc, out in pool.map(run, paths):
