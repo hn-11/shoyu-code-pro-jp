@@ -39,6 +39,15 @@
   - `_shcj_ref` がプール内で `sys.exit` していたのを例外に（他の面の
     失敗と一緒に報告される）。`verify_latin_vf.py` は wght 軸が無い
     フォントで FAIL を出して終了する
+- ビルド時間の短縮: Term の全角グリフ約1.7万個は描き直さず charstring の
+  中で右へ動かす（`shift_charstring`——先頭の vstem 座標と最初の moveto
+  だけを動かし、幅オペランドを付け替える）ので、Source Han Sans 自身の
+  ヒントが残り、Term 1 面のヒント付けが 99 秒から 10 秒前後になった
+  （品質面でも、自動ヒントより元のヒントが残るほうがよい）。
+  `nerdpatch.py` は面ごとの FontForge 実行をコア数分並列に、
+  `build_latin_vf.py` は Upright と Italic を並列に組む。CI は可変フォント
+  を別ジョブで並行して組む。JP の Regular 6 面はローカル 4 コアで
+  2 分（以前は 9 分）
 - リファクタリング: 7 箇所に複製されていたグリフ追加の前置き
   （`append_context`）、方針の違う 4 箇所の cmap 書き込み（`set_cmap`）、
   `build.py` / `build_latin.py` の `main()` と面の後処理

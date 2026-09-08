@@ -1013,3 +1013,60 @@ def test_prune_orphan_names_drops_only_the_unreferenced_high_ids():
     assert font["name"].getDebugName(300) == "Alt forms"   # still referenced
     assert font["name"].getDebugName(1) == "Test"          # < 256 untouched
     assert build.prune_orphan_names(font) == []            # idempotent
+
+
+# --- shift_charstring (Term: hints survive the widening) --------------------
+
+def _t2(program, nominal=100, default=1000):
+    from types import SimpleNamespace
+
+    from fontTools.misc.psCharStrings import T2CharString
+    private = SimpleNamespace(nominalWidthX=nominal, defaultWidthX=default)
+    cs = T2CharString(program=list(program), private=private, globalSubrs=[])
+    return cs, private
+
+
+def _drawn(cs):
+    from fontTools.pens.boundsPen import BoundsPen
+    pen = BoundsPen(None)
+    cs.draw(pen)
+    return cs.width, pen.bounds
+
+
+@pytest.mark.parametrize("program, new_width, want_width, want_prog", [
+    # explicit vstem, hmoveto first, no width operand (advance = default 1000)
+    ([21, -21, 224, 72, "hstem", 157, 676, "vstem", 157, "hmoveto", 97, "hlineto", "endchar"],
+     1200, 1200,
+     [1100, 21, -21, 224, 72, "hstem", 257, 676, "vstem", 257, "hmoveto", 97, "hlineto", "endchar"]),
+    # implicit vstem hints in front of cntrmask, rmoveto first, width operand present
+    ([-4, 75, 281, "hstem", 176, 77, "cntrmask", b"\xf8", 253, 10, "rmoveto", 50, "hlineto", "endchar"],
+     1200, 1200,
+     [1100, 75, 281, "hstem", 276, 77, "cntrmask", b"\xf8", 353, 10, "rmoveto", 50, "hlineto", "endchar"]),
+    # hstemhm + hintmask (implicit vstems), vmoveto first -> rmoveto
+    ([3, 77, 361, 63, "hstemhm", 109, 76, "hintmask", b"\x80", 300, "vmoveto", 40, "hlineto", "endchar"],
+     1200, 1200,
+     [1100, 3, 77, 361, 63, "hstemhm", 209, 76, "hintmask", b"\x80", 100, 300, "rmoveto", 40, "hlineto", "endchar"]),
+    # new width equals defaultWidthX: no width operand at all
+    ([-4, 75, 281, "hstem", 10, 10, "rmoveto", 50, "hlineto", "endchar"],
+     1000, 1000,
+     [75, 281, "hstem", 110, 10, "rmoveto", 50, "hlineto", "endchar"]),
+    # an empty glyph: only the width changes
+    (["endchar"], 1200, 1200, [1100, "endchar"]),
+])
+def test_shift_charstring_moves_the_outline_and_keeps_the_hints(program, new_width, want_width,
+                                                                 want_prog):
+    cs, private = _t2(program)
+    before_width, before_bounds = _drawn(cs)
+    assert build.shift_charstring(cs, 100, new_width, private)
+    assert cs.program == want_prog
+    width, bounds = _drawn(cs)
+    assert width == want_width
+    if before_bounds:
+        assert bounds == (before_bounds[0] + 100, before_bounds[1],
+                          before_bounds[2] + 100, before_bounds[3])
+
+
+def test_shift_charstring_declines_a_seac_endchar():
+    cs, private = _t2([100, 200, 65, 66, "endchar"])
+    assert not build.shift_charstring(cs, 100, 1200, private)
+    assert cs.program == [100, 200, 65, 66, "endchar"]

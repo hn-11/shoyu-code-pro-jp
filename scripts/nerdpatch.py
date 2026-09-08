@@ -9,6 +9,7 @@ Usage: python scripts/nerdpatch.py <path-to-FontPatcher-dir> [name-filter]
 Requires: fontforge on PATH.
 """
 
+import concurrent.futures
 import os
 import subprocess
 import sys
@@ -181,41 +182,55 @@ def main():
     # family, and not the variable fonts (a VF is not patched)
     sources = [(p, OUT) for p in sorted(DIST.glob("*.otf"))]
     sources += [(p, LATIN_OUT) for p in static_faces(LATIN_DIR, "SumiMoji")]
+    sources = [(p, out) for p, out in sources if not name_filter or name_filter in p.name]
     with tempfile.TemporaryDirectory() as tmp:
         flatten_script = Path(tmp) / "flatten.py"
         flatten_script.write_text(FLATTEN)
-        for src, out_dir in sources:
-            if name_filter and name_filter not in src.name:
-                continue
-            print(f"patching: {src.name}")
-            flat = Path(tmp) / src.name
-            try:
-                subprocess.run(
-                    ["fontforge", "-script", str(flatten_script), str(src), str(flat)],
-                    check=True, capture_output=True, text=True, env=ff_env())
-            except subprocess.CalledProcessError as e:
-                print(e.stdout)
-                print(e.stderr)
-                raise
-            r = subprocess.run(
-                ["fontforge", "-script", str(patcher_dir / "font-patcher"),
-                 "--complete", "--quiet", "--outputdir", str(out_dir), str(flat)],
-                check=False, capture_output=True, text=True, env=ff_env())
-            if r.returncode != 0:
-                print(r.stdout)
-                print(r.stderr)
-                raise SystemExit(f"font-patcher failed on {src.name}")
-            produced = [ln.split("'")[1] for ln in r.stdout.splitlines()
-                        if "===>" in ln and "'" in ln]
-            if not produced:
-                print(r.stdout)
-                raise SystemExit(
-                    f"no faces parsed from font-patcher output for {src.name} "
-                    "(check font-patcher's \"===> '...'\" output format for changes)")
-            for prod in produced:
-                path = Path(prod) if Path(prod).is_absolute() else ROOT / prod
-                final = fix_names(path, src)
-                print(f"  -> {final.name}")
+        # FontForge is single-threaded and each face is two subprocess
+        # runs: patch the faces side by side, one per core
+        with concurrent.futures.ThreadPoolExecutor(os.cpu_count() or 2) as pool:
+            futures = {pool.submit(patch_face, src, out_dir, Path(tmp),
+                                   flatten_script, patcher_dir): src
+                       for src, out_dir in sources}
+            for fut in concurrent.futures.as_completed(futures):
+                for final in fut.result():   # a failure raises here
+                    print(f"  -> {final.name}")
+
+
+def patch_face(src, out_dir, tmp, flatten_script, patcher_dir):
+    """Flatten one face with FontForge, run font-patcher on it, and give
+    every produced file its final names (fix_names). Returns the final
+    paths; raises on a FontForge or font-patcher failure."""
+    print(f"patching: {src.name}")
+    flat = tmp / src.name
+    try:
+        subprocess.run(
+            ["fontforge", "-script", str(flatten_script), str(src), str(flat)],
+            check=True, capture_output=True, text=True, env=ff_env())
+    except subprocess.CalledProcessError as e:
+        print(e.stdout)
+        print(e.stderr)
+        raise
+    r = subprocess.run(
+        ["fontforge", "-script", str(patcher_dir / "font-patcher"),
+         "--complete", "--quiet", "--outputdir", str(out_dir), str(flat)],
+        check=False, capture_output=True, text=True, env=ff_env())
+    if r.returncode != 0:
+        print(r.stdout)
+        print(r.stderr)
+        raise SystemExit(f"font-patcher failed on {src.name}")
+    produced = [ln.split("'")[1] for ln in r.stdout.splitlines()
+                if "===>" in ln and "'" in ln]
+    if not produced:
+        print(r.stdout)
+        raise SystemExit(
+            f"no faces parsed from font-patcher output for {src.name} "
+            "(check font-patcher's \"===> '...'\" output format for changes)")
+    finals = []
+    for prod in produced:
+        path = Path(prod) if Path(prod).is_absolute() else ROOT / prod
+        finals.append(fix_names(path, src))
+    return finals
 
 
 if __name__ == "__main__":

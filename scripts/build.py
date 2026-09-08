@@ -1217,31 +1217,110 @@ def fit_halfwidth_forms(font, cell, glyph_names=None):
     return len(done)
 
 
+_STACK_CLEARING = {"hstem", "vstem", "hstemhm", "vstemhm", "hintmask", "cntrmask",
+                   "rmoveto", "hmoveto", "vmoveto", "endchar"}
+
+
+def shift_charstring(cs, dx, width, private):
+    """Move a (desubroutinized) Type 2 charstring `dx` to the right and
+    give it advance `width`, keeping its hints: only the first vstem
+    coordinate (explicit `vstem`/`vstemhm`, or the implicit one in front
+    of a `hintmask`/`cntrmask`) and the first moveto move, everything
+    after is relative. The width operand is rewritten against this FD's
+    nominalWidthX (omitted at defaultWidthX, as the spec has it). Returns
+    False, leaving the charstring alone, for a program it does not
+    understand (a seac-style endchar) — the caller redraws that one."""
+    cs.decompile()
+    prog = list(cs.program)
+    ops = [i for i, t in enumerate(prog) if isinstance(t, str)]
+    if not ops:
+        return False
+    first_op = prog[ops[0]]
+    if first_op not in _STACK_CLEARING or first_op == "endchar" and ops[0] > 1:
+        return False
+    # the width rides as an odd extra argument on the first stack-clearing
+    # operator; strip it, then prepend ours
+    nargs = ops[0]
+    even_ops = {"hstem", "vstem", "hstemhm", "vstemhm", "hintmask", "cntrmask", "rmoveto"}
+    has_width = (nargs % 2 == 1) if first_op in even_ops else (
+        nargs == 2 if first_op in ("hmoveto", "vmoveto") else nargs == 1)
+    if has_width:
+        del prog[0]
+    i = 0
+    if width != private.defaultWidthX:
+        prog.insert(0, width - private.nominalWidthX)
+        i = 1                              # the walk below skips our width
+    # walk the hints and the first moveto
+    args = []
+    vstem_done = False
+    while i < len(prog):
+        t = prog[i]
+        if not isinstance(t, (str, bytes)):
+            args.append(i)
+            i += 1
+            continue
+        if isinstance(t, bytes):          # hintmask data
+            i += 1
+            continue
+        if t in ("vstem", "vstemhm") or (t in ("hintmask", "cntrmask") and args and not vstem_done):
+            if args:
+                prog[args[0]] += dx
+            vstem_done = True
+        elif t == "rmoveto":
+            prog[args[-2]] += dx
+            break
+        elif t == "hmoveto":
+            prog[args[-1]] += dx
+            break
+        elif t == "vmoveto":
+            prog[args[-1]:args[-1] + 2] = [dx, prog[args[-1]], "rmoveto"]
+            break
+        elif t not in ("hstem", "hstemhm", "hintmask", "cntrmask"):
+            break                          # endchar or a path op: done
+        args = []
+        i += 1
+    cs.program = prog
+    cs.bytecode = None
+    return True
+
+
 def widen_fullwidth(font, cell):
     """Term variant: widen every full-width glyph's advance to two cells
     (2 x cell) and center the unchanged 1000-unit outline. The Latin layer
     is untouched by this pass; the terminal grid becomes exact (CJK = two
-    cells, symmetric padding instead of a right-side gap)."""
+    cells, symmetric padding instead of a right-side gap).
+
+    The outlines are moved inside their charstrings (shift_charstring),
+    so Source Han Sans's own hints survive on the 17,000 glyphs this
+    touches — redrawing them cost autohint 100 seconds per face; a
+    glyph shift_charstring declines is redrawn and re-hinted."""
     full = 2 * cell
     shift = (full - FULLWIDTH) // 2
     cff = font["CFF "].cff
+    cff.desubroutinize()   # shift_charstring reads a flat program
     td = cff[cff.fontNames[0]]
     gs = font.getGlyphSet()
     hmtx = font["hmtx"]
-    new_cs = {}
+    redrawn = {}
+    shifted = 0
     for name in font.getGlyphOrder():
         adv, lsb = hmtx.metrics[name]
         if adv != FULLWIDTH:
             continue
         gid = font.getGlyphID(name)
         private = td.FDArray[td.FDSelect[gid]].Private
-        pen = T2CharStringPen(pen_width(private, full), gs)
-        gs[name].draw(TransformPen(pen, (1, 0, 0, 1, shift, 0)))
-        new_cs[name] = pen.getCharString(private=private)
+        if shift_charstring(td.CharStrings[name], shift, full, private):
+            shifted += 1
+        else:
+            pen = T2CharStringPen(pen_width(private, full), gs)
+            gs[name].draw(TransformPen(pen, (1, 0, 0, 1, shift, 0)))
+            redrawn[name] = pen.getCharString(private=private)
         hmtx.metrics[name] = (full, lsb + shift)
-    for name, cs in new_cs.items():
+    for name, cs in redrawn.items():
         td.CharStrings.charStringsIndex[td.CharStrings.charStrings[name]] = cs
-    note_redrawn(font, new_cs)
+    note_redrawn(font, redrawn)
+    print(f"  full-width widened to {full}: {shifted} shifted with their hints, "
+          f"{len(redrawn)} redrawn")
 
 
 # name IDs we drop before writing our own (every platform/encoding, so no
@@ -2152,11 +2231,12 @@ def env_paths(spec):
     return env
 
 
-def run_faces(jobs, worker, label, on_result):
-    """Run `worker` over `jobs`: in-process for one or two faces (a
-    traceback then stays readable), else across a process pool. Every
-    failure is collected and reported at the end, `label(job)` naming the
-    face, and the run exits non-zero if any face failed."""
+def run_faces(jobs, worker, label, on_result, pool_from=3):
+    """Run `worker` over `jobs`: in-process below `pool_from` jobs (one or
+    two faces — a traceback then stays readable), else across a process
+    pool. Every failure is collected and reported at the end,
+    `label(job)` naming the face, and the run exits non-zero if any face
+    failed."""
     failures = []
 
     def take(job, result):
@@ -2167,7 +2247,7 @@ def run_faces(jobs, worker, label, on_result):
             return
         on_result(job, value)
 
-    if len(jobs) <= 2:
+    if len(jobs) < pool_from:
         for job in jobs:
             take(job, lambda: worker(job))
     else:

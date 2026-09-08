@@ -327,14 +327,16 @@ python scripts/makeotc.py                                  # .ttc 化
 立てると name テーブルにその版番号を刻む（リリースワークフローがタグから
 渡す。未設定なら上流のリビジョンをそのまま残す）。
 
-`requirements.txt` には AFDKO（`otfautohint` でグラフト・拡幅したグリフに
-ヒントを付ける）も含まれる。ローカルでの試しビルドで時間を節約したい場合は
-`SHOYU_SKIP_AUTOHINT=1` を立てるとスキップできる。ヒント付与後は
-cffsubr（AFDKO の `tx`、`requirements.txt` に同梱）で CFF をサブルーチン化
-している。ビルドが生成する charstring はすべてフラットで、Term は全角
-グリフ約1.7万個を丸ごと再生成するため、ヒントを付けただけの Term 面は
-44%肥大（6.7MB）していた。サブルーチン化後は4.6MB — ヒントを保ったまま
-v3.2.0（4.66MB）より小さい。
+`requirements.txt` には AFDKO（`otfautohint` でグラフト・拡大縮小した
+グリフにヒントを付ける）も含まれる。ローカルでの試しビルドで時間を節約
+したい場合は `SHOYU_SKIP_AUTOHINT=1` を立てるとスキップできる。Term の
+全角グリフ約1.7万個は描き直さず charstring の中で 100 ユニット右へ動かす
+（`shift_charstring`）ので、Source Han Sans 自身のヒントがそのまま残り、
+ヒント付けは各面で描き直した 1,300〜1,700 グリフだけで済む。ヒント付与後
+は cffsubr（AFDKO の `tx`、`requirements.txt` に同梱）で CFF をサブルーチン
+化している。ビルドが生成する charstring はフラットなので、サブルーチン化
+なしだと面が肥大する（Term でヒント付き 6.7MB → サブルーチン化後 4.6MB、
+v3.2.0 の 4.66MB より小さい）。
 
 ## 仕組み
 
