@@ -168,18 +168,35 @@ def main():
             union = pen.bounds if union is None else tuple(
                 f(a, b) for f, a, b in zip((min, min, max, max), union, pen.bounds))
     # the box is the integer union over the MASTERS; an instance can sit a
-    # fraction of a unit past it (the 16.16 deltas and the merge's 0.01
-    # rounding tolerance), so the outlines may overshoot by < 1u
+    # hair past it (16.16 deltas, the merge's 0.01 rounding tolerance —
+    # 0.002u measured), so allow that much and no more
+    eps = 0.05
     head = tf["head"]
     box = (head.xMin, head.yMin, head.xMax, head.yMax)
-    outline = tuple(round(v, 2) for v in union)
-    check(box[0] - 1 < outline[0] and box[1] - 1 < outline[1]
-          and box[2] + 1 > outline[2] and box[3] + 1 > outline[3],
-          f"head bbox {box} holds every instance's outlines {outline} (to within 1u)")
-    check(hhea.xMaxExtent + 1 > outline[2],
+    if not check(union is not None, "the instances draw some outline"):
+        union = (0, 0, 0, 0)
+    outline = tuple(round(v, 3) for v in union)
+    check(box[0] - eps <= outline[0] and box[1] - eps <= outline[1]
+          and box[2] + eps >= outline[2] and box[3] + eps >= outline[3],
+          f"head bbox {box} holds every instance's outlines {outline}")
+    check(hhea.xMaxExtent + eps >= outline[2],
           f"hhea.xMaxExtent {hhea.xMaxExtent} >= the widest instance outline {outline[2]}")
-    check(hhea.minLeftSideBearing - 1 < outline[0],
+    check(hhea.minLeftSideBearing - eps <= outline[0],
           f"hhea.minLeftSideBearing {hhea.minLeftSideBearing} <= leftmost outline {outline[0]}")
+    rsb = None
+    for w in (axis.minValue, axis.maxValue):
+        with build_latin_vf.unrounded_cff2_instancing():
+            inst = instantiateVariableFont(tf, {"wght": w}, inplace=False)
+        gs, metrics = inst.getGlyphSet(), inst["hmtx"].metrics
+        for g in inst.getGlyphOrder():
+            pen = BoundsPen(gs)
+            gs[g].draw(pen)
+            if pen.bounds is not None:
+                right = metrics[g][0] - pen.bounds[2]
+                rsb = right if rsb is None else min(rsb, right)
+    check(rsb is not None and hhea.minRightSideBearing - eps <= rsb,
+          f"hhea.minRightSideBearing {hhea.minRightSideBearing} <= smallest right side "
+          f"bearing {None if rsb is None else round(rsb, 3)}")
 
     # every named instance: shape the ligature cases, same as the static
     # faces (verify_latin.py / verify.py CASES), on the IN-MEMORY instanced

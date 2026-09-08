@@ -17,8 +17,11 @@
     `SumiMoji-Italic[wght].otf` も拾い、リリースの TTC 化が 13 面で止まり
     Nerd Fonts パッチが CFF2 の VF を受け取る状態だった。静的面だけを
     列挙する `verifylib.static_faces` に置き換え
-  - Sumi Moji VF: `head` の外接矩形が既定マスター（Regular）だけの値
-    だったのをマスター全体の和にした。GSUB の FeatureParams を付け替えた
+  - Sumi Moji VF: `head` の外接矩形と `hhea` の広がり（xMaxExtent・両側の
+    最小サイドベアリング）が既定マスター（Regular）だけの値だったのを、
+    各マスターのアウトラインから測った和にした（保存時の再計算は既定
+    インスタンスしか見ないので切る）。`verify_latin_vf.py` は軸の両端と
+    既定のインスタンスを丸めなしで描いて突き合わせる。GSUB の FeatureParams を付け替えた
     後に元の name レコード（Upright で 73 件）が参照されないまま残って
     いたのと、SCP 由来の STAT / fvar の文字列 5 件を削除（`prune_orphan_names`、
     静的面にも適用）。

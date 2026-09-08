@@ -35,7 +35,6 @@ def test_checker_tallies_and_prints(capsys):
     assert out == ["ok   fine", "FAIL broken", "ok   still fine"]
 
 
-
 # --- glyph_has_hint ----------------------------------------------------------
 
 class _Private:

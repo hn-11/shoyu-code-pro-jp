@@ -325,9 +325,9 @@ def main():
     for ch in MONA_AMBIGUOUS:
         if is_term:
             got_default, got_alt = advance_of(ch, {}), advance_of(ch, {"fwid": True})
-            ok = got_default == a_adv and got_alt == full_adv
-            print(f"{'ok  ' if ok else 'FAIL'} {ch!r} default {got_default} "
-                  f"(want {a_adv}), fwid {got_alt} (want {full_adv})")
+            check(got_default == a_adv and got_alt == full_adv,
+                  f"{ch!r} default {got_default} (want {a_adv}), "
+                  f"fwid {got_alt} (want {full_adv})")
         else:
             got_default = advance_of(ch, {})
             got_h, got_s = advance_of(ch, {"hwid": True}), advance_of(ch, {"ss09": True})
@@ -401,8 +401,7 @@ def main():
     for ch in OVERLAP_CJK:
         cp = ord(ch)
         if cp not in cmap:
-            print(f"FAIL no overlap in {ch!r}: not in cmap")
-            check.failed = True
+            check(False, f"no overlap in {ch!r}: not in cmap")
             continue
         gname = cmap[cp]
         ok = overlap_ok(gname)

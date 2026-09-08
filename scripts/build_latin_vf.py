@@ -231,7 +231,7 @@ def master_scp_wghts(scp_masters, to_scp, lo, default_u, hi_u, extra=()):
     masters would give varLib a near-singular model). Sorted."""
     top = to_scp(hi_u)
     ws = [float(lo), to_scp(default_u), top]
-    if len(set(ws)) < 3 or not lo < ws[1] < top:
+    if not lo < ws[1] < top:
         raise RuntimeError(f"axis minimum, Regular and Heavy must be distinct and "
                            f"ordered, got SCP wght {ws}")
     for w in [float(w) for w in scp_masters] + [round(float(w), 2) for w in extra]:
@@ -378,7 +378,9 @@ def master_extents(font):
     """(xMin, yMin, xMax, yMax, min left side bearing, min right side
     bearing) measured on a master's outlines — hhea.recalc would take
     the side bearings from hmtx, which an instanced master does not keep
-    current, so both come from the drawn bounds here."""
+    current, so both come from the drawn bounds here (and xMaxExtent,
+    lsb + width, is therefore the outline xMax). None for a font with no
+    outlines at all."""
     gs = font.getGlyphSet()
     hmtx = font["hmtx"].metrics
     box = None
@@ -394,6 +396,8 @@ def master_extents(font):
         lsb = x0 if lsb is None else min(lsb, x0)
         right = hmtx[name][0] - x1
         rsb = right if rsb is None else min(rsb, right)
+    if box is None:
+        return None
     return (math.floor(box[0]), math.floor(box[1]), math.ceil(box[2]), math.ceil(box[3]),
             math.floor(lsb), math.floor(rsb))
 

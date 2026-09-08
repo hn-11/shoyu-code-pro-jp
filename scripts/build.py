@@ -718,7 +718,9 @@ def graft_halfwidth(base, scp, ref):
             made[key] = name
             if is_mark:
                 marks.add(name)
-            if src[0] == "scp":
+            # variant wiring keys off the SCP glyph; a source glyph cmap'd
+            # to both a mark and a spacing codepoint keeps its spacing entry
+            if src[0] == "scp" and (not is_mark or src[1] not in default_map):
                 default_map[src[1]] = name
         new_map[cp] = made[key]
 
@@ -819,8 +821,8 @@ def import_scp_variants(base, scp, default_map, marks):
             for src, dst in _subst_pairs(kind, subtables, fr.FeatureTag):
                 if src not in default_map:
                     continue
-                if dst not in imported:
-                    is_mark = default_map[src] in marks
+                is_mark = default_map[src] in marks
+                if (dst, is_mark) not in imported:
                     width, dx = (0, -CELL) if is_mark else (CELL, 0)
                     pen = T2CharStringPen(pen_width(private, width), scp_gs)
                     draw_clean(
@@ -830,10 +832,10 @@ def import_scp_variants(base, scp, default_map, marks):
                         base, td, name,
                         pen.getCharString(private=private),
                         fd_index, width, None, vdon)
-                    imported[dst] = name
+                    imported[dst, is_mark] = name
                     if is_mark:
                         marks.add(name)
-                tag_maps.setdefault(tag, {})[default_map[src]] = imported[dst]
+                tag_maps.setdefault(tag, {})[default_map[src]] = imported[dst, is_mark]
     return tag_maps, tag_names
 
 

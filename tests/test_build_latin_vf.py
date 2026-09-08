@@ -239,3 +239,30 @@ def test_classify_unicode_marks_noop_without_gdef():
     font = _font_with_gdef({0x300: "grave"}, {})
     del font["GDEF"]
     assert build.classify_unicode_marks(font) == []
+
+
+# --- master_extents / master_scp_wghts seed guard ----------------------------
+
+def test_master_extents_measures_the_outlines():
+    from fontTools.pens.ttGlyphPen import TTGlyphPen
+    pen = TTGlyphPen(None)
+    pen.moveTo((-20, -10))
+    pen.lineTo((580, -10))
+    pen.lineTo((580, 700))
+    pen.lineTo((-20, 700))
+    pen.closePath()
+    font = make_font([".notdef", "A"], {0x41: "A"}, {"A": 600}, glyphs={"A": pen.glyph()})
+    font["hmtx"].metrics["A"] = (600, -20)
+    # box, then min lsb (outline xMin) and min rsb (advance - outline xMax)
+    assert vf.master_extents(font) == (-20, -10, 580, 700, -20, 20)
+
+
+def test_master_extents_none_without_outlines():
+    font = make_font([".notdef", "A"], {0x41: "A"}, {"A": 600})
+    assert vf.master_extents(font) is None
+
+
+def test_master_scp_wghts_rejects_unordered_seeds():
+    to_scp = {400: 300.0, 900: 250.0}.get
+    with pytest.raises(RuntimeError, match="distinct and ordered"):
+        vf.master_scp_wghts([200, 400, 900], to_scp, 200, 400, 900)
