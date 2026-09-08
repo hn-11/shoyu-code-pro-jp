@@ -7,7 +7,8 @@ printed whole once its run ends. Exits non-zero if any run did.
 Usage:
   python scripts/verify_many.py FONT [FONT ...]   # globs expanded here too
                                                  # (a pattern matching nothing
-                                                 # is skipped, not an error)
+                                                 # is skipped, not an error;
+                                                 # so is a variable font)
 """
 
 import concurrent.futures
@@ -35,6 +36,9 @@ def run(path):
 def main():
     paths = [p for arg in sys.argv[1:] for p in (sorted(glob.glob(arg)) or
                                                  ([arg] if Path(arg).exists() else []))]
+    # a variable font (SumiMoji[wght].otf) is verify_latin_vf.py's, not a
+    # static face's verifier's: a pattern that sweeps one up skips it
+    paths = [p for p in paths if "[" not in Path(p).name]
     if not paths:
         sys.exit("usage: verify_many.py FONT [FONT ...] (nothing matched)")
     failed = []
