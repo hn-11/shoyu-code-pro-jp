@@ -215,24 +215,38 @@ python scripts/build.py        # dist/latin を Source Han Sans に接ぎ木
 
 **Sumi Moji VF（可変フォント）**: `scripts/build_latin_vf.py` は同じ
 レシピを CFF2 可変フォントとして組む——`dist/latin/SumiMoji[wght].otf`
-（Upright）と `dist/latin/SumiMoji-Italic[wght].otf`（Italic）。マスターは
-SCP VF 自身のマスター位置（wght 200 / 400 / 900——CFF2 の VarStore から
-実測、決め打ちしない）にそのまま置き、各マスターで Monaspace を太さ
-一致でインスタンス化する。ただし重なり除去（`pathops.simplify`）とヒント
-付け・サブルーチン化はしない——重なりは Adobe が SCP 自身の VF でして
-いるのと同じ扱いで残し（マスター間で点の対応が壊れるため）、ヒントは
-インスタンス化で失われるので配布用の静的インスタンスを別途作る側の
-仕事のままにする。fvar の6つの名前付きインスタンス（Light / Normal /
-Regular / Medium / Bold / Heavy）と STAT の値は静的版と同じ「SHCJ の
-`=` バー × 600/667」に一致する SCP wght に置く。
+（Upright）と `dist/latin/SumiMoji-Italic[wght].otf`（Italic）。wght 軸は
+静的版の STAT と同じ usWeightClass の値で切ってある——300 / 350 / 400 /
+500 / 700 / 900 = Light / Normal / Regular / Medium / Bold / Heavy、既定値
+400 = Regular（軸を指定せずに VF を選んでも Regular が出る。OS/2 の
+usWeightClass 400 と一致し、CSS の `font-weight: 700` は Sumi Moji の
+Bold に落ちる）。各値は avar で「SHCJ の `=` バー × 600/667 に一致する
+SCP wght」（実測: Upright 317/374/406/546/669/857、Italic 317/378/399/
+538/662/841）へ写され、その間は SCP 自身の avar の折れ点も通して
+補間する——SCP の VF はユーザー wght に対して線形ではない（avar で
+曲げてある）ので、これを引き継がないと中間ウェイトが静的版と一致し
+ない。マスターは SCP VF 自身のマスター位置（wght 200 / 400——CFF2 の
+VarStore から実測、決め打ちしない）に Regular と Heavy の位置（Regular
+が既定マスター、Heavy が軸の上限。SCP の 900 マスターは上限の外なので
+使わず、SCP が 400〜900 で線形なことを利用して Heavy 位置でインスタンス
+化する）と Monaspace の下限位置（Monaspace の wght 200 のバーが SCP の
+バーと一致する SCP wght——これより細い側では Monaspace が下限でクランプ
+されるので、ここにマスターを置くと下限側は一定・上限側は SCP 追随になる）
+を加えた 5 つで、各マスターで Monaspace を太さ一致でインスタンス化する。
+SCP 側のマスターは fontTools の instancer の整数丸めを切ってインスタンス化
+する（charstring の相対座標に丸めが累積して、マスター間で `m` などが
+数 u ずれるのを避けるため。VF は CFF2 の固定小数精度でそのまま持てる）。ただし重なり除去（`pathops.simplify`）とヒント付け・サブルーチン
+化はしない——重なりは Adobe が SCP 自身の VF でしているのと同じ扱いで
+残し（マスター間で点の対応が壊れるため）、ヒントはインスタンス化で
+失われるので配布用の静的インスタンスを別途作る側の仕事のままにする。
 
-wght 軸の範囲は 200〜900（SCP 自身の範囲）。ただし SCP wght がおよそ
-366 を下回ると、Monaspace 側の記号・合字は自身の wght 200 の下限（＝
-静的版が erosion で削っている太さ）より薄くできない——erosion は
-pathops の非線形なブーリアン演算で、マスター間の補間では再現できない
-ため VF のマスターには使えない。したがって VF の軽量側（Light 相当）
-では記号・合字だけが下限の太さで止まり、erosion 済みの静的 Light より
-心持ち太くなる。静的 Light は引き続き erosion 版を配布する。
+wght 軸の範囲は 200〜900。ただし SCP wght がおよそ 366 を下回ると
+（ユーザー wght でおよそ 340 未満）、Monaspace 側の記号・合字は自身の
+wght 200 の下限（＝静的版が erosion で削っている太さ）より薄くできない
+——erosion は pathops の非線形なブーリアン演算で、マスター間の補間では
+再現できないため VF のマスターには使えない。したがって VF の軽量側
+（Light 相当）では記号・合字だけが下限の太さで止まり、erosion 済みの
+静的 Light より心持ち太くなる。静的 Light は引き続き erosion 版を配布する。
 
 「Sumi Moji」はまだ仮称（PostScript 名は `SumiMoji-*`）。経緯・命名調査・
 今後の計画は [docs/sumi-moji-plan.md](docs/sumi-moji-plan.md) を参照。

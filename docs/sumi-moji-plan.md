@@ -6,8 +6,10 @@ Sumi Moji（`dist/latin`、Term 用の内部プロファイルは `dist/latin/te
 を組み、`scripts/build.py` はそれを Source Han Sans に接ぎ木する側に
 なった（VF には直接触れない）。`scripts/build_latin_vf.py` が同じ
 レシピを CFF2 可変フォントとして組む（`dist/latin/SumiMoji[wght].otf` /
-`SumiMoji-Italic[wght].otf`）。マスターは SCP VF 自身のマスター位置
-（wght 200 / 400 / 900——CFF2 の VarStore から実測）。`SumiMoji.zip` は
+`SumiMoji-Italic[wght].otf`）。wght 軸は usWeightClass の値（既定 400 =
+Regular）で、マスターは SCP VF 自身のマスター位置（wght 200 / 400——CFF2
+の VarStore から実測）に Regular と Heavy の位置、Monaspace の下限位置を
+加えた 5 つ。`SumiMoji.zip` は
 静的12面と VF 2面をまとめてリリース資産に含まれている。名前は仮称
 **Sumi Moji**（墨文字）。衝突調査済み（フォント・技術領域で同名なし、
 商標は未確認、`sumimoji.com` / `.net` は取得済みで `.dev` / `.jp` は
@@ -179,18 +181,30 @@ cmap・GSUB の shaping 結果が roundoff（±1〜2ユニット）を除いて�
 
 ### 段階 2: VF（実装済み、v3.3.0、`scripts/build_latin_vf.py`）
 
-1. ✅ デザインスペース: SCP VF 自身のマスター位置——**wght 200 / 400 / 900**
+1. ✅ デザインスペース: SCP VF 自身のマスター位置——**wght 200 / 400**
    （事前の見積りは「約 458」だったが、CFF2 の VarStore 領域のピークを
    avar/fvar 経由で逆算すると実際は 400 だった。決め打ちせず
-   `build_latin.confirm_scp_master_wghts` が毎回読み直す）——それぞれで
-   SCP を厳密な wght にインスタンス化し、Monaspace を**太さ一致で
-   インスタンス化**した静的マスターを用意する。Monaspace の wght 下限
-   200 で足りない場合、事前の見積りは「現行の erosion で削る」
-   だったが、実装では **erosion をしない**方針にした——erosion は
-   pathops のブーリアン演算で非線形、マスター間の補間に使えるもの
-   ではない（実測: `VFSource.matched` に `erode=False` を足すとその
-   まま下限でクランプするだけで済み、`fontTools.varLib.build` が
-   問題なく通ることを確認済み）。詳細は次項のリスク参照
+   `build_latin.confirm_scp_master_wghts` が毎回読み直す）に **Regular
+   と Heavy の位置**（既定マスターと軸の上限。SCP の 900 マスターは上限
+   の外）と **Monaspace の下限位置**（Monaspace の wght 200 のバーが
+   SCP のバーと一致する SCP wght。これより細い側は Monaspace が下限で
+   クランプされ一定、太い側は SCP 追随——このマスターが無いと Normal の
+   記号が 4u 太くなる）を加えた 5 マスター——それぞれで SCP を厳密な wght に
+   インスタンス化し、Monaspace を**太さ一致でインスタンス化**した静的
+   マスターを用意する。マスターを置く設計座標は「SCP のユーザー wght を
+   SCP 自身の fvar 正規化 + avar に通して線形化したもの」
+   （`scp_design_axis`）——SCP の VF はユーザー wght に対して線形では
+   ないので、ユーザー wght のまま線形補間すると中間ウェイトが静的版
+   からずれる（初版はこれで Light のバーが 41u → 58u になっていた）。
+   SCP 側のマスターは instancer の整数丸めを切ってインスタンス化する
+   ——相対座標への丸めが経路に沿って累積し、丸めたマスターから組むと
+   マスター間で `m` が最大 10u ずれた（実測）。
+   Monaspace の wght 下限 200 で足りない場合、事前の見積りは「現行の
+   erosion で削る」だったが、実装では **erosion をしない**方針にした
+   ——erosion は pathops のブーリアン演算で非線形、マスター間の補間に
+   使えるものではない（実測: `VFSource.matched` に `erode=False` を
+   足すとそのまま下限でクランプするだけで済み、`fontTools.varLib.build`
+   が問題なく通ることを確認済み）。詳細は次項のリスク参照
 2. ✅ fontTools varLib でマスター群から CFF2 VF を組む（Upright /
    Italic は SCP と同じく別ファイル）。Monaspace 由来グリフは
    Monaspace VF の補間互換アウトラインから来るので互換性は保てるが、
@@ -198,13 +212,17 @@ cmap・GSUB の shaping 結果が roundoff（±1〜2ユニット）を除いて�
    では使わず**重なりは残す（Adobe の VF と同じ扱い。
    `build.draw_clean` に `simplify=False` を追加）。ヒント付け・
    サブルーチン化も VF には行わない
-3. ✅ STAT / fvar のインスタンス名は段階 1 と同じ 6 ウェイト、位置は
+3. ✅ STAT / fvar のインスタンス名は段階 1 と同じ 6 ウェイト、wght 軸は
+   静的版の STAT と同じ usWeightClass の値（300/350/400/500/700/900、
+   既定 400 = Regular で OS/2 usWeightClass と一致）で、avar が各値を
    段階 1 と同じ「SHCJ の `=` バー×600/667」に一致する SCP wght
-   （実測: Upright 317/374/406/546/669/857、Italic 330/391/448/599/
-   708/900）。name テーブルは SCP VF 自身の慣習
-   （`SourceCodeVF-Upright.otf` / `-Italic.otf`）に倣い nameID 6 に
-   `SumiMoji-Roman` / `SumiMoji-Italic`、nameID 25 に `SumiMoji`、
-   nameID 16/17 は省略
+   （実測: Upright 317/374/406/546/669/857、Italic 317/378/399/538/
+   662/841）へ写す（`user_axis`。SCP 自身の avar の折れ点も引き戻して
+   写像に含めるので、名前付きインスタンスの間でも SCP と厳密に一致
+   する——`verify_latin_vf.py` が SCP_VF_U/I を指す環境で検証）。
+   name テーブルは SCP VF 自身の慣習（`SourceCodeVF-Upright.otf` /
+   `-Italic.otf`）に倣い nameID 6 に `SumiMoji-Roman` /
+   `SumiMoji-Italic`、nameID 25 に `SumiMoji`、nameID 16/17 は省略
 4. 未着手: JP 側 (`scripts/build.py`) を「欧文 VF をそのまま
    `VFSource.matched` でインスタンス化して使う」側へ切り替える作業。
    今回追加したのは Sumi Moji 単体の VF（配布物）のみで、JP 側は
@@ -231,8 +249,10 @@ cmap・GSUB の shaping 結果が roundoff（±1〜2ユニット）を除いて�
   この範囲もカバーする案は保留（erosion 自体が非線形なので、マスターを
   増やしても補間では再現できないことに変わりはない）
 - **太さの線形性**: SHCJ の各面に対する wght の一致点は二分探索で求めている。
-  VF の中間ウェイトで Monaspace と SCP の太さがどの程度ずれるかは
-  マスターを置く位置に依存する。誤差 1u を超える場合はマスターを増やす
+  SCP 側は設計座標を SCP の avar で線形化してあるので中間ウェイトでも
+  厳密に一致する（実装済み、`verify_latin_vf.py` で検証）。Monaspace 側は
+  4 マスターの間で線形補間になるため、名前付きインスタンスの間では
+  SCP との太さ一致に 1u 程度のずれが出うる。超える場合はマスターを増やす
   ——実測では Regular 実インスタンスのバー厚が静的版に対し ±1u 以内
   （`scripts/verify_latin_vf.py` で継続確認）
 - **Italic**: SCP Italic は −12°、Monaspace の slnt は −11° が下限。

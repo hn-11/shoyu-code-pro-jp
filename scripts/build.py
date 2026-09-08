@@ -1231,7 +1231,11 @@ def widen_fullwidth(font, cell):
 # inherited Source Han Sans strings plus the other donors' — every OFL
 # notice stays, ours is prepended. 5 Version, 7 Trademark, 13/14 License
 # are inherited untouched.
-OWNED_NAME_IDS = (0, 1, 2, 3, 4, 6, 8, 9, 11, 16, 17)
+# 7 (trademark: "Source is a trademark of Adobe") and 25 (variations
+# PostScript name prefix, SCP's own "SourceCodeUpright") are dropped, not
+# rewritten: neither describes a font not named Source, and Adobe's notice
+# already travels in nameID 0's credits. build_latin_vf.py sets its own 25.
+OWNED_NAME_IDS = (0, 1, 2, 3, 4, 6, 7, 8, 9, 11, 16, 17, 25)
 
 
 def set_names(font, suffix, weight, italic, italic_angle=-12.0, version=None,
@@ -1887,6 +1891,22 @@ def classify_marks(font, marks):
         gdef.GlyphClassDef.classDefs = {}
     for g in marks:
         gdef.GlyphClassDef.classDefs[g] = 3
+
+
+def classify_unicode_marks(font):
+    """GDEF class 3 (Mark) for every cmap'd glyph whose Unicode category is
+    Mn — Source Code Pro leaves two of its own combining marks (U+035F,
+    U+0361, the double-width ones) unclassified. Existing classes are
+    kept, the rest of Source Code Pro's marks already are class 3."""
+    if "GDEF" not in font or font["GDEF"].table.GlyphClassDef is None:
+        return []
+    defs = font["GDEF"].table.GlyphClassDef.classDefs
+    fixed = []
+    for cp, g in font.getBestCmap().items():
+        if unicodedata.category(chr(cp)) == "Mn" and defs.get(g) != 3:
+            defs[g] = 3
+            fixed.append(g)
+    return fixed
 
 
 def set_monospace_metadata(font):

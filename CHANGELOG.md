@@ -13,13 +13,34 @@
   マスター間の点対応を崩すため行わない——重なりは SCP 自身の VF と同じ
   扱いで残す。ヒント付け・サブルーチン化もしない。fvar の6つの名前付き
   インスタンス（Light/Normal/Regular/Medium/Bold/Heavy）と STAT の値は
-  静的版と同じ「SHCJ の `=` バー×600/667」に一致する SCP wght
-  （実測: Upright で 317/374/406/546/669/857、Italic で
-  330/391/448/599/708/900）。name テーブルは SCP VF 自身の慣習
+  静的版の STAT と同じ usWeightClass の値（300/350/400/500/700/900、
+  既定 400 = Regular で OS/2 usWeightClass と一致——軸を指定せずに VF を
+  選んでも Regular が出る）。avar が各値を静的版と同じ「SHCJ の `=`
+  バー×600/667」に一致する SCP wght（実測: Upright で 317/374/406/546/
+  669/857、Italic で 317/378/399/538/662/841）へ写す。マスターを置く
+  設計座標は SCP のユーザー wght を SCP 自身の fvar 正規化 + avar で
+  線形化したもの（SCP の VF はユーザー wght に対して線形ではない）で、
+  SCP 自身の avar の折れ点も写像に含めるため、名前付きインスタンスの
+  間でも SCP と一致する。マスターは fontTools の instancer の整数丸めを
+  切ってインスタンス化する（`unrounded_cff2_instancing`）——charstring の
+  オペランドは相対座標なので丸めが経路に沿って累積し、丸めたマスターから
+  組むと `m` などがマスター間で最大 10u ずれていた（実測）。丸めなしなら
+  SCP のブレンドそのもの（CFF2 charstring の固定小数 16.16 精度）を補間
+  するので、`verify_latin_vf.py` は名前付きインスタンスの間の wght でも
+  SCP 自身のブレンドと 1u 以内で一致することを確認する。代償として
+  VF のファイルサイズは整数版の約 4.5 倍（Upright 約 1.6MB——
+  オペランドが 16.16 固定小数 5 バイトになるため）。マスターは SCP の 200 / 400 に
+  Regular と Heavy の位置（Regular が既定マスター、Heavy が軸の上限）と
+  Monaspace の下限位置（Monaspace wght 200 のバーが SCP のバーと一致する
+  SCP wght——これより細い側は Monaspace が下限でクランプされ一定、太い側
+  は SCP 追随）を加えた 5 つ。name テーブルは SCP VF 自身の慣習
   （`SourceCodeVF-Upright.otf` / `-Italic.otf`）に倣い、nameID 6 に
   `SumiMoji-Roman` / `SumiMoji-Italic`、nameID 25 に `SumiMoji`
   （バリエーション PostScript 名接頭辞）、nameID 16/17 は省略（fvar +
-  STAT が既に家族を説明するため）。MVAR/HVAR は除外（このレシピでは
+  STAT が既に家族を説明するため）。軸の既定値に置かれた名前付き
+  インスタンス（Regular / Italic）の postScriptNameID は fvar の仕様
+  どおり nameID 6 を指す（fontbakery
+  `opentype/varfont/valid_default_instance_nameids`）。MVAR/HVAR は除外（このレシピでは
   送り幅もOS/2の縦メトリクスも太さで変化しないため、可変にする対象が
   無い）。SCP wght がおよそ366を下回ると Monaspace 側の記号・合字は
   自身の wght 200 の下限（静的版が erosion で削っている太さ）より
@@ -27,13 +48,23 @@
   erosion 済みの静的 Light よりわずかに太くなる——静的 Light は引き続き
   erosion 版を配布する。`scripts/verify_latin_vf.py` を追加（fvar/STAT/
   name の形状、6つの名前付きインスタンス全てでの合字シェイピング、
-  Regular/Italic インスタンスの `=` バーと `A` の外接矩形を対応する
-  静的面と比較）。CI（`ci.yml`）は `build_latin.py` の Regular 検証の
+  6 つの名前付きインスタンスそれぞれの `=` バーと `A` の外接矩形を対応する
+  静的面と比較、`SCP_VF_U` / `SCP_VF_I` がある環境では名前付き
+  インスタンスの間の wght でも SCP 自身のインスタンスと外形が一致する
+  ことを確認）。CI（`ci.yml`）は `build_latin.py` の Regular 検証の
   直後に Upright VF のビルドと検証を追加（時間短縮のため Upright のみ）、
   リリース（`release.yml`）は Upright・Italic 両方をビルド・検証し、
   `SumiMoji.zip` にも自動的に含まれる（zip 手順は `dist/latin` 内の
   `*.otf` を素朴に glob しているため）
 
+- name テーブルから nameID 7（商標: "Source is a trademark of Adobe"）と、
+  静的面では nameID 25（バリエーション PostScript 名接頭辞、SCP 由来の
+  `SourceCodeUpright` / `SourceCodeItalic` が残っていた）を落とす
+  （`build.OWNED_NAME_IDS`）——どちらも Source という名前のフォントの
+  ためのもので、Adobe の表示は nameID 0 のクレジットに入っている。
+  Sumi Moji（静的・VF とも）では SCP が GDEF のマーク分類を付けていない
+  結合文字 U+035F / U+0361 も class 3（Mark）にする
+  （`build.classify_unicode_marks`）
 - 欧文のみの新ファミリー Sumi Moji（仮称、PostScript 名 `SumiMoji-*`）を
   追加し、`build.py` はこれを Source Han Sans に接ぎ木する側に変更
   （VF に直接触らなくなった）。`scripts/build_latin.py` が VF から直接

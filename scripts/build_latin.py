@@ -239,6 +239,7 @@ def build_face(job):
                          ref_angle if ref_angle is not None else -12.0,
                          version=env.get("SHOYU_VERSION"), credits=credits,
                          family_base=family, ps_base=ps_family, base_credit=None)
+    build.classify_unicode_marks(base)
     build.add_stat(base, weight, italic)
     build.update_bbox(base)
     fit_win_metrics(base)
