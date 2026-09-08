@@ -213,7 +213,7 @@ def build_face(job):
     # hinted here against SCP's own alignment zones
     build.write_face(base, out, base.getGlyphOrder())
     return (f"{label}: bar {target:.1f} ligs={len(added)} "
-            f"glyphs={base['maxp'].numGlyphs} -> {out.relative_to(out_dir)}", str(out))
+            f"glyphs={base['maxp'].numGlyphs} -> {out.relative_to(out_dir)}")
 
 
 def _copy_instance(scp):
@@ -243,11 +243,16 @@ def main():
                 jobs.append((profile, weight, ref_name, italic, env, str(out_dir)))
     if not jobs:
         sys.exit(f"no face matches {only!r}")
+    if only is None:
+        # a full build must not leave faces from an older roster for
+        # harmonize_win_metrics / makeotc.py to pick up (same as build.py)
+        for subdir, _, ps_family, _ in PROFILES.values():
+            for stale in static_faces(out_dir / subdir, ps_family):
+                stale.unlink()
     built = set()
 
     def done(job, result):
-        msg, path = result
-        print(msg)
+        print(result)
         built.add(job[0])
 
     try:

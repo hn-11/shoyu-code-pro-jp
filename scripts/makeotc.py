@@ -6,15 +6,12 @@ identical tables across faces (CFF stays per-face, but name/cmap-adjacent
 tables and identical structures collapse).
 """
 
-import sys
 from pathlib import Path
 
 from fontTools.ttLib import TTCollection, TTFont
+from verifylib import static_faces  # scripts/ is on sys.path (script dir)
 
 DIST = Path(__file__).resolve().parent.parent / "dist"
-sys.path.insert(0, str(DIST.parent / "scripts"))
-from verifylib import static_faces  # noqa: E402
-
 LATIN = DIST / "latin"
 FAMILIES = ["ShoyuCodeProJP", "ShoyuCodeProJP35", "ShoyuCodeProJPTerm", "SumiMoji"]
 

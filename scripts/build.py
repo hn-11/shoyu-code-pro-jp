@@ -589,18 +589,18 @@ def append_glyph(font, td, name, cs, fd_index, width, lsb=None, vdonor=None):
     font["maxp"].numGlyphs = len(order)
 
 
-def append_context(font, probe="A", fullwidth=False):
-    """What appending a glyph next to `probe`'s needs: (top dict, cmap,
-    FD index, that FD's Private dict, vmtx donor). The FD (and its
-    nominalWidthX, which pen_width() offsets against) is the one `probe`
-    already lives in. Every appender probes 'A': in the JP faces
+def append_context(font, fullwidth=False):
+    """What appending a glyph next to 'A' needs: (top dict, cmap, FD
+    index, that FD's Private dict, vmtx donor). The FD (and its
+    nominalWidthX, which pen_width() offsets against) is the one 'A'
+    already lives in. Every appender uses it: in the JP faces
     add_latin_fd() later moves all appended glyphs into a copy of A's FD,
     and a width encoded against any other FD's nominalWidthX would then
     be wrong (the ligatures were, by 510u); the Latin faces have one FD."""
     cff = font["CFF "].cff
     td = cff[cff.fontNames[0]]
     cmap = font.getBestCmap()
-    fd_index = td.FDSelect[font.getGlyphID(cmap[ord(probe)])]
+    fd_index = td.FDSelect[font.getGlyphID(cmap[ord("A")])]
     return td, cmap, fd_index, td.FDArray[fd_index].Private, vmtx_donor(font, fullwidth)
 
 
@@ -660,6 +660,7 @@ def graft_halfwidth(base, scp, ref):
     scp_cm = scp.getBestCmap()
     scp_gs, ref_gs = scp.getGlyphSet(), ref.getGlyphSet()
     td, bcm, fd_index, private, vdon = append_context(base)
+    vdon_full = vmtx_donor(base, fullwidth=True)
 
     new_map = {}
     default_map = {}  # scp glyph name -> our glyph name (for variant wiring)
@@ -685,7 +686,7 @@ def graft_halfwidth(base, scp, ref):
                 draw_clean([(ref_gs, g, (1, 0, 0, 1, 0, 0))], pen)
                 name = alloc_glyph_name(base)
                 append_glyph(base, td, name, pen.getCharString(private=private),
-                             fd_index, FULLWIDTH, None, vmtx_donor(base))
+                             fd_index, FULLWIDTH, None, vdon_full)
                 made[key] = name
                 from_ref += 1
             new_map[cp] = made[key]
@@ -716,8 +717,8 @@ def graft_halfwidth(base, scp, ref):
                          fd_index, width, None, vdon)
             made[key] = name
             if is_mark:
-                marks.add(name)        # no variants get wired to a mark
-            elif src[0] == "scp":
+                marks.add(name)
+            if src[0] == "scp":
                 default_map[src[1]] = name
         new_map[cp] = made[key]
 
@@ -782,15 +783,21 @@ def _scp_ui_name(scp, feature_params):
     return scp["name"].getDebugName(nid)
 
 
-def import_scp_variants(base, scp, default_map):
+def import_scp_variants(base, scp, default_map, marks):
     """Carry SCP's own character variants (dotted/slashed zero bodies,
     one/two-story a, g shapes, salt...) through the graft. Returns
     ({our tag: {our default glyph: our variant glyph}}, {our tag: UI name}).
 
+    A variant of a combining mark (cv11, the Cyrillic breve for U+0306)
+    is grafted the way graft_halfwidth() grafts the mark itself — 0
+    advance, ink shifted one cell left — and added to `marks`, so it
+    positions and rescales like its default; a variant drawn as a
+    spacing glyph would make the accent take a cell when selected.
+
     UI names are only meaningful (and only defined by OpenType) for ssNN /
     cvNN — 'zero' and 'salt' come back with no entry in the names dict."""
     gsub = scp["GSUB"].table
-    td, bcm, fd_index, private, vdon = append_context(base)
+    td, _, fd_index, private, vdon = append_context(base)
     scp_gs = scp.getGlyphSet()
 
     imported = {}   # scp variant glyph -> our glyph name
@@ -813,15 +820,19 @@ def import_scp_variants(base, scp, default_map):
                 if src not in default_map:
                     continue
                 if dst not in imported:
-                    pen = T2CharStringPen(pen_width(private, CELL), scp_gs)
+                    is_mark = default_map[src] in marks
+                    width, dx = (0, -CELL) if is_mark else (CELL, 0)
+                    pen = T2CharStringPen(pen_width(private, width), scp_gs)
                     draw_clean(
-                        [(scp_gs, dst, (SCP_K, 0, 0, SCP_K, 0, 0))], pen)
+                        [(scp_gs, dst, (SCP_K, 0, 0, SCP_K, dx, 0))], pen)
                     name = alloc_glyph_name(base)
                     append_glyph(
                         base, td, name,
                         pen.getCharString(private=private),
-                        fd_index, CELL, None, vdon)
+                        fd_index, width, None, vdon)
                     imported[dst] = name
+                    if is_mark:
+                        marks.add(name)
                 tag_maps.setdefault(tag, {})[default_map[src]] = imported[dst]
     return tag_maps, tag_names
 
@@ -1233,8 +1244,9 @@ def widen_fullwidth(font, cell):
 # stale record survives beside ours). 0 (Copyright) and 9 (Designer) are
 # rebuilt FROM the inherited Source Han Sans strings plus the other
 # donors' — every OFL notice stays, ours is prepended. 13/14 (License)
-# are inherited untouched. 7 (trademark: "Source is a trademark of Adobe") and 25 (variations
-# PostScript name prefix, SCP's own "SourceCodeUpright") are dropped, not
+# are inherited untouched. 7 (trademark: "Source is a trademark of
+# Adobe") and 25 (variations PostScript name prefix, SCP's own
+# "SourceCodeUpright") are dropped, not
 # rewritten: neither describes a font not named Source, and Adobe's notice
 # already travels in nameID 0's credits. build_latin_vf.py sets its own 25.
 OWNED_NAME_IDS = (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 16, 17, 25)
@@ -1322,7 +1334,7 @@ def set_names(font, suffix, weight, italic, italic_angle=-12.0, version=None,
     # placeholder fontNames[0] this still overwrites
     cff = font["CFF2"].cff if "CFF2" in font else font["CFF "].cff
     cff.fontNames[0] = ps
-    td = cff.topDictIndex.items[0]
+    td = cff[ps]
     if hasattr(td, "FamilyName"):
         td.FamilyName = family
     if hasattr(td, "FullName"):
@@ -1407,8 +1419,6 @@ def replace_from_mona(font, mona, chars, dy, k):
     cmap = font.getBestCmap()
     mona_cmap = mona.getBestCmap()
     mona_gs = mona_glyphset(mona)
-    if dy is None:
-        dy = mona_baseline_shift(font, mona, k)
     replaced = []
     for ch in chars:
         name = cmap.get(ord(ch))
@@ -1865,7 +1875,7 @@ def update_bbox(font):
     # box is the only one that exists there
     if "CFF2" not in font:
         cff = font["CFF "].cff
-        cff.topDictIndex.items[0].FontBBox = box
+        cff[cff.fontNames[0]].FontBBox = box
     head = font["head"]
     head.xMin, head.yMin, head.xMax, head.yMax = box
     return box
@@ -2189,8 +2199,8 @@ def build_face(job):
     ref = _shcj_ref(env["SHCJ_TTC"], ref_name + (" Italic" if italic else ""))
     base = TTFont(Path(env["SHS_DIR"]) / shs_file)
     n_scp, n_ref, default_map, marks = graft_halfwidth(base, latin, ref)
-    classify_marks(base, marks)
-    variant_maps, variant_names = import_scp_variants(base, latin, default_map)
+    variant_maps, variant_names = import_scp_variants(base, latin, default_map, marks)
+    classify_marks(base, marks)   # the grafted marks and their variants
     copy_line_metrics(base, ref)
     # the outlines' real slant lives in the Latin donor (SCP Italic's);
     # SHCJ's italic faces declare italicAngle=0, so they can't be the source

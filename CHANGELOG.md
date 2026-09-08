@@ -27,6 +27,11 @@
     で組む）。SCP VF のマスター位置の読み取りを wght 軸に限定
   - `requirements.txt` の fontTools 下限を 4.52.4 に（`cffLib.CFF2ToCFF` と
     `instantiateCFF2(round=)` を使うため。4.50 では import で落ちる）
+  - 結合文字の異体（cv11: U+0306 のキリル文字用ブレーヴェ）が送り幅 1 セルの
+    グリフとして取り込まれていたため、cv11 を有効にするとアクセントが
+    1 セル分の幅を取っていた。既定の結合文字と同じ 0 幅・1 セル左寄せで
+    取り込み、GDEF でもマークに分類する。`verify.py` が cv11 の前後で
+    U+0306 の送り幅 0 を検査する
   - `_shcj_ref` がプール内で `sys.exit` していたのを例外に（他の面の
     失敗と一緒に報告される）。`verify_latin_vf.py` は wght 軸が無い
     フォントで FAIL を出して終了する
@@ -37,7 +42,11 @@
   静的面の 1 値と VF の全値の両方を担当）、SHCJ のバー目標
   （`shcj_bar_target`）、VF 側の wght 探索（`VFSource.matched_wght` /
   `floor_bar` — 静的面と同じ探索になり、VF の名前付きインスタンスが
-  静的面と厳密に同じ位置に乗る）を共通化。検証・梱包スクリプト共通の
+  静的面と厳密に同じ位置に乗る。実測の位置は Upright 317/374/406/545/
+  670/857、Italic 317/377/399/538/661/841 と 1 前後動いた）を共通化。
+  name テーブルの nameID 5（Version）も `OWNED_NAME_IDS` に含め、書き換え
+  前に旧レコードを全プラットフォーム分消す。`build_latin.py` もフィルタ
+  無しの実行では古い面を先に消す。検証・梱包スクリプト共通の
   `scripts/verifylib.py`（HarfBuzz シェイパー、ok/FAIL 集計、ヒント
   検出、静的面の列挙）。未使用の `mona_onecell` と 667 セル前提の
   `MONA_K` 既定値、`fetch-upstreams` の未使用 `cache` 入力を削除。
@@ -62,8 +71,8 @@
   静的版の STAT と同じ usWeightClass の値（300/350/400/500/700/900、
   既定 400 = Regular で OS/2 usWeightClass と一致——軸を指定せずに VF を
   選んでも Regular が出る）。avar が各値を静的版と同じ「SHCJ の `=`
-  バー×600/667」に一致する SCP wght（実測: Upright で 317/374/406/545/
-  670/857、Italic で 317/377/399/538/661/841）へ写す。マスターを置く
+  バー×600/667」に一致する SCP wght（実測: Upright で 317/374/406/546/
+  669/857、Italic で 317/378/399/538/662/841）へ写す。マスターを置く
   設計座標は SCP のユーザー wght を SCP 自身の fvar 正規化 + avar で
   線形化したもの（SCP の VF はユーザー wght に対して線形ではない）で、
   SCP 自身の avar の折れ点も写像に含めるため、名前付きインスタンスの

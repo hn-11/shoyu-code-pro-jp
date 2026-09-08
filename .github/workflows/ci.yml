@@ -22,7 +22,7 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install -r requirements.txt ruff pytest
-      - run: ruff check scripts/
+      - run: ruff check scripts/ tests/
       - run: python -m pytest tests/ -q
   build:
     runs-on: ubuntu-latest

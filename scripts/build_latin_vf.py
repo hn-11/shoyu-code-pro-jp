@@ -72,6 +72,7 @@ Env (optional): SHOYU_VERSION
 import contextlib
 import copy
 import functools
+import math
 import sys
 from pathlib import Path
 
@@ -82,6 +83,7 @@ from fontTools.designspaceLib import (
     SourceDescriptor,
 )
 from fontTools.misc.roundTools import noRound
+from fontTools.pens.boundsPen import BoundsPen
 from fontTools.ttLib import TTFont
 from fontTools.varLib import build as varlib_build
 from fontTools.varLib import instancer
@@ -229,6 +231,9 @@ def master_scp_wghts(scp_masters, to_scp, lo, default_u, hi_u, extra=()):
     masters would give varLib a near-singular model). Sorted."""
     top = to_scp(hi_u)
     ws = [float(lo), to_scp(default_u), top]
+    if len(set(ws)) < 3 or not lo < ws[1] < top:
+        raise RuntimeError(f"axis minimum, Regular and Heavy must be distinct and "
+                           f"ordered, got SCP wght {ws}")
     for w in [float(w) for w in scp_masters] + [round(float(w), 2) for w in extra]:
         if lo < w < top and all(abs(w - x) > 0.5 for x in ws):
             ws.append(w)
@@ -367,6 +372,30 @@ def finalize_vf_names(vf, italic, version, credits, italic_angle):
     if cff.fontNames:
         cff.fontNames[0] = new_ps
     return new_ps
+
+
+def master_extents(font):
+    """(xMin, yMin, xMax, yMax, min left side bearing, min right side
+    bearing) measured on a master's outlines — hhea.recalc would take
+    the side bearings from hmtx, which an instanced master does not keep
+    current, so both come from the drawn bounds here."""
+    gs = font.getGlyphSet()
+    hmtx = font["hmtx"].metrics
+    box = None
+    lsb = rsb = None
+    for name in font.getGlyphOrder():
+        pen = BoundsPen(gs)
+        gs[name].draw(pen)
+        if pen.bounds is None:
+            continue
+        x0, y0, x1, y1 = pen.bounds
+        box = (x0, y0, x1, y1) if box is None else (
+            min(box[0], x0), min(box[1], y0), max(box[2], x1), max(box[3], y1))
+        lsb = x0 if lsb is None else min(lsb, x0)
+        right = hmtx[name][0] - x1
+        rsb = right if rsb is None else min(rsb, right)
+    return (math.floor(box[0]), math.floor(box[1]), math.ceil(box[2]), math.ceil(box[3]),
+            math.floor(lsb), math.floor(rsb))
 
 
 def name_default_instance_by_font(vf):
@@ -531,17 +560,14 @@ def build_style(style, env, out_dir):
     # hhea.recalc measure a CFF2 glyph set at the default instance only,
     # and so does TTFont.save's own recalcBBoxes — switched off, or it
     # would overwrite this)
-    for b in bases.values():
-        b["hhea"].recalc(b)
+    ext = [master_extents(b) for b in bases.values()]
     head, hhea = vf["head"], vf["hhea"]
-    head.xMin = min(b["head"].xMin for b in bases.values())
-    head.yMin = min(b["head"].yMin for b in bases.values())
-    head.xMax = max(b["head"].xMax for b in bases.values())
-    head.yMax = max(b["head"].yMax for b in bases.values())
-    hhea.advanceWidthMax = max(b["hhea"].advanceWidthMax for b in bases.values())
-    hhea.minLeftSideBearing = min(b["hhea"].minLeftSideBearing for b in bases.values())
-    hhea.minRightSideBearing = min(b["hhea"].minRightSideBearing for b in bases.values())
-    hhea.xMaxExtent = max(b["hhea"].xMaxExtent for b in bases.values())
+    head.xMin, head.yMin = min(e[0] for e in ext), min(e[1] for e in ext)
+    head.xMax, head.yMax = max(e[2] for e in ext), max(e[3] for e in ext)
+    hhea.minLeftSideBearing = min(e[4] for e in ext)
+    hhea.minRightSideBearing = min(e[5] for e in ext)
+    hhea.xMaxExtent = max(e[2] for e in ext)
+    hhea.advanceWidthMax = max(adv for adv, _ in vf["hmtx"].metrics.values())
     vf.recalcBBoxes = False
 
     out_path = Path(out_dir) / out_name

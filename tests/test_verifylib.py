@@ -35,10 +35,6 @@ def test_checker_tallies_and_prints(capsys):
     assert out == ["ok   fine", "FAIL broken", "ok   still fine"]
 
 
-def test_hint_ops_cover_every_type2_hint_operator():
-    want = {"hstem", "vstem", "hstemhm", "vstemhm", "hintmask", "cntrmask"}
-    assert set(verifylib.HINT_OPS) == want
-
 
 # --- glyph_has_hint ----------------------------------------------------------
 

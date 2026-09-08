@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 from fontTools.pens.basePen import NullPen  # noqa: E402
-from verifylib import make_shaper  # noqa: E402
+from verifylib import Checker, make_shaper  # noqa: E402
 
 FONT = Path(sys.argv[1]) if len(sys.argv) > 1 else (
     ROOT / "dist" / "ShoyuCodeProJP-Regular.otf"
@@ -131,13 +131,14 @@ def main():
     # (a TTFont glyph set's .width is hmtx's; the charstring's own decoded
     # width is what has to be compared)
     charstrings = tf["CFF "].cff[0].CharStrings
-    off = []
+    mismatched = []
     for name in tf.getGlyphOrder():
         cs = charstrings[name]
         cs.draw(NullPen())
         if cs.width != hmtx[name][0]:
-            off.append((name, cs.width, hmtx[name][0]))
-    assert not off, f"{FONT}: CFF width != hmtx for {len(off)} glyphs, e.g. {off[:5]}"
+            mismatched.append((name, cs.width, hmtx[name][0]))
+    assert not mismatched, (f"{FONT}: CFF width != hmtx for {len(mismatched)} glyphs, "
+                            f"e.g. {mismatched[:5]}")
     print(f"ok   CFF charstring widths agree with hmtx ({len(tf.getGlyphOrder())} glyphs)")
 
     angle = tf["post"].italicAngle
@@ -148,33 +149,28 @@ def main():
 
     # fsSelection/macStyle must agree with nameID 2 (RIBBI subfamily) — the
     # Windows family model keys off these bits, not the name text.
-    failed = False
+    check = Checker()
     fsel = tf["OS/2"].fsSelection
     mac = tf["head"].macStyle
     sub = subfamily_name(tf)
     want_bold = "Bold" in sub
     want_italic = "Italic" in sub
     ok = bool(fsel & 0x20) == want_bold
-    print(f"{'ok  ' if ok else 'FAIL'} fsSelection BOLD bit matches "
-          f"subfamily {sub!r} (fsSelection={fsel:#06x})")
-    failed |= not ok
+    check(ok, f"fsSelection BOLD bit matches "
+              f"subfamily {sub!r} (fsSelection={fsel:#06x})")
     ok = bool(fsel & 0x1) == want_italic
-    print(f"{'ok  ' if ok else 'FAIL'} fsSelection ITALIC bit matches "
-          f"subfamily {sub!r} (fsSelection={fsel:#06x})")
-    failed |= not ok
+    check(ok, f"fsSelection ITALIC bit matches "
+              f"subfamily {sub!r} (fsSelection={fsel:#06x})")
     ok = bool(mac & 0x1) == want_bold
-    print(f"{'ok  ' if ok else 'FAIL'} macStyle Bold bit matches "
-          f"subfamily {sub!r} (macStyle={mac:#06x})")
-    failed |= not ok
+    check(ok, f"macStyle Bold bit matches "
+              f"subfamily {sub!r} (macStyle={mac:#06x})")
     ok = bool(mac & 0x2) == want_italic
-    print(f"{'ok  ' if ok else 'FAIL'} macStyle Italic bit matches "
-          f"subfamily {sub!r} (macStyle={mac:#06x})")
-    failed |= not ok
+    check(ok, f"macStyle Italic bit matches "
+              f"subfamily {sub!r} (macStyle={mac:#06x})")
     if not want_bold and not want_italic:   # Normal/Medium/Heavy too
         ok = bool(fsel & 0x40) and not (fsel & 0x61 & ~0x40)
-        print(f"{'ok  ' if ok else 'FAIL'} fsSelection REGULAR bit set, "
-              f"BOLD/ITALIC clear (fsSelection={fsel:#06x})")
-        failed |= not ok
+        check(ok, f"fsSelection REGULAR bit set, "
+                  f"BOLD/ITALIC clear (fsSelection={fsel:#06x})")
 
     shape_infos = make_shaper(FONT)
 
@@ -184,8 +180,7 @@ def main():
     for text, nglyphs in CASES:
         got = shape_len(text, {"calt": True, "liga": True})
         ok = got == nglyphs
-        print(f"{'ok  ' if ok else 'FAIL'} {text!r}: {got} glyphs (want {nglyphs})")
-        failed |= not ok
+        check(ok, f"{text!r}: {got} glyphs (want {nglyphs})")
 
     # feature toggles: ss groups are selective, cv01 swaps the design
     off = {"calt": False, "liga": False}
@@ -199,8 +194,7 @@ def main():
     for text, feats, want in toggles:
         got = shape_len(text, feats)
         ok = got == want
-        print(f"{'ok  ' if ok else 'FAIL'} {text!r} {sorted(k for k,v in feats.items() if v)}: {got} (want {want})")
-        failed |= not ok
+        check(ok, f"{text!r} {sorted(k for k,v in feats.items() if v)}: {got} (want {want})")
 
     # SCP character variants and Monaspace alt designs must swap glyphs
     def first_gid(text, feats, i=0):
@@ -211,12 +205,22 @@ def main():
     ]
     for ch, tag in variant_checks:
         ok = first_gid(ch, {}) != first_gid(ch, {tag: True})
-        print(f"{'ok  ' if ok else 'FAIL'} {tag} swaps {ch!r}")
-        failed |= not ok
+        check(ok, f"{tag} swaps {ch!r}")
     ok = first_gid("a != b", {"calt": True}, 2) != first_gid(
         "a != b", {"calt": True, "cv99": True}, 2)
-    print(f"{'ok  ' if ok else 'FAIL'} cv99 swaps ligature design")
-    failed |= not ok
+    check(ok, "cv99 swaps ligature design")
+    # a combining mark's variant (cv11: the Cyrillic breve for U+0306, in
+    # the upright faces) must stay a 0-advance mark, not become a spacing
+    # glyph that takes a cell when selected
+    tags = {fr.FeatureTag for fr in tf["GSUB"].table.FeatureList.FeatureRecord}
+    if "cv11" in tags:
+        for feats in ({}, {"cv11": True}):
+            infos, positions = shape_infos("a\u0306", feats)
+            ok = len(infos) == 2 and positions[1].x_advance == 0
+            check(ok, f"U+0306 with {feats or 'defaults'}: {len(infos)} glyphs, mark advance "
+                      f"{positions[1].x_advance if len(positions) > 1 else '?'} (want 2, 0)")
+        ok = first_gid("a\u0306", {}, 1) != first_gid("a\u0306", {"cv11": True}, 1)
+        check(ok, "cv11 swaps the combining breve")
 
     # 4-cell ligature: any spec whose "cells" == 4 must shape to a single
     # glyph whose advance is exactly 4x the half-width cell
@@ -226,9 +230,8 @@ def main():
         ok = len(infos) == 1 and positions[0].x_advance == 4 * a_adv
         got_adv = positions[0].x_advance if positions else None
         got_n = len(infos)
-        print(f"{'ok  ' if ok else 'FAIL'} {seq!r} 4-cell ligature: "
-              f"{got_n} glyph(s), advance={got_adv} (want 1 glyph, {4 * a_adv})")
-        failed |= not ok
+        check(ok, f"{seq!r} 4-cell ligature: "
+                  f"{got_n} glyph(s), advance={got_adv} (want 1 glyph, {4 * a_adv})")
 
     # every declared ligature must actually fire, at its declared cell width.
     # Sequences are embedded as "a <seq> b" (the same robust padding used by
@@ -261,7 +264,7 @@ def main():
     if lig_failed:
         for line in lig_fail_lines:
             print(line)
-        failed = True
+        check.failed = True
     else:
         print(f"ok   all {len(LIGATURES)} ligatures shape at declared widths")
 
@@ -299,9 +302,8 @@ def main():
         ok = bool(rows_ch) and all(
             any(abs(a - c) <= 2 and abs(b - d) <= 2 for c, d in rows_lig)
             for a, b in rows_ch)
-        print(f"{'ok  ' if ok else 'FAIL'} {ch!r} rows {rows_ch} "
-              f"found in {pairs[ch].split()[1]!r} {rows_lig}")
-        failed |= not ok
+        check(ok, f"{ch!r} rows {rows_ch} "
+                  f"found in {pairs[ch].split()[1]!r} {rows_lig}")
 
     # width alternates of the ligature-paired symbols (← → ≠ … etc.):
     # 2:3 / 35 default to full width with the arrows redrawn from
@@ -326,9 +328,8 @@ def main():
             got_default = advance_of(ch, {})
             got_h, got_s = advance_of(ch, {"hwid": True}), advance_of(ch, {"ss09": True})
             ok = got_default == full_adv and got_h == a_adv and got_s == a_adv
-            print(f"{'ok  ' if ok else 'FAIL'} {ch!r} default {got_default} "
-                  f"(want {full_adv}), hwid {got_h} / ss09 {got_s} (want {a_adv})")
-        failed |= not ok
+            check(ok, f"{ch!r} default {got_default} "
+                      f"(want {full_adv}), hwid {got_h} / ss09 {got_s} (want {a_adv})")
     if not is_term:
         # the full-width horizontal arrows are cut from the ligature they
         # pair with (ARROW_SOURCE): same vertical extent, within 2u
@@ -341,9 +342,8 @@ def main():
             lig_ymin, lig_ymax = extent(y_rows(lig_glyph(f"a {seq} b")))
             ymin, ymax = extent(y_rows(cmap[ord(ch)]))
             ok = abs(ymin - lig_ymin) <= 2 and abs(ymax - lig_ymax) <= 2
-            print(f"{'ok  ' if ok else 'FAIL'} {ch!r} y extent {ymin}..{ymax} "
-                  f"vs {seq!r} {lig_ymin}..{lig_ymax}")
-            failed |= not ok
+            check(ok, f"{ch!r} y extent {ymin}..{ymax} "
+                      f"vs {seq!r} {lig_ymin}..{lig_ymax}")
 
     # stroke weight vs the SHCJ reference: the '=' bar our Latin layer was
     # weight-matched to should still measure the same after grafting,
@@ -372,9 +372,8 @@ def main():
             got = bar_thickness(tf, cmap[ord("=")])
             want = bar_thickness(ref, ref_cmap[ord("=")])
             ok = abs(got - want) <= 1.5
-            print(f"{'ok  ' if ok else 'FAIL'} '=' bar vs SHCJ reference "
-                  f"{ref_name!r}: {got:.1f}u (want {want:.1f}u)")
-            failed |= not ok
+            check(ok, f"'=' bar vs SHCJ reference "
+                      f"{ref_name!r}: {got:.1f}u (want {want:.1f}u)")
 
     # imported outlines must be overlap-free (VF instancing leaves seams)
     import pathops
@@ -393,19 +392,17 @@ def main():
     for ch in "AKkxRvw&ag":
         gname = cmap[ord(ch)]
         ok = overlap_ok(gname)
-        print(f"{'ok  ' if ok else 'FAIL'} no overlap in {ch!r}")
-        failed |= not ok
+        check(ok, f"no overlap in {ch!r}")
 
     for ch in OVERLAP_CJK:
         cp = ord(ch)
         if cp not in cmap:
             print(f"FAIL no overlap in {ch!r}: not in cmap")
-            failed = True
+            check.failed = True
             continue
         gname = cmap[cp]
         ok = overlap_ok(gname)
-        print(f"{'ok  ' if ok else 'FAIL'} no overlap in CJK {ch!r}")
-        failed |= not ok
+        check(ok, f"no overlap in CJK {ch!r}")
 
     for seq in OVERLAP_LIG_SEQS:
         infos, _ = shape_infos(seq, {"calt": True, "liga": True})
@@ -415,9 +412,8 @@ def main():
             # i.e. glyphs not reachable from a single input codepoint
             if len(infos) == 1 or gname not in (cmap.get(ord(c)) for c in seq):
                 ok = overlap_ok(gname)
-                print(f"{'ok  ' if ok else 'FAIL'} no overlap in ligature "
-                      f"{seq!r} glyph {gname!r}")
-                failed |= not ok
+                check(ok, f"no overlap in ligature "
+                          f"{seq!r} glyph {gname!r}")
 
     # width metadata: declared monospaced (set_monospace_metadata — what
     # Windows Terminal's picker and GDI's FIXED_PITCH filter read; SHCJ's
@@ -432,21 +428,18 @@ def main():
         fixed = tf["post"].isFixedPitch
     if fixed is not None:
         ok = fixed == 1
-        print(f"{'ok  ' if ok else 'FAIL'} post.isFixedPitch == 1, got {fixed}")
-        failed |= not ok
+        check(ok, f"post.isFixedPitch == 1, got {fixed}")
 
         panose_prop = tf["OS/2"].panose.bProportion
         ok = panose_prop == 9
-        print(f"{'ok  ' if ok else 'FAIL'} OS/2 PANOSE proportion == 9 (monospaced), got {panose_prop}")
-        failed |= not ok
+        check(ok, f"OS/2 PANOSE proportion == 9 (monospaced), got {panose_prop}")
 
         from fontTools.misc.roundTools import otRound
         widths = [adv for adv, _ in tf["hmtx"].metrics.values() if adv > 0]
         avg_w = tf["OS/2"].xAvgCharWidth
         want_avg = otRound(sum(widths) / len(widths))
         ok = avg_w == want_avg
-        print(f"{'ok  ' if ok else 'FAIL'} OS/2.xAvgCharWidth is the mean non-zero advance ({avg_w} vs {want_avg})")
-        failed |= not ok
+        check(ok, f"OS/2.xAvgCharWidth is the mean non-zero advance ({avg_w} vs {want_avg})")
 
         from fontTools.pens.boundsPen import BoundsPen
         gs = tf.getGlyphSet()
@@ -455,26 +448,23 @@ def main():
             gs[cmap[ord(ch)]].draw(pen)
             got, want = getattr(tf["OS/2"], attr), round(pen.bounds[3])
             ok = got == want
-            print(f"{'ok  ' if ok else 'FAIL'} OS/2.{attr} == top of {ch!r} ({got} vs {want})")
-            failed |= not ok
+            check(ok, f"OS/2.{attr} == top of {ch!r} ({got} vs {want})")
 
     # line-metrics sanity: hhea and OS/2 vertical metrics must be nonzero
     # and internally consistent
     hhea = tf["hhea"]
     os2 = tf["OS/2"]
     ok = hhea.ascent > 0 and hhea.descent < 0
-    print(f"{'ok  ' if ok else 'FAIL'} hhea ascent/descent sane "
-          f"(ascent={hhea.ascent}, descent={hhea.descent})")
-    failed |= not ok
+    check(ok, f"hhea ascent/descent sane "
+              f"(ascent={hhea.ascent}, descent={hhea.descent})")
 
     ok = (os2.sTypoAscender > 0 and os2.sTypoDescender < 0
           and os2.usWinAscent > 0 and os2.usWinDescent > 0)
-    print(f"{'ok  ' if ok else 'FAIL'} OS/2 typo/win metrics sane "
-          f"(typoAsc={os2.sTypoAscender}, typoDesc={os2.sTypoDescender}, "
-          f"winAsc={os2.usWinAscent}, winDesc={os2.usWinDescent})")
-    failed |= not ok
+    check(ok, f"OS/2 typo/win metrics sane "
+              f"(typoAsc={os2.sTypoAscender}, typoDesc={os2.sTypoDescender}, "
+              f"winAsc={os2.usWinAscent}, winDesc={os2.usWinDescent})")
 
-    sys.exit(1 if failed else 0)
+    sys.exit(check.exit_code())
 
 
 if __name__ == "__main__":

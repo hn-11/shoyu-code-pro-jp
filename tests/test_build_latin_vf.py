@@ -38,7 +38,7 @@ def _vf_meta(avar=SCP_AVAR, lo=200, default=200, hi=900):
     return font
 
 
-# --- scp_design_axis --------------------------------------------------------
+# --- scp_design_axis ------------------------------------------------------
 
 def test_scp_design_axis_is_identity_without_avar():
     design, breaks = vf.scp_design_axis(_vf_meta(avar=None, default=400))
@@ -64,7 +64,7 @@ def test_scp_design_axis_is_monotonic():
     assert all(a < b for a, b in zip(vals, vals[1:]))
 
 
-# --- user_axis --------------------------------------------------------------
+# --- user_axis ------------------------------------------------------------
 
 def test_user_axis_range_and_default_are_usweightclass():
     design, breaks = vf.scp_design_axis(_vf_meta())
@@ -113,7 +113,7 @@ def test_user_axis_rejects_non_monotonic_pairing():
         vf.user_axis(bad, design, breaks, 200)
 
 
-# --- master_scp_wghts -------------------------------------------------------
+# --- master_scp_wghts -----------------------------------------------------
 
 def test_masters_are_scp_masters_in_range_plus_regular_and_heavy():
     design, breaks = vf.scp_design_axis(_vf_meta())
@@ -139,7 +139,7 @@ def test_masters_take_extra_positions_inside_the_range_only():
     assert got == [200.0, 366.12, 400.0, 406.0, 857.0]
 
 
-# --- name_default_instance_by_font ---------------------------------------
+# --- name_default_instance_by_font ----------------------------------------
 
 def _vf_with_instances(default=400):
     font = _vf_meta(avar=None, default=default)
@@ -178,7 +178,7 @@ def test_default_instance_missing_raises():
         vf.name_default_instance_by_font(font)
 
 
-# --- build.add_stat (family form, as the VF uses it) -------------------------------------------------------------
+# --- build.add_stat (family form, as the VF uses it) ----------------------
 
 def _stat_values(font):
     stat = font["STAT"].table
@@ -208,7 +208,7 @@ def test_add_stat_family_form_italic_file_declares_ital_1():
     assert _stat_values(font)["ital"] == [("Italic", 1, 0, None)]
 
 
-# --- build.classify_unicode_marks -------------------------------------------
+# --- build.classify_unicode_marks -----------------------------------------
 
 def _font_with_gdef(cmap, classes):
     order = [".notdef", *sorted(set(cmap.values()))]

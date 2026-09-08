@@ -102,7 +102,7 @@ def test_fix_zone_order_covers_every_fontdict():
     assert p1.OtherBlues == [5, 10]
 
 
-# --- typo / win metrics ----------------------------------------------------
+# --- typo / win metrics ---------------------------------------------------
 
 def _metrics_font(ascent=800, descent=-200, line_gap=0,
                   win_ascent=0, win_descent=0):
@@ -164,7 +164,7 @@ def test_fit_win_metrics_defaults_are_zero():
     assert os2.usWinDescent == 50
 
 
-# --- harmonize_win_metrics --------------------------------------------------
+# --- harmonize_win_metrics ------------------------------------------------
 
 def _glyph_with_bbox(ymin, ymax):
     pen = TTGlyphPen(None)
@@ -219,7 +219,7 @@ def test_harmonize_win_metrics_noop_when_already_matched(tmp_path):
     assert (p1.stat().st_mtime, p2.stat().st_mtime) == before
 
 
-# --- credits_from ------------------------------------------------------
+# --- credits_from ---------------------------------------------------------
 
 class _FakeName:
     def __init__(self, names):
@@ -257,7 +257,7 @@ def test_credits_from_monaspace_falls_back_to_nameid7_when_nameid0_absent():
     assert designer == "Riley Cran"
 
 
-# --- remap_scp_stylistic_sets ----------------------------------------------
+# --- remap_scp_stylistic_sets ---------------------------------------------
 
 def test_remap_scp_stylistic_sets_shifts_ss_and_sorts_the_feature_list():
     tags_in = ("ss01", "ss03", "cv01", "zero", "calt")
@@ -277,7 +277,7 @@ def test_remap_scp_stylistic_sets_shifts_ss_and_sorts_the_feature_list():
     assert set(ls.FeatureIndex) == set(range(len(records)))
 
 
-# --- PROFILES -----------------------------------------
+# --- PROFILES -------------------------------------------------------------
 
 def test_profiles_has_ship_and_term():
     assert set(build_latin.PROFILES) == {"ship", "term"}
@@ -298,7 +298,7 @@ def test_term_profile_is_unscaled_and_distinctly_named():
     assert ps_family != build_latin.PROFILES["ship"][2]
 
 
-# --- CELL / MONA_K constants -------------------------------------------
+# --- CELL / MONA_K constants ----------------------------------------------
 
 def test_cell_is_scp_cell():
     assert build_latin.CELL == 600
