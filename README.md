@@ -221,8 +221,8 @@ python scripts/build.py        # dist/latin を Source Han Sans に接ぎ木
 400 = Regular（軸を指定せずに VF を選んでも Regular が出る。OS/2 の
 usWeightClass 400 と一致し、CSS の `font-weight: 700` は Sumi Moji の
 Bold に落ちる）。各値は avar で「SHCJ の `=` バー × 600/667 に一致する
-SCP wght」（実測: Upright 317/374/406/546/669/857、Italic 317/378/399/
-538/662/841）へ写され、その間は SCP 自身の avar の折れ点も通して
+SCP wght」（実測: Upright 317/374/406/545/670/857、Italic 317/377/399/
+538/661/841）へ写され、その間は SCP 自身の avar の折れ点も通して
 補間する——SCP の VF はユーザー wght に対して線形ではない（avar で
 曲げてある）ので、これを引き継がないと中間ウェイトが静的版と一致し
 ない。マスターは SCP VF 自身のマスター位置（wght 200 / 400——CFF2 の

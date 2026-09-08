@@ -216,8 +216,8 @@ cmap・GSUB の shaping 結果が roundoff（±1〜2ユニット）を除いて�
    静的版の STAT と同じ usWeightClass の値（300/350/400/500/700/900、
    既定 400 = Regular で OS/2 usWeightClass と一致）で、avar が各値を
    段階 1 と同じ「SHCJ の `=` バー×600/667」に一致する SCP wght
-   （実測: Upright 317/374/406/546/669/857、Italic 317/378/399/538/
-   662/841）へ写す（`user_axis`。SCP 自身の avar の折れ点も引き戻して
+   （実測: Upright 317/374/406/545/670/857、Italic 317/377/399/538/
+   661/841）へ写す（`user_axis`。SCP 自身の avar の折れ点も引き戻して
    写像に含めるので、名前付きインスタンスの間でも SCP と厳密に一致
    する——`verify_latin_vf.py` が SCP_VF_U/I を指す環境で検証）。
    name テーブルは SCP VF 自身の慣習（`SourceCodeVF-Upright.otf` /
