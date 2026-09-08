@@ -1,4 +1,4 @@
-# Shoyu Code Pro JP
+# Sumi Moji JP
 
 Source Han Code JP の思想を最新の上流で組み直したプログラミングフォント。
 [Source Han Sans](https://github.com/adobe-fonts/source-han-sans)（和文）+
@@ -88,9 +88,9 @@ stylistic set も同じ挙動なので許容している。グループを跨い
 
 | ファミリー | 半角:全角 | `=`バー | 用途 |
 |-----------|-----------|--------|------|
-| Shoyu Code Pro JP | 667:1000 (2:3) | 69 | エディタ用（SHCJ の見た目） |
-| Shoyu Code Pro JP Term | 600:1200 (1:2) | 69 | ターミナル用 |
-| Shoyu Code Pro JP 35 | 600:1000 (3:5) | 62 | SCP 原寸・原太（本家忠実） |
+| Sumi Moji JP | 667:1000 (2:3) | 69 | エディタ用（SHCJ の見た目） |
+| Sumi Moji JP Term | 600:1200 (1:2) | 69 | ターミナル用 |
+| Sumi Moji JP 35 | 600:1000 (3:5) | 62 | SCP 原寸・原太（本家忠実） |
 
 `=`バーの値は現在ピン留めしている上流タグでの実測値（目安）。上流が
 更新されビルドし直すと、各面の太さマッチングの結果として多少前後しうる。
@@ -171,13 +171,13 @@ HackGen Console / PlemolJP Console / Moralerspace HW / UDEV Gothic JPDOC
 （2:3 の JP は SHCJ の見た目を優先してそのまま）。全出力に Nerd Fonts
 パッチ済み変種も生成する。NF ファミリー名は日本語プログラミングフォントの
 慣習（HackGen / PlemolJP / UDEV Gothic と同じ）に合わせ**変種名の後ろ**に付く:
-`Shoyu Code Pro JP NF` / `Shoyu Code Pro JP Term NF` / `Shoyu Code Pro JP 35 NF`。CID-keyed CFF のままでは
+`Sumi Moji JP NF` / `Sumi Moji JP Term NF` / `Sumi Moji JP 35 NF`。CID-keyed CFF のままでは
 font-patcher がグリフを Unicode で引けないため、パッチ前に FontForge の
 `cidFlatten()` で平坦化している（アウトラインは無変換）。
 
-## Sumi Moji（欧文のみ、仮称）
+## Sumi Moji（欧文のみ）
 
-Shoyu Code Pro JP が使う欧文レイヤーを、VF から直接組み上げた和文なしの
+Sumi Moji JP が使う欧文レイヤーを、VF から直接組み上げた和文なしの
 単独フォント。JP 側（`build.py`）はこのフォントを Source Han Sans に
 接ぎ木するだけになっており、欧文の設計判断は 1 か所に集まっている。
 
@@ -248,39 +248,40 @@ wght 200 の下限（＝静的版が erosion で削っている太さ）より�
 （Light 相当）では記号・合字だけが下限の太さで止まり、erosion 済みの
 静的 Light より心持ち太くなる。静的 Light は引き続き erosion 版を配布する。
 
-「Sumi Moji」はまだ仮称（PostScript 名は `SumiMoji-*`）。経緯・命名調査・
-今後の計画は [docs/sumi-moji-plan.md](docs/sumi-moji-plan.md) を参照。
+名前の由来・衝突調査・欧文層を切り出した経緯は [docs/sumi-moji-plan.md](docs/sumi-moji-plan.md) を参照。
 
 ## インストール
 
 [Releases](../../releases) から用途に応じてアセットを選ぶ。いずれの zip にも
 OFL のライセンス全文（LICENSE）を同梱している。
 
-- **`ShoyuCodeProJP.zip`**: 面ごとに分かれた個別の OTF。必要な面だけ
-  入れたい人向け。
-- **`ShoyuCodeProJP.ttc` / `ShoyuCodeProJP35.ttc` / `ShoyuCodeProJPTerm.ttc`**:
-  各ファミリー12面（6ウェイト×2スタイル）を1ファイルにまとめた TTC。
-  1ファイルで全面をインストールできる（サイズは OTF 合計と3%しか
-  違わないので、選ぶ利点はもっぱらインストールの手間が減ること）。
-- **`ShoyuCodeProJP-NerdFont.zip`**: Nerd Fonts のアイコングリフを追加した
-  NF 変種（ファミリー名は末尾に `NF` が付く、例 `Shoyu Code Pro JP NF`）。
+- **`SumiMojiJP.zip`**: 3 ファミリー（Sumi Moji JP / Term / 35）×
+  6 ウェイト × 2 スタイルの 36 面、面ごとの OTF。必要なファミリー・面
+  だけ入れる（TTC は配らない: リリースの単位はインストールする
+  ファイルの単位）。
+- **`SumiMojiJP-NerdFont.zip`**: Nerd Fonts のアイコングリフを追加した
+  NF 変種（ファミリー名は末尾に `NF` が付く、例 `Sumi Moji JP NF`）。
   ターミナルのプロンプト装飾（アイコン表示）に使う場合はこちら。
-- **`SumiMoji.zip`**: 和文を含まない欧文のみの Sumi Moji（仮称）。静的
-  12面と可変フォント2面（`SumiMoji[wght].otf` / `SumiMoji-Italic[wght].otf`）。
-- **`SumiMoji.ttc` / `SumiMoji-NerdFont.zip`**: 同じ12面の TTC と NF 変種
-  （ファミリー名 `Sumi Moji NF`）。
+- **`SumiMoji.zip`**: 和文を含まない欧文のみの Sumi Moji。可変フォント
+  2面（`SumiMoji[wght].otf` / `SumiMoji-Italic[wght].otf`、wght 軸に
+  Light〜Heavy 6 ウェイトの名前付きインスタンス）。静的面は配布しない。
+- **`SumiMoji-NerdFont.zip`**: Sumi Moji の NF 変種（ファミリー名
+  `Sumi Moji NF`）。font-patcher は可変フォントに掛けられないので、
+  こちらは 6 ウェイト × 2 スタイルの静的 12 面。
 
 ダウンロードしてインストールし、
 
 ```jsonc
 {
-  "editor.fontFamily": "Shoyu Code Pro JP",
+  "editor.fontFamily": "Sumi Moji JP",
   "editor.fontLigatures": true
 }
 ```
 
-ファミリー名を `Shoyu Code Pro JP` にリネームしてあるので、
-オリジナルと共存できる。
+ファミリー名を `Sumi Moji JP` にリネームしてあるので、
+オリジナルと共存できる。v3.3.0 までの `Shoyu Code Pro JP`（同じ
+フォントの旧名）とも別ファミリーとして共存するので、置き換えるなら
+旧版をアンインストールする。
 
 - **macOS**: OTF をダブルクリックして「フォントブック」でインストール、または
   `~/Library/Fonts/` にコピー。
@@ -310,10 +311,9 @@ SHS_DIR=... SHCJ_TTC=upstream/SourceHanCodeJP.ttc \
   python scripts/build.py "Regular"       # Regular系のみ（動作確認用）
 python scripts/verify_latin.py dist/latin/SumiMoji-Regular.otf        # Sumi Moji の回帰テスト
 python scripts/verify_latin_vf.py "dist/latin/SumiMoji[wght].otf"     # 可変版（SCP と突き合わせ）
-python scripts/verify.py dist/ShoyuCodeProJP-Regular.otf   # JP の回帰テスト
+python scripts/verify.py dist/SumiMojiJP-Regular.otf   # JP の回帰テスト
 python scripts/golden.py <前の dist> dist                  # 2つのビルド出力の比較
 python scripts/nerdpatch.py <FontPatcher dir>              # NF 変種
-python scripts/makeotc.py                                  # .ttc 化
 ```
 
 `SHCJ_TTC` は [Source Han Code JP の GitHub Releases](https://github.com/adobe-fonts/source-han-code-jp/releases)
@@ -323,13 +323,13 @@ python scripts/makeotc.py                                  # .ttc 化
 それぞれ Source Code Pro VF / Monaspace VF の Releases から取得する。
 `build.py` は Source Code Pro / Monaspace の VF に直接触らず、代わりに
 `SHS_DIR`（Source Han Sans JP）と `LATIN_DIR`（既定 `dist/latin`、
-`build_latin.py` の出力先）を見る。`SHOYU_VERSION`（例 `3.3.0`）を
+`build_latin.py` の出力先）を見る。`SUMI_VERSION`（例 `3.3.0`）を
 立てると name テーブルにその版番号を刻む（リリースワークフローがタグから
 渡す。未設定なら上流のリビジョンをそのまま残す）。
 
 `requirements.txt` には AFDKO（`otfautohint` でグラフト・拡大縮小した
 グリフにヒントを付ける）も含まれる。ローカルでの試しビルドで時間を節約
-したい場合は `SHOYU_SKIP_AUTOHINT=1` を立てるとスキップできる。Term の
+したい場合は `SUMI_SKIP_AUTOHINT=1` を立てるとスキップできる。Term の
 全角グリフ約1.7万個は描き直さず charstring の中で 100 ユニット右へ動かす
 （`shift_charstring`）ので、Source Han Sans 自身のヒントがそのまま残り、
 ヒント付けは各面で描き直した 1,300〜1,700 グリフだけで済む。ヒント付与後
@@ -367,4 +367,4 @@ v3.2.0 の 4.66MB より小さい）。
 ## ライセンス
 
 フォント本体は上流と同じ [SIL OFL 1.1](https://github.com/adobe-fonts/source-han-code-jp/blob/master/LICENSE.txt)。
-OFL の Reserved Font Name 規定に基づき、ファミリー名は変更済み（Source→Shoyu、nerd-fonts の SauceCodePro と同じ流儀の言い換え）。
+OFL の Reserved Font Name 規定に基づき、ファミリー名は `Source` も `Monaspace` も含まない `Sumi Moji JP` / `Sumi Moji` に変更済み（v3.3.0 までは `Shoyu Code Pro JP`）。

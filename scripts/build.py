@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Assemble Shoyu Code Pro JP from live upstreams.
+"""Assemble Sumi Moji JP from live upstreams.
 
 Recipe (Source Han Mono's approach, re-executed against latest releases):
   - Japanese / full-width layer: Source Han Sans JP (latest, per weight)
@@ -41,7 +41,7 @@ Usage:
   family, "Light Italic" one face per family, "Light Upright Term" one
   face, "Light Normal base" four (the release builds a family's two
   weights per job). Whole words, never a substring match (face_matches).
-  With no FILTER, dist/ShoyuCodeProJP*.otf is cleared before building, so a
+  With no FILTER, dist/SumiMojiJP*.otf is cleared before building, so a
   full build never leaves faces from an older roster behind. A filtered run
   never deletes anything.
 
@@ -52,11 +52,11 @@ Env (SHS_DIR required, the rest default):
               needs SCP_VF_U / SCP_VF_I / MONA_VF and must run first
 
 Env (optional):
-  SHOYU_VERSION = our own release version, e.g. "3.1.0" — stamps
+  SUMI_VERSION = our own release version, e.g. "3.1.0" — stamps
                   head.fontRevision (MAJOR.MINOR), nameID 5 and the CFF
                   version. Unset keeps today's behaviour: the revision
                   stays whatever Source Han Sans shipped.
-  SHOYU_SKIP_AUTOHINT = 1 skips otfautohint (quick local iterations)
+  SUMI_SKIP_AUTOHINT = 1 skips otfautohint (quick local iterations)
 """
 
 import concurrent.futures
@@ -113,7 +113,7 @@ COMBINING_MARKS = range(0x0300, 0x0370)
 # and this one is not registered; it just has to stop being Adobe's 'ADBO'.
 PROJECT_URL = "https://github.com/hn-11/shoyu-code-pro-jp"
 PROJECT_COPYRIGHT = f"Copyright 2026 hn-11 ({PROJECT_URL})"
-VENDOR_ID = "SHYU"
+VENDOR_ID = "SUMI"
 
 # OS/2 usWeightClass per output weight, and the STAT table's wght axis
 # values — the same numbers Source Han Sans declares for these faces.
@@ -1382,11 +1382,11 @@ OWNED_NAME_IDS = (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 16, 17, 25)
 
 
 def set_names(font, suffix, weight, italic, italic_angle=-12.0, version=None,
-              credits=(), family_base="Shoyu Code Pro JP", ps_base="ShoyuCodeProJP",
+              credits=(), family_base="Sumi Moji JP", ps_base="SumiMojiJP",
               base_credit="Source Han Sans"):
     """Rewrite the family-identifying names, preserve the legal ones.
 
-    `version` (SHOYU_VERSION, e.g. "3.1.0") stamps our own release version
+    `version` (SUMI_VERSION, e.g. "3.1.0") stamps our own release version
     when set: head.fontRevision becomes MAJOR.MINOR, nameID 5 notes both
     our version and the inherited Source Han Sans revision, and the CFF
     version matches head. Left None (the default), the inherited SHS
@@ -1415,7 +1415,7 @@ def set_names(font, suffix, weight, italic, italic_angle=-12.0, version=None,
     # drop stale records for the IDs we own (every platform/encoding), so
     # the base font's Source Han Sans strings can't survive alongside ours
     name.names = [n for n in name.names if n.nameID not in OWNED_NAME_IDS]
-    # version: SHOYU_VERSION (set) stamps our own release version and notes
+    # version: SUMI_VERSION (set) stamps our own release version and notes
     # the inherited SHS revision alongside it; unset (CI builds) keeps that
     # inherited revision as-is, as before.
     shs_rev = font["head"].fontRevision
@@ -2301,9 +2301,9 @@ def autohint_face(path, glyph_names):
     own hints on untouched glyphs are kept as shipped, and the run stays
     seconds for the 667 family (grafted Latin only) instead of minutes.
     The Latin faces pass every glyph — the instancer drops SCP's hints.
-    SHOYU_SKIP_AUTOHINT=1 skips it for quick local iterations."""
-    if os.environ.get("SHOYU_SKIP_AUTOHINT"):
-        print("  autohint skipped (SHOYU_SKIP_AUTOHINT)")
+    SUMI_SKIP_AUTOHINT=1 skips it for quick local iterations."""
+    if os.environ.get("SUMI_SKIP_AUTOHINT"):
+        print("  autohint skipped (SUMI_SKIP_AUTOHINT)")
         return
     if not glyph_names:
         return
@@ -2408,13 +2408,13 @@ def face_matches(only, weight, face_label, suffix):
 def env_paths(spec):
     """{name: value} for the path environment variables in `spec`
     ({name: default or None when required}); exits naming every variable
-    that is unset or points nowhere. SHOYU_VERSION (not a path) rides
+    that is unset or points nowhere. SUMI_VERSION (not a path) rides
     along as-is."""
     env = {k: os.environ.get(k, d) for k, d in spec.items()}
     missing = [k for k, v in env.items() if not v or not Path(v).exists()]
     if missing:
         sys.exit(f"missing env: {missing}")
-    env["SHOYU_VERSION"] = os.environ.get("SHOYU_VERSION")
+    env["SUMI_VERSION"] = os.environ.get("SUMI_VERSION")
     return env
 
 
@@ -2521,7 +2521,7 @@ def build_face(job):
     credits = donor_credits(latin)
     ps = set_names(base, suffix, weight, italic,
                    ref_angle if ref_angle is not None else -12.0,
-                   version=env.get("SHOYU_VERSION"), credits=credits)
+                   version=env.get("SUMI_VERSION"), credits=credits)
     add_stat(base, weight, italic)
     prune_orphan_names(base)
     update_bbox(base)
@@ -2578,8 +2578,8 @@ def main():
 
     if only is None:
         # a full build must not leave faces from an older roster (e.g. the
-        # dropped ExtraLight/Light) for makeotc.py to bundle alongside these
-        stale = sorted(out_dir.glob("ShoyuCodeProJP*.otf"))
+        # dropped ExtraLight/Light) for the release zip to pick up
+        stale = sorted(out_dir.glob("SumiMojiJP*.otf"))
         for f in stale:
             f.unlink()
         if stale:

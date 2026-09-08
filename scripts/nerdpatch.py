@@ -10,7 +10,7 @@ Usage: python scripts/nerdpatch.py <path-to-FontPatcher-dir> [FONT ...]
   substring of the file names to take; none patches every face in
   dist/ and dist/latin/.
 Requires: fontforge on PATH.
-Env (optional): SHOYU_NERD_SETS — font-patcher's symbol-set options in
+Env (optional): SUMI_NERD_SETS — font-patcher's symbol-set options in
 place of "--complete" (e.g. "--powerline": CI's smoke test of this
 pipeline patches one set; a release always patches everything).
 """
@@ -140,14 +140,11 @@ def nf_name(s):
     """The Nerd Fonts name of one of our names: the NF marker spliced in
     after the family, variant token included."""
     # JP-font convention (HackGen/PlemolJP/UDEV): NF goes AFTER the
-    # variant token — "Shoyu Code Pro JP Term NF", not "... NF Term".
-    s = re.sub(r"(Shoyu Code Pro JP(?: 35| Term)?)", r"\1 NF", s, count=1)
-    s = re.sub(r"(ShoyuCodeProJP(?:35|Term)?)", r"\1NF", s, count=1)
-    # Sumi Moji is a single Latin-only family (no 35/Term variants to
-    # preserve — Sumi Moji Term is the internal donor and is never
-    # patched), so this is a plain literal substitution.
-    s = re.sub(r"(Sumi Moji)", r"\1 NF", s, count=1)
-    return re.sub(r"(SumiMoji)", r"\1NF", s, count=1)
+    # variant token — "Sumi Moji JP Term NF", not "... NF Term". The
+    # Latin-only Sumi Moji has no variant (Sumi Moji Term is the internal
+    # donor and is never patched): the marker follows the family name.
+    s = re.sub(r"(Sumi Moji(?: JP(?: 35| Term)?)?)", r"\1 NF", s, count=1)
+    return re.sub(r"(SumiMoji(?:JP(?:35|Term)?)?)", r"\1NF", s, count=1)
 
 
 # what FontForge's round trip (the flattening, font-patcher's generate)
@@ -213,7 +210,7 @@ def restore_metadata(font, src_font):
     font["name"].names = []
     for rec in src_font["name"].names:
         s = rec.toUnicode()
-        if "Shoyu" in s or "Sumi" in s:
+        if "Sumi" in s:
             s = nf_name(s)
         font["name"].setName(s, rec.nameID, rec.platformID,
                              rec.platEncID, rec.langID)
@@ -322,7 +319,7 @@ def patch_face(src, out_dir, tmp, flatten_script, patcher_dir):
         print(e.stdout)
         print(e.stderr)
         raise
-    sets = os.environ.get("SHOYU_NERD_SETS", "--complete").split()
+    sets = os.environ.get("SUMI_NERD_SETS", "--complete").split()
     t_flat = time.monotonic()
     r = subprocess.run(
         ["fontforge", "-script", str(patcher_dir / "font-patcher"),

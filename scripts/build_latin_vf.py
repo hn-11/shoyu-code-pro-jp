@@ -66,7 +66,7 @@ Usage:
   python scripts/build_latin_vf.py [upright|italic]   # default: both
 Env (all required):
   SCP_VF_U, SCP_VF_I, MONA_VF, SHCJ_TTC   as for build_latin.py
-Env (optional): SHOYU_VERSION
+Env (optional): SUMI_VERSION
 """
 
 import copy
@@ -530,7 +530,7 @@ def build_style(style, env, out_dir):
     build_latin.fit_win_metrics(vf, ascent=win_ascent, descent=win_descent)
     vf["OS/2"].recalcUnicodeRanges(vf)
     build.recalc_codepage_range(vf)
-    ps = finalize_vf_names(vf, italic, env.get("SHOYU_VERSION"), credits,
+    ps = finalize_vf_names(vf, italic, env.get("SUMI_VERSION"), credits,
                            ref_angle if ref_angle is not None else -12.0)
     # STAT: every weight (Regular elidable, linked to Bold) plus this
     # file's ital value — Source Code Pro's own two-file STAT convention

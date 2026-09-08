@@ -1,7 +1,7 @@
 """Shared pieces of the verification scripts (verify.py, verify_latin.py,
 verify_latin_vf.py, golden.py): a HarfBuzz shaper, the ok/FAIL check
-tally, the CFF hint probe, and the static-face listing the packaging
-scripts (makeotc.py, nerdpatch.py) share.
+tally, the CFF hint probe, and the static-face listing nerdpatch.py and
+harmonize_latin.py share.
 """
 
 from pathlib import Path
