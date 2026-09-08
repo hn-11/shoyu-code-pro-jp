@@ -153,9 +153,12 @@ def main():
     # head / hhea extents must hold every instance, not just the default
     # one a CFF2 glyph set draws (build_latin_vf.py unions the masters):
     # the union of the whole glyph set at both axis ends and the default
+    # (unrounded instancing: the instancer's per-operand rounding drifts
+    # an outline by up to 1u along a path, see build_latin_vf.py)
     union = None
     for w in (axis.minValue, axis.defaultValue, axis.maxValue):
-        inst = instantiateVariableFont(tf, {"wght": w}, inplace=False)
+        with build_latin_vf.unrounded_cff2_instancing():
+            inst = instantiateVariableFont(tf, {"wght": w}, inplace=False)
         gs = inst.getGlyphSet()
         for g in inst.getGlyphOrder():
             pen = BoundsPen(gs)
@@ -164,14 +167,19 @@ def main():
                 continue
             union = pen.bounds if union is None else tuple(
                 f(a, b) for f, a, b in zip((min, min, max, max), union, pen.bounds))
+    # the box is the integer union over the MASTERS; an instance can sit a
+    # fraction of a unit past it (the 16.16 deltas and the merge's 0.01
+    # rounding tolerance), so the outlines may overshoot by < 1u
     head = tf["head"]
     box = (head.xMin, head.yMin, head.xMax, head.yMax)
-    check(box[0] <= union[0] and box[1] <= union[1] and box[2] >= union[2] and box[3] >= union[3],
-          f"head bbox {box} holds every instance's outlines {tuple(round(v) for v in union)}")
-    check(hhea.xMaxExtent >= union[2],
-          f"hhea.xMaxExtent {hhea.xMaxExtent} >= the widest instance outline {union[2]:.0f}")
-    check(hhea.minLeftSideBearing <= union[0],
-          f"hhea.minLeftSideBearing {hhea.minLeftSideBearing} <= leftmost outline {union[0]:.0f}")
+    outline = tuple(round(v, 2) for v in union)
+    check(box[0] - 1 < outline[0] and box[1] - 1 < outline[1]
+          and box[2] + 1 > outline[2] and box[3] + 1 > outline[3],
+          f"head bbox {box} holds every instance's outlines {outline} (to within 1u)")
+    check(hhea.xMaxExtent + 1 > outline[2],
+          f"hhea.xMaxExtent {hhea.xMaxExtent} >= the widest instance outline {outline[2]}")
+    check(hhea.minLeftSideBearing - 1 < outline[0],
+          f"hhea.minLeftSideBearing {hhea.minLeftSideBearing} <= leftmost outline {outline[0]}")
 
     # every named instance: shape the ligature cases, same as the static
     # faces (verify_latin.py / verify.py CASES), on the IN-MEMORY instanced
