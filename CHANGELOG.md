@@ -1,5 +1,64 @@
 # Changelog
 
+## Unreleased
+
+- セルフレビューで見つけた不具合の修正:
+  - JP 各面の合字グリフ（61 種 + cv99 の 2 種）の CFF charstring 幅が
+    hmtx の送り幅と 510u ずれていた（記号用 FD の nominalWidthX で符号化
+    した後に `add_latin_fd` が A の FD 複製へ移していたため。描画は hmtx を
+    読むので見た目には出ないが、CFF を読む処理には誤った幅が見えていた）。
+    `latin_ligatures` も他の追加処理と同じ A の FD で追加するようにし、
+    `verify.py` が全グリフの CFF 幅と hmtx の一致を検査する
+  - 600 セルの 35 / Term ファミリーで半角記号 ￨￩￪￫￬￭￮（U+FFE8〜FFEE）の
+    送り幅が 500 のままだった（`HALFWIDTH_FORMS` が U+FFDC で止まって
+    いた）。East Asian Width "H" の 2 範囲を対象にし、`verify.py` が
+    U+FFE9 を検査する
+  - `makeotc.py` / `nerdpatch.py` の `SumiMoji-*.otf` 探索が VF の
+    `SumiMoji-Italic[wght].otf` も拾い、リリースの TTC 化が 13 面で止まり
+    Nerd Fonts パッチが CFF2 の VF を受け取る状態だった。静的面だけを
+    列挙する `verifylib.static_faces` に置き換え
+  - Sumi Moji VF: `head` の外接矩形と `hhea` の広がり（xMaxExtent・両側の
+    最小サイドベアリング）が既定マスター（Regular）だけの値だったのを、
+    各マスターのアウトラインから測った和にした（保存時の再計算は既定
+    インスタンスしか見ないので切る）。`verify_latin_vf.py` は軸の両端と
+    既定のインスタンスを丸めなしで描き、外接矩形と hhea の 3 値を
+    突き合わせる。GSUB の FeatureParams を付け替えた
+    後に元の name レコード（Upright で 73 件）が参照されないまま残って
+    いたのと、SCP 由来の STAT / fvar の文字列 5 件を削除（`prune_orphan_names`、
+    静的面にも適用）。
+    `harmonize_win_metrics` は実行した面だけでなく出力ディレクトリ内の
+    ファミリー全面を対象にする（CI は Regular と Light Italic を別ステップ
+    で組む）。SCP VF のマスター位置の読み取りを wght 軸に限定
+  - `requirements.txt` の fontTools 下限を 4.52.4 に（`cffLib.CFF2ToCFF` と
+    `instantiateCFF2(round=)` を使うため。4.50 では import で落ちる）
+  - 結合文字の異体（cv11: U+0306 のキリル文字用ブレーヴェ）が送り幅 1 セルの
+    グリフとして取り込まれていたため、cv11 を有効にするとアクセントが
+    1 セル分の幅を取っていた。既定の結合文字と同じ 0 幅・1 セル左寄せで
+    取り込み、GDEF でもマークに分類する。`verify.py` が cv11 の前後で
+    U+0306 の送り幅 0 を検査する
+  - `_shcj_ref` がプール内で `sys.exit` していたのを例外に（他の面の
+    失敗と一緒に報告される）。`verify_latin_vf.py` は wght 軸が無い
+    フォントで FAIL を出して終了する
+- リファクタリング: 7 箇所に複製されていたグリフ追加の前置き
+  （`append_context`）、方針の違う 4 箇所の cmap 書き込み（`set_cmap`）、
+  `build.py` / `build_latin.py` の `main()` と面の後処理
+  （`env_paths` / `run_faces` / `write_face`）、STAT 構築（`add_stat` が
+  静的面の 1 値と VF の全値の両方を担当）、SHCJ のバー目標
+  （`shcj_bar_target`）、VF 側の wght 探索（`VFSource.matched_wght` /
+  `floor_bar` — 静的面と同じ探索になり、VF の名前付きインスタンスが
+  静的面と厳密に同じ位置に乗る。実測の位置は Upright 317/374/406/545/
+  670/857、Italic 317/377/399/538/661/841 と 1 前後動いた）を共通化。
+  name テーブルの nameID 5（Version）も `OWNED_NAME_IDS` に含め、書き換え
+  前に旧レコードを全プラットフォーム分消す。`build_latin.py` もフィルタ
+  無しの実行では古い面を先に消す。検証・梱包スクリプト共通の
+  `scripts/verifylib.py`（HarfBuzz シェイパー、ok/FAIL 集計、ヒント
+  検出、静的面の列挙）。未使用の `mona_onecell` と 667 セル前提の
+  `MONA_K` 既定値、`fetch-upstreams` の未使用 `cache` 入力を削除。
+  面数が 3 以上ならフィルタ付きでもプロセスプールで組む
+- ドキュメント: CONTRIBUTING が旧い 1 段階ビルドを説明していたのを 2 段階
+  に更新。README / CHANGELOG の「Sumi Moji に TTC・NF は無い」を訂正
+  （リリースは `SumiMoji.ttc` / `SumiMoji-NerdFont.zip` を添付済み）
+
 ## v3.3.0
 
 - `scripts/build_latin_vf.py` を追加: Sumi Moji を CFF2 可変フォントとして
@@ -90,7 +149,9 @@
   出力は roundoff（±1〜2ユニット）を除き従来の VF 直接ビルドと同一に
   なるよう意図しており、`scripts/golden.py` が2つの dist ディレクトリ
   間で cmap・送り幅・シェーピング・アウトライン（許容誤差つき）・
-  メタデータ・ヒントを比較する。Nerd Fonts 変種・TTC はまだ無い
+  メタデータ・ヒントを比較する。`makeotc.py` / `nerdpatch.py` も
+  Sumi Moji を扱い、リリースは `SumiMoji.ttc` と `SumiMoji-NerdFont.zip`
+  も添付する
 - 合字を50種から61種に拡張。Monaspace が描いているが `data/mona_ligs.json`
   が未収録だった11種を追加: 真の合字5つ `!~` `=~`（正規表現マッチ、ss01）、
   `~~>`（ss02）、`<!--`（ss03、4セル）、`&&=`（ss08）と、`::`/`:=` と同じ

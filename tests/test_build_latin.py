@@ -13,7 +13,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from fontTools.fontBuilder import FontBuilder
 from fontTools.pens.ttGlyphPen import TTGlyphPen
 from fontTools.ttLib import TTFont
 
@@ -23,6 +22,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import build  # noqa: E402
 import build_latin  # noqa: E402
 import test_build as tb  # noqa: E402 -- reuse its GSUB fakes
+from conftest import make_font  # noqa: E402
 
 # --- fix_zone_order -------------------------------------------------------
 
@@ -102,20 +102,13 @@ def test_fix_zone_order_covers_every_fontdict():
     assert p1.OtherBlues == [5, 10]
 
 
-# --- typo / win metrics ----------------------------------------------------
+# --- typo / win metrics ---------------------------------------------------
 
 def _metrics_font(ascent=800, descent=-200, line_gap=0,
                   win_ascent=0, win_descent=0):
-    fb = FontBuilder(1000, isTTF=True)
-    fb.setupGlyphOrder([".notdef", "a"])
-    fb.setupCharacterMap({ord("a"): "a"})
-    fb.setupGlyf({g: TTGlyphPen(None).glyph() for g in (".notdef", "a")})
-    fb.setupHorizontalMetrics({".notdef": (0, 0), "a": (600, 0)})
-    fb.setupHorizontalHeader(ascent=ascent, descent=descent, lineGap=line_gap)
-    fb.setupNameTable({"familyName": "Test", "styleName": "Regular"})
-    fb.setupOS2(usWinAscent=win_ascent, usWinDescent=win_descent)
-    fb.setupPost()
-    return fb.font
+    return make_font([".notdef", "a"], {ord("a"): "a"}, {"a": 600},
+                     ascent=ascent, descent=descent, line_gap=line_gap,
+                     os2={"usWinAscent": win_ascent, "usWinDescent": win_descent})
 
 
 def test_use_typo_metrics_matches_hhea_and_sets_fsselection_bit7():
@@ -171,7 +164,7 @@ def test_fit_win_metrics_defaults_are_zero():
     assert os2.usWinDescent == 50
 
 
-# --- harmonize_win_metrics --------------------------------------------------
+# --- harmonize_win_metrics ------------------------------------------------
 
 def _glyph_with_bbox(ymin, ymax):
     pen = TTGlyphPen(None)
@@ -184,17 +177,10 @@ def _glyph_with_bbox(ymin, ymax):
 
 
 def _write_metrics_font(path, win_ascent, win_descent, ymin, ymax):
-    fb = FontBuilder(1000, isTTF=True)
-    fb.setupGlyphOrder([".notdef", "a"])
-    fb.setupCharacterMap({ord("a"): "a"})
-    fb.setupGlyf({".notdef": TTGlyphPen(None).glyph(),
-                 "a": _glyph_with_bbox(ymin, ymax)})
-    fb.setupHorizontalMetrics({".notdef": (0, 0), "a": (600, 0)})
-    fb.setupHorizontalHeader(ascent=800, descent=-200)
-    fb.setupNameTable({"familyName": "Test", "styleName": "Regular"})
-    fb.setupOS2(usWinAscent=win_ascent, usWinDescent=win_descent)
-    fb.setupPost()
-    fb.font.save(path)
+    font = make_font([".notdef", "a"], {ord("a"): "a"}, {"a": 600},
+                     glyphs={"a": _glyph_with_bbox(ymin, ymax)},
+                     os2={"usWinAscent": win_ascent, "usWinDescent": win_descent})
+    font.save(path)
 
 
 def test_harmonize_win_metrics_gives_every_face_the_same_max(tmp_path):
@@ -233,7 +219,7 @@ def test_harmonize_win_metrics_noop_when_already_matched(tmp_path):
     assert (p1.stat().st_mtime, p2.stat().st_mtime) == before
 
 
-# --- credits_from ------------------------------------------------------
+# --- credits_from ---------------------------------------------------------
 
 class _FakeName:
     def __init__(self, names):
@@ -271,7 +257,7 @@ def test_credits_from_monaspace_falls_back_to_nameid7_when_nameid0_absent():
     assert designer == "Riley Cran"
 
 
-# --- remap_scp_stylistic_sets ----------------------------------------------
+# --- remap_scp_stylistic_sets ---------------------------------------------
 
 def test_remap_scp_stylistic_sets_shifts_ss_and_sorts_the_feature_list():
     tags_in = ("ss01", "ss03", "cv01", "zero", "calt")
@@ -291,7 +277,7 @@ def test_remap_scp_stylistic_sets_shifts_ss_and_sorts_the_feature_list():
     assert set(ls.FeatureIndex) == set(range(len(records)))
 
 
-# --- PROFILES / FAMILY / PS_FAMILY -----------------------------------------
+# --- PROFILES -------------------------------------------------------------
 
 def test_profiles_has_ship_and_term():
     assert set(build_latin.PROFILES) == {"ship", "term"}
@@ -312,12 +298,7 @@ def test_term_profile_is_unscaled_and_distinctly_named():
     assert ps_family != build_latin.PROFILES["ship"][2]
 
 
-def test_family_constants_mirror_the_ship_profile():
-    assert build_latin.PROFILES["ship"][1] == build_latin.FAMILY
-    assert build_latin.PROFILES["ship"][2] == build_latin.PS_FAMILY
-
-
-# --- CELL / MONA_K constants -------------------------------------------
+# --- CELL / MONA_K constants ----------------------------------------------
 
 def test_cell_is_scp_cell():
     assert build_latin.CELL == 600

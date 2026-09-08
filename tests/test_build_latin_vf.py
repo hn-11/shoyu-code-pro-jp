@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 from fontTools.fontBuilder import FontBuilder
-from fontTools.pens.ttGlyphPen import TTGlyphPen
 from fontTools.ttLib import newTable
 from fontTools.ttLib.tables import otTables
 from fontTools.varLib.models import piecewiseLinearMap
@@ -17,6 +16,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 import build  # noqa: E402
 import build_latin_vf as vf  # noqa: E402
+from conftest import make_font  # noqa: E402
 
 # Source Code Pro's own upright VF, as shipped: wght 200-900 with the
 # default at 200 and an avar that bends user 300 to only ~10% of the way
@@ -29,24 +29,16 @@ POS = {"Light": 317.0, "Normal": 374.0, "Regular": 406.0,
 
 def _vf_meta(avar=SCP_AVAR, lo=200, default=200, hi=900):
     """A TTFont carrying just fvar (+ avar): what scp_design_axis reads."""
-    fb = FontBuilder(1000, isTTF=True)
-    fb.setupGlyphOrder([".notdef"])
-    fb.setupCharacterMap({})
-    fb.setupGlyf({".notdef": TTGlyphPen(None).glyph()})
-    fb.setupHorizontalMetrics({".notdef": (500, 0)})
-    fb.setupHorizontalHeader()
-    fb.setupNameTable({"familyName": "T", "styleName": "R"})
-    fb.setupOS2()
-    fb.setupPost()
-    fb.setupFvar([("wght", lo, default, hi, "Weight")], [])
+    font = make_font([".notdef"], {}, {".notdef": 500}, family="T", style="R")
+    FontBuilder(font=font).setupFvar([("wght", lo, default, hi, "Weight")], [])
     if avar:
         table = newTable("avar")
         table.segments = {"wght": dict(avar)}
-        fb.font["avar"] = table
-    return fb.font
+        font["avar"] = table
+    return font
 
 
-# --- scp_design_axis --------------------------------------------------------
+# --- scp_design_axis ------------------------------------------------------
 
 def test_scp_design_axis_is_identity_without_avar():
     design, breaks = vf.scp_design_axis(_vf_meta(avar=None, default=400))
@@ -72,7 +64,7 @@ def test_scp_design_axis_is_monotonic():
     assert all(a < b for a, b in zip(vals, vals[1:]))
 
 
-# --- user_axis --------------------------------------------------------------
+# --- user_axis ------------------------------------------------------------
 
 def test_user_axis_range_and_default_are_usweightclass():
     design, breaks = vf.scp_design_axis(_vf_meta())
@@ -121,7 +113,7 @@ def test_user_axis_rejects_non_monotonic_pairing():
         vf.user_axis(bad, design, breaks, 200)
 
 
-# --- master_scp_wghts -------------------------------------------------------
+# --- master_scp_wghts -----------------------------------------------------
 
 def test_masters_are_scp_masters_in_range_plus_regular_and_heavy():
     design, breaks = vf.scp_design_axis(_vf_meta())
@@ -147,7 +139,7 @@ def test_masters_take_extra_positions_inside_the_range_only():
     assert got == [200.0, 366.12, 400.0, 406.0, 857.0]
 
 
-# --- name_default_instance_by_font ---------------------------------------
+# --- name_default_instance_by_font ----------------------------------------
 
 def _vf_with_instances(default=400):
     font = _vf_meta(avar=None, default=default)
@@ -171,7 +163,7 @@ def _vf_with_instances(default=400):
 
 def test_default_instance_takes_name_id_6_and_drops_its_private_record():
     font, ids = _vf_with_instances()
-    assert vf.name_default_instance_by_font(font) == "Regular"
+    vf.name_default_instance_by_font(font)
     insts = {i.coordinates["wght"]: i for i in font["fvar"].instances}
     assert insts[400].postscriptNameID == 6
     assert font["name"].getDebugName(ids["Regular"][1]) is None
@@ -186,7 +178,7 @@ def test_default_instance_missing_raises():
         vf.name_default_instance_by_font(font)
 
 
-# --- build_stat -------------------------------------------------------------
+# --- build.add_stat (family form, as the VF uses it) ----------------------
 
 def _stat_values(font):
     stat = font["STAT"].table
@@ -199,9 +191,9 @@ def _stat_values(font):
     return out
 
 
-def test_build_stat_uses_usweightclass_values():
+def test_add_stat_family_form_uses_usweightclass_values():
     font = _vf_meta()
-    vf.build_stat(font, italic=False)
+    build.add_stat(font, [w for w, _, _ in build.FACES], italic=False)
     vals = _stat_values(font)
     assert [(n, v) for n, v, _, _ in vals["wght"]] == \
         [(w, build.WEIGHT_CLASS[w]) for w, _, _ in build.FACES]
@@ -210,33 +202,25 @@ def test_build_stat_uses_usweightclass_values():
     assert vals["ital"] == [("Regular", 0, 0x2, 1)]
 
 
-def test_build_stat_italic_file_declares_ital_1():
+def test_add_stat_family_form_italic_file_declares_ital_1():
     font = _vf_meta()
-    vf.build_stat(font, italic=True)
+    build.add_stat(font, [w for w, _, _ in build.FACES], italic=True)
     assert _stat_values(font)["ital"] == [("Italic", 1, 0, None)]
 
 
-# --- build.classify_unicode_marks -------------------------------------------
+# --- build.classify_unicode_marks -----------------------------------------
 
 def _font_with_gdef(cmap, classes):
-    fb = FontBuilder(1000, isTTF=True)
-    order = [".notdef"] + sorted(set(cmap.values()))
-    fb.setupGlyphOrder(order)
-    fb.setupCharacterMap(cmap)
-    fb.setupGlyf({g: TTGlyphPen(None).glyph() for g in order})
-    fb.setupHorizontalMetrics({g: (600, 0) for g in order})
-    fb.setupHorizontalHeader()
-    fb.setupNameTable({"familyName": "T", "styleName": "R"})
-    fb.setupOS2()
-    fb.setupPost()
+    order = [".notdef", *sorted(set(cmap.values()))]
+    font = make_font(order, cmap, dict.fromkeys(order, 600), family="T", style="R")
     gdef = newTable("GDEF")
     gdef.table = otTables.GDEF()
     gdef.table.Version = 0x00010000
     gdef.table.GlyphClassDef = otTables.GlyphClassDef()
     gdef.table.GlyphClassDef.classDefs = dict(classes)
     gdef.table.AttachList = gdef.table.LigCaretList = gdef.table.MarkAttachClassDef = None
-    fb.font["GDEF"] = gdef
-    return fb.font
+    font["GDEF"] = gdef
+    return font
 
 
 def test_classify_unicode_marks_marks_only_unclassified_mn():
@@ -255,3 +239,63 @@ def test_classify_unicode_marks_noop_without_gdef():
     font = _font_with_gdef({0x300: "grave"}, {})
     del font["GDEF"]
     assert build.classify_unicode_marks(font) == []
+
+
+# --- master_extents / master_scp_wghts seed guard ----------------------------
+
+class _Outline:
+    def __init__(self, points):
+        self.points = points
+
+    def draw(self, pen):
+        pen.moveTo(self.points[0])
+        for pt in self.points[1:]:
+            pen.lineTo(pt)
+        pen.closePath()
+
+
+class _StubFont:
+    """Just what master_extents reads: a glyph set, hmtx and the order —
+    with fractional outlines and hmtx side bearings that lie."""
+
+    def __init__(self, glyphs, metrics):
+        self._glyphs, self._metrics = glyphs, metrics
+
+    def getGlyphOrder(self):
+        return list(self._glyphs)
+
+    def getGlyphSet(self):
+        return self._glyphs
+
+    def __getitem__(self, tag):
+        assert tag == "hmtx"
+        return type("hmtx", (), {"metrics": self._metrics})()
+
+
+def test_master_extents_measures_the_outlines_not_hmtx():
+    font = _StubFont(
+        {"A": _Outline([(-20.5, -10.2), (580.4, -10.2), (580.4, 700.6), (-20.5, 700.6)]),
+         "b": _Outline([(30, 0), (500, 0), (500, 650), (30, 650)]),
+         "space": _Outline([])},
+        {"A": (600, 999), "b": (600, 999), "space": (600, 0)})
+    font._glyphs["space"].draw = lambda pen: None   # no outline
+    # floor the minima, ceil the maxima; lsb from A's xMin, rsb from A's
+    # xMax against its advance (600 - 580.4 = 19.6 -> 19); hmtx's 999 ignored
+    assert vf.master_extents(font) == (-21, -11, 581, 701, -21, 19)
+
+
+def test_master_extents_none_without_outlines():
+    font = make_font([".notdef", "A"], {0x41: "A"}, {"A": 600})
+    assert vf.master_extents(font) is None
+
+
+def test_master_scp_wghts_rejects_a_seed_on_the_axis_minimum():
+    to_scp = {400: 200.0, 900: 900.0}.get
+    with pytest.raises(RuntimeError, match="distinct and ordered"):
+        vf.master_scp_wghts([200, 400, 900], to_scp, 200, 400, 900)
+
+
+def test_master_scp_wghts_rejects_unordered_seeds():
+    to_scp = {400: 300.0, 900: 250.0}.get
+    with pytest.raises(RuntimeError, match="distinct and ordered"):
+        vf.master_scp_wghts([200, 400, 900], to_scp, 200, 400, 900)

@@ -221,8 +221,8 @@ python scripts/build.py        # dist/latin を Source Han Sans に接ぎ木
 400 = Regular（軸を指定せずに VF を選んでも Regular が出る。OS/2 の
 usWeightClass 400 と一致し、CSS の `font-weight: 700` は Sumi Moji の
 Bold に落ちる）。各値は avar で「SHCJ の `=` バー × 600/667 に一致する
-SCP wght」（実測: Upright 317/374/406/546/669/857、Italic 317/378/399/
-538/662/841）へ写され、その間は SCP 自身の avar の折れ点も通して
+SCP wght」（実測: Upright 317/374/406/545/670/857、Italic 317/377/399/
+538/661/841）へ写され、その間は SCP 自身の avar の折れ点も通して
 補間する——SCP の VF はユーザー wght に対して線形ではない（avar で
 曲げてある）ので、これを引き継がないと中間ウェイトが静的版と一致し
 ない。マスターは SCP VF 自身のマスター位置（wght 200 / 400——CFF2 の
@@ -265,8 +265,10 @@ OFL のライセンス全文（LICENSE）を同梱している。
 - **`ShoyuCodeProJP-NerdFont.zip`**: Nerd Fonts のアイコングリフを追加した
   NF 変種（ファミリー名は末尾に `NF` が付く、例 `Shoyu Code Pro JP NF`）。
   ターミナルのプロンプト装飾（アイコン表示）に使う場合はこちら。
-- **`SumiMoji.zip`**: 和文を含まない欧文のみの Sumi Moji（仮称）12面。
-  NF 変種と TTC はまだ無い。
+- **`SumiMoji.zip`**: 和文を含まない欧文のみの Sumi Moji（仮称）。静的
+  12面と可変フォント2面（`SumiMoji[wght].otf` / `SumiMoji-Italic[wght].otf`）。
+- **`SumiMoji.ttc` / `SumiMoji-NerdFont.zip`**: 同じ12面の TTC と NF 変種
+  （ファミリー名 `Sumi Moji NF`）。
 
 ダウンロードしてインストールし、
 
@@ -302,10 +304,14 @@ Source Han Code JP）を取得して環境変数で場所を渡す。ビルド�
 pip install -r requirements.txt
 SCP_VF_U=... SCP_VF_I=... MONA_VF=... SHCJ_TTC=upstream/SourceHanCodeJP.ttc \
   python scripts/build_latin.py           # dist/latin{,/term}/SumiMoji*-*.otf
+  python scripts/build_latin_vf.py        # dist/latin/SumiMoji[wght].otf, -Italic[wght].otf
 SHS_DIR=... SHCJ_TTC=upstream/SourceHanCodeJP.ttc \
   python scripts/build.py                 # 全ファミリー（2:3 / 35 / Term × 12面）
   python scripts/build.py "Regular"       # Regular系のみ（動作確認用）
-python scripts/verify.py dist/ShoyuCodeProJP-Regular.otf   # 回帰テスト
+python scripts/verify_latin.py dist/latin/SumiMoji-Regular.otf        # Sumi Moji の回帰テスト
+python scripts/verify_latin_vf.py "dist/latin/SumiMoji[wght].otf"     # 可変版（SCP と突き合わせ）
+python scripts/verify.py dist/ShoyuCodeProJP-Regular.otf   # JP の回帰テスト
+python scripts/golden.py <前の dist> dist                  # 2つのビルド出力の比較
 python scripts/nerdpatch.py <FontPatcher dir>              # NF 変種
 python scripts/makeotc.py                                  # .ttc 化
 ```
@@ -317,7 +323,9 @@ python scripts/makeotc.py                                  # .ttc 化
 それぞれ Source Code Pro VF / Monaspace VF の Releases から取得する。
 `build.py` は Source Code Pro / Monaspace の VF に直接触らず、代わりに
 `SHS_DIR`（Source Han Sans JP）と `LATIN_DIR`（既定 `dist/latin`、
-`build_latin.py` の出力先）を見る。
+`build_latin.py` の出力先）を見る。`SHOYU_VERSION`（例 `3.3.0`）を
+立てると name テーブルにその版番号を刻む（リリースワークフローがタグから
+渡す。未設定なら上流のリビジョンをそのまま残す）。
 
 `requirements.txt` には AFDKO（`otfautohint` でグラフト・拡幅したグリフに
 ヒントを付ける）も含まれる。ローカルでの試しビルドで時間を節約したい場合は

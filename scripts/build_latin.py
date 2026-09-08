@@ -20,23 +20,23 @@ The base is the SCP VF instance converted to a static CID-keyed CFF
 (fontTools CFF2ToCFF): SCP's own outlines, alignment zones, GSUB
 (cv01-cv17, zero, salt, its stylistic sets moved to ss11-ss17) and GPOS
 (mark positioning) survive untouched; the hints do not survive the
-instancer, so the whole font is re-hinted against SCP's zones. On top: the 61 ligatures and the 32
-ASCII punctuation glyphs from Monaspace, weight-matched to the same bar
+instancer, so the whole font is re-hinted against SCP's zones. On top:
+the 61 ligatures and the 32 ASCII punctuation glyphs from Monaspace,
+weight-matched to the same bar
 and baseline-aligned on '='; the ligature-paired symbols ← → ↑ ↓ ⇐ ⇒ ⇔ ≠
 ≤ ≥ … as Monaspace's one-cell glyphs (a Latin font has no full width);
 calt/liga with the context guards, ss01-ss08, cv99. otfautohint hints
 everything against SCP's zones; cffsubr subroutinizes.
 
 Usage:
-  python scripts/build_latin.py [FILTER]   # same FILTER words as build.py
+  python scripts/build_latin.py [FILTER]   # build.py's weight / face words
+                                           # (no variant suffixes here)
 Env (all required):
   SCP_VF_U, SCP_VF_I, MONA_VF, SHCJ_TTC   as for build.py
 Env (optional): SHOYU_VERSION, SHOYU_SKIP_AUTOHINT
 """
 
-import concurrent.futures
 import io
-import os
 import sys
 from pathlib import Path
 
@@ -45,6 +45,7 @@ from fontTools.ttLib import TTFont
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import build  # noqa: E402
+from verifylib import static_faces  # noqa: E402
 
 CELL = build.SCP_CELL   # 600
 MONA_K = CELL / build.MONA_CELL
@@ -56,42 +57,6 @@ PROFILES = {
     "ship": (*build.LATIN_PROFILES["ship"], CELL / build.CELL),
     "term": (*build.LATIN_PROFILES["term"], 1.0),
 }
-FAMILY = PROFILES["ship"][1]
-PS_FAMILY = PROFILES["ship"][2]
-
-
-def confirm_scp_master_wghts(vf_path):
-    """The SCP VF's own wght master locations, read back from the CFF2
-    VarStore's region peaks through avar/fvar rather than assumed — used
-    by scripts/build_latin_vf.py to place the variable Sumi Moji's masters
-    exactly where SCP's own masters are (so no interpolation error is
-    introduced on the SCP side; only Monaspace needs matching per master).
-
-    A region's PeakCoord is in POST-avar normalized space; forward-map a
-    fine wght grid through fvar-normalize + avar and take, for each peak,
-    the raw wght whose forward map lands closest to it. Always includes
-    the axis default (peak 0.0, not itself stored as a region)."""
-    from fontTools.varLib.models import normalizeValue, piecewiseLinearMap
-
-    vf = TTFont(vf_path)
-    axis = next(a for a in vf["fvar"].axes if a.axisTag == "wght")
-    avar = vf["avar"].segments.get("wght", {}) if "avar" in vf else {}
-    cff2 = vf["CFF2"].cff
-    td = cff2[cff2.fontNames[0]]
-    peaks = sorted({round(a.PeakCoord, 6)
-                    for r in td.VarStore.otVarStore.VarRegionList.Region
-                    for a in r.VarRegionAxis} | {0.0})
-
-    def forward(wght):
-        lin = normalizeValue(wght, (axis.minValue, axis.defaultValue, axis.maxValue))
-        return piecewiseLinearMap(lin, avar) if avar else lin
-
-    grid = [axis.minValue + i * (axis.maxValue - axis.minValue) / 7000
-            for i in range(7001)]
-    wghts = {round(min(grid, key=lambda w: abs(forward(w) - peak)))
-             for peak in peaks}
-    return sorted(wghts)
-
 
 def static_base(scp):
     """The matched Source Code Pro VF instance as a static CID-keyed CFF
@@ -128,12 +93,8 @@ def fix_zone_order(font):
 def add_missing_from_mona(font, mona, chars, dy, k):
     """Characters Source Code Pro lacks but Monaspace has (⇔): append the
     one-cell Monaspace glyph and map it."""
-    cff = font["CFF "].cff
-    td = cff[cff.fontNames[0]]
-    cmap = font.getBestCmap()
+    td, cmap, fd_index, private, vdon = build.append_context(font)
     mona_cm, mona_gs = mona.getBestCmap(), build.mona_glyphset(mona)
-    fd_index = td.FDSelect[font.getGlyphID(cmap[ord("A")])]
-    private = td.FDArray[fd_index].Private
     new = {}
     for ch in chars:
         cp = ord(ch)
@@ -143,14 +104,10 @@ def add_missing_from_mona(font, mona, chars, dy, k):
         build.draw_clean([(mona_gs, mona_cm[cp], build.mona_transform(mona, 0, dy, k))], pen)
         name = build.alloc_glyph_name(font)
         build.append_glyph(font, td, name, pen.getCharString(private=private),
-                           fd_index, CELL, None, None)
+                           fd_index, CELL, None, vdon)
         new[cp] = name
-    for table in font["cmap"].tables:
-        if table.isUnicode():
-            for cp, name in new.items():
-                if cp <= 0xFFFF or table.format == 12:
-                    table.cmap[cp] = name
-    return new
+    build.set_cmap(font, new, add_new=True)
+    print(f"  one-cell glyphs SCP lacks, from Monaspace: {len(new)}")
 
 
 def remap_scp_stylistic_sets(font):
@@ -174,8 +131,8 @@ def credits_from(scp, mona):
 
 def use_typo_metrics(font):
     """typo == hhea (SCP ships hhea 984/-273 but typo 750/-250, which only
-    agree if nobody reads typo) and USE_TYPO_METRICS on; the win metrics
-    are widened family-wide afterwards (harmonize_win_metrics)."""
+    agree if nobody reads typo) and USE_TYPO_METRICS on. The win metrics
+    are fit_win_metrics'/harmonize_win_metrics' business."""
     hhea = font["hhea"]
     os2 = font["OS/2"]
     os2.sTypoAscender = hhea.ascent
@@ -192,7 +149,11 @@ def fit_win_metrics(font, ascent=0, descent=0):
 
 
 def harmonize_win_metrics(paths):
-    """One usWinAscent/Descent pair per family: the max over every face."""
+    """One usWinAscent/Descent pair over `paths`: the max over every one
+    of them. main() passes the whole family present in the output
+    directory, not only the faces this run built, so a filtered run (CI
+    builds Regular and Light Italic in separate steps) cannot leave the
+    family split between two pairs."""
     fonts = {p: TTFont(p) for p in paths}
     ascent = max(f["OS/2"].usWinAscent for f in fonts.values())
     descent = max(f["OS/2"].usWinDescent for f in fonts.values())
@@ -207,8 +168,7 @@ def build_face(job):
     profile, weight, ref_name, italic, env, out_dir = job
     subdir, family, ps_family, factor = PROFILES[profile]
     label = f"{weight}{' Italic' if italic else ''} [{profile}]"
-    ref = build._shcj_ref(env["SHCJ_TTC"], ref_name + (" Italic" if italic else ""))
-    target = build.bar_thickness(ref, ref.getBestCmap()[ord("=")]) * factor
+    target = build.shcj_bar_target(env["SHCJ_TTC"], ref_name, italic, factor)
     scp_src = build._vf_source(env["SCP_VF_I" if italic else "SCP_VF_U"], 1.0,
                                {"wght": 0})
     scp = scp_src.matched(target)
@@ -227,7 +187,7 @@ def build_face(job):
                             build.MONA_STANDALONE + build.MONA_AMBIGUOUS, dy, MONA_K)
     add_missing_from_mona(base, mona, build.MONA_AMBIGUOUS, dy, MONA_K)
     remap_scp_stylistic_sets(base)
-    build.add_gsub(base, added, alts, None, build.LIGATURES, None)
+    build.add_gsub(base, added, alts, build.LIGATURES)
     if "DSIG" in base:
         del base["DSIG"]
     use_typo_metrics(base)
@@ -241,20 +201,19 @@ def build_face(job):
                          family_base=family, ps_base=ps_family, base_credit=None)
     build.classify_unicode_marks(base)
     build.add_stat(base, weight, italic)
+    build.prune_orphan_names(base)
     build.update_bbox(base)
     fit_win_metrics(base)
     out_path = Path(out_dir) / subdir
     out_path.mkdir(parents=True, exist_ok=True)
     out = out_path / f"{ps}.otf"
-    base.save(out)
     # every glyph: fontTools' CFF2 instancing leaves the SCP outlines
     # without their hints (the VF's charstrings carry them inside blended
     # subroutines that the instancer flattens), so the whole font is
     # hinted here against SCP's own alignment zones
-    build.autohint_face(out, base.getGlyphOrder())
-    build.subroutinize_face(out)
+    build.write_face(base, out, base.getGlyphOrder())
     return (f"{label}: bar {target:.1f} ligs={len(added)} "
-            f"glyphs={base['maxp'].numGlyphs} -> {out.relative_to(out_dir)}", str(out))
+            f"glyphs={base['maxp'].numGlyphs} -> {out.relative_to(out_dir)}")
 
 
 def _copy_instance(scp):
@@ -266,14 +225,12 @@ def _copy_instance(scp):
     return TTFont(buf)
 
 
+VF_ENV = ("SCP_VF_U", "SCP_VF_I", "MONA_VF", "SHCJ_TTC")   # all required
+
+
 def main():
     only = sys.argv[1] if len(sys.argv) > 1 else None
-    env = {k: os.environ.get(k) for k in
-           ("SCP_VF_U", "SCP_VF_I", "MONA_VF", "SHCJ_TTC")}
-    missing = [k for k, v in env.items() if not v or not Path(v).exists()]
-    if missing:
-        sys.exit(f"missing env: {missing}")
-    env["SHOYU_VERSION"] = os.environ.get("SHOYU_VERSION")
+    env = build.env_paths(dict.fromkeys(VF_ENV))
     out_dir = build.ROOT / "dist" / "latin"
     out_dir.mkdir(parents=True, exist_ok=True)
     jobs = []
@@ -286,37 +243,29 @@ def main():
                 jobs.append((profile, weight, ref_name, italic, env, str(out_dir)))
     if not jobs:
         sys.exit(f"no face matches {only!r}")
-    outs = {p: [] for p in PROFILES}
-    failures = []
+    if only is None:
+        # a full build must not leave faces from an older roster for
+        # harmonize_win_metrics / makeotc.py to pick up (same as build.py)
+        for subdir, _, ps_family, _ in PROFILES.values():
+            for stale in static_faces(out_dir / subdir, ps_family):
+                stale.unlink()
+    built = set()
 
     def done(job, result):
-        msg, path = result
-        print(msg)
-        outs[job[0]].append(path)
+        print(result)
+        built.add(job[0])
 
-    if only:
-        for job in jobs:
-            try:
-                done(job, build_face(job))
-            except Exception as exc:
-                failures.append((job[1], job[0], exc))
-    else:
-        with concurrent.futures.ProcessPoolExecutor() as pool:
-            futures = {pool.submit(build_face, j): j for j in jobs}
-            for fut in concurrent.futures.as_completed(futures):
-                job = futures[fut]
-                try:
-                    done(job, fut.result())
-                except Exception as exc:
-                    failures.append((job[1], job[0], exc))
-    for profile, paths in outs.items():
-        if paths:
+    try:
+        build.run_faces(jobs, build_face,
+                        label=lambda job: f"{job[1]} [{job[0]}]", on_result=done)
+    finally:
+        # over every face of the family in the output directory (see
+        # harmonize_win_metrics), for the profiles this run touched
+        for profile in built:
+            subdir, _, ps_family, _ = PROFILES[profile]
+            paths = static_faces(out_dir / subdir, ps_family)
             a, d = harmonize_win_metrics(paths)
             print(f"{profile}: win metrics {a}/{d} over {len(paths)} faces")
-    if failures:
-        for weight, profile, exc in failures:
-            print(f"FAILED {weight} [{profile}]: {exc!r}", file=sys.stderr)
-        sys.exit(f"{len(failures)}/{len(jobs)} faces failed")
 
 
 if __name__ == "__main__":

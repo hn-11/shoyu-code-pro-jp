@@ -9,7 +9,6 @@ import uharfbuzz as hb
 from fontTools.fontBuilder import FontBuilder
 from fontTools.misc.roundTools import otRound
 from fontTools.pens.t2CharStringPen import T2CharStringPen
-from fontTools.pens.ttGlyphPen import TTGlyphPen
 from fontTools.ttLib import newTable
 from fontTools.ttLib.tables import otTables
 
@@ -17,6 +16,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import build  # noqa: E402
+from conftest import make_font  # noqa: E402
 
 # --- SCP feature tag remapping -------------------------------------------
 
@@ -451,18 +451,8 @@ def test_mona_glyphset_only_erodes_when_floor_was_hit():
 # --- tiny TTF fixtures for the tests below --------------------------------
 
 def _tt_font(glyph_order, cmap, widths, ascent=800, descent=-200):
-    """A minimal, empty-outline FontBuilder TTF — enough for GSUB/OS2/post
-    plumbing tests. `widths`: {glyph name: advance}, lsb always 0."""
-    fb = FontBuilder(1000, isTTF=True)
-    fb.setupGlyphOrder(list(glyph_order))
-    fb.setupCharacterMap(cmap)
-    fb.setupGlyf({g: TTGlyphPen(None).glyph() for g in glyph_order})
-    fb.setupHorizontalMetrics({g: (widths.get(g, 0), 0) for g in glyph_order})
-    fb.setupHorizontalHeader(ascent=ascent, descent=descent)
-    fb.setupNameTable({"familyName": "Test", "styleName": "Regular"})
-    fb.setupOS2()
-    fb.setupPost()
-    return fb.font
+    """conftest.make_font with this file's argument order (see there)."""
+    return make_font(glyph_order, cmap, widths, ascent=ascent, descent=descent)
 
 
 # --- _guard_subtables: the DirectWrite-safe context guards ---------------
@@ -605,7 +595,7 @@ def gsub_font_bytes():
         ">=": {"cells": 2, "glyphs": ["ge"], "group": "ss01"},
     }
     added = {"->": "lig_hg", "-->": "lig_hhg", "<-": "lig_lh", ">=": "lig_ge"}
-    build.add_gsub(font, added, {}, {}, ligatures, {})
+    build.add_gsub(font, added, {}, ligatures, {}, {})
 
     buf = io.BytesIO()
     font.save(buf)
@@ -885,3 +875,141 @@ def test_stretch_path_shortens_the_shaft(axis):
     length = (lambda b: b[2] - b[0]) if axis == 0 else (lambda b: b[3] - b[1])
     assert length(b1) == pytest.approx(length(b0) - 40)
     assert abs(out.area) == pytest.approx(abs(src.area) - 40 * 20)
+
+
+# --- set_cmap / HALFWIDTH_FORMS / env_paths / run_faces --------------------
+
+def test_set_cmap_replaces_existing_and_adds_only_when_asked():
+    font = _tt_font([".notdef", "a", "b", "c"], {0x61: "a", 0x10000: "b"},
+                    {"a": 600, "b": 600, "c": 600})
+    formats = {t.format for t in font["cmap"].tables if t.isUnicode()}
+    assert formats == {4, 12}   # BMP-only and full-range subtables
+    build.set_cmap(font, {0x61: "c", 0x62: "c"})
+    for t in font["cmap"].tables:
+        assert t.cmap[0x61] == "c"
+        assert 0x62 not in t.cmap            # not added without add_new
+    build.set_cmap(font, {0x62: "c", 0x10001: "c"}, add_new=True)
+    for t in font["cmap"].tables:
+        assert t.cmap[0x62] == "c"
+        assert (0x10001 in t.cmap) == (t.format == 12)   # BMP-only skips it
+
+
+def test_halfwidth_forms_cover_every_halfwidth_codepoint():
+    """Unicode's East Asian Width 'H' set is exactly what fit_halfwidth_forms
+    re-centres — including ￩ U+FFE9 and its neighbours past U+FFDC."""
+    import unicodedata
+    covered = {cp for lo, hi in build.HALFWIDTH_FORMS for cp in range(lo, hi + 1)}
+    halfwidth = {cp for cp in range(0xFF00, 0xFFF0)
+                 if unicodedata.east_asian_width(chr(cp)) == "H"}
+    assert halfwidth <= covered
+    assert 0xFFE9 in covered
+
+
+def test_env_paths_reads_defaults_and_exits_on_missing(tmp_path, monkeypatch, capsys):
+    a, b = tmp_path / "a", tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
+    monkeypatch.setenv("SHS_DIR", str(a))
+    monkeypatch.delenv("SHCJ_TTC", raising=False)
+    monkeypatch.setenv("SHOYU_VERSION", "9.9.9")
+    env = build.env_paths({"SHS_DIR": None, "SHCJ_TTC": str(b)})
+    assert env == {"SHS_DIR": str(a), "SHCJ_TTC": str(b), "SHOYU_VERSION": "9.9.9"}
+    monkeypatch.setenv("SHCJ_TTC", str(tmp_path / "nowhere"))
+    monkeypatch.delenv("SHS_DIR")
+    with pytest.raises(SystemExit, match=r"missing env: \['SHS_DIR', 'SHCJ_TTC'\]"):
+        build.env_paths({"SHS_DIR": None, "SHCJ_TTC": str(b)})
+
+
+_SEEN_IN_THIS_PROCESS = []
+
+
+def _face_worker(job):
+    if job == "bad":
+        raise KeyError("reference face not found")
+    _SEEN_IN_THIS_PROCESS.append(job)   # visible to the test only if in-process
+    return f"built {job}"
+
+
+def test_run_faces_collects_every_failure_across_the_pool(capsys):
+    results = []
+    with pytest.raises(SystemExit, match="1/3 faces failed"):
+        build.run_faces(["x", "bad", "y"], _face_worker,
+                        label=lambda j: f"{j} [base]",
+                        on_result=lambda j, r: results.append(r))
+    assert sorted(results) == ["built x", "built y"]   # the failure did not stop the run
+    assert "FAILED bad [base]: KeyError('reference face not found')" in capsys.readouterr().err
+
+
+def test_run_faces_small_run_stays_in_process(capsys):
+    results = []
+    _SEEN_IN_THIS_PROCESS.clear()
+    with pytest.raises(SystemExit, match="1/2 faces failed"):
+        build.run_faces(["bad", "y"], _face_worker,
+                        label=lambda j: j, on_result=lambda j, r: results.append(r))
+    assert results == ["built y"]
+    assert _SEEN_IN_THIS_PROCESS == ["y"]           # the worker ran here
+    err = capsys.readouterr().err
+    assert "FAILED bad: KeyError" in err
+    assert "Traceback" in err and "_face_worker" in err   # the traceback survives
+
+
+def test_run_faces_larger_run_uses_the_pool():
+    _SEEN_IN_THIS_PROCESS.clear()
+    build.run_faces(["x", "y", "z"], _face_worker,
+                    label=lambda j: j, on_result=lambda j, r: None)
+    assert _SEEN_IN_THIS_PROCESS == []               # the workers ran elsewhere
+
+
+def test_run_faces_result_handler_errors_are_not_face_failures():
+    def boom(job, result):
+        raise RuntimeError("handler bug")
+    with pytest.raises(RuntimeError, match="handler bug"):
+        build.run_faces(["x"], _face_worker, label=lambda j: j, on_result=boom)
+
+
+# --- referenced_name_ids / prune_orphan_names -------------------------------
+
+def _font_with_named_tables():
+    """A mini font whose STAT, fvar and a GSUB FeatureParams all point at
+    name records, plus three records nothing points at."""
+    font = _tt_font([".notdef", "a"], {0x61: "a"}, {"a": 600})
+    name = font["name"]
+    build.add_stat(font, ["Regular", "Bold"], italic=False)   # STAT names
+    fb = FontBuilder(font=font)
+    fb.setupFvar([("wght", 300, 400, 900, "Weight")],
+                 [{"location": {"wght": 400}, "stylename": "Regular",
+                   "postscriptfontname": "Test-Regular"}])
+    font["GSUB"] = newTable("GSUB")
+    font["GSUB"].table = _empty_gsub_table()
+    fp = otTables.FeatureParamsStylisticSet()
+    fp.Version, fp.UINameID = 0, 300
+    name.setName("Alt forms", 300, 3, 1, 0x409)
+    build._add_feature(font["GSUB"].table, "ss01", [])
+    font["GSUB"].table.FeatureList.FeatureRecord[0].Feature.FeatureParams = fp
+    for nid, text in ((301, "Upright"), (302, "Weight"), (303, "leftover")):
+        name.setName(text, nid, 3, 1, 0x409)
+    return font
+
+
+def test_referenced_name_ids_covers_stat_fvar_and_feature_params():
+    font = _font_with_named_tables()
+    used = build.referenced_name_ids(font)
+    stat = font["STAT"].table
+    for av in stat.AxisValueArray.AxisValue:
+        assert av.ValueNameID in used
+    assert all(ax.AxisNameID in used for ax in stat.DesignAxisRecord.Axis)
+    inst = font["fvar"].instances[0]
+    assert {inst.subfamilyNameID, inst.postscriptNameID} <= used
+    assert 300 in used
+    assert not {301, 302, 303} & used
+
+
+def test_prune_orphan_names_drops_only_the_unreferenced_high_ids():
+    font = _font_with_named_tables()
+    before = {r.nameID for r in font["name"].names}
+    assert build.prune_orphan_names(font) == [301, 302, 303]
+    after = {r.nameID for r in font["name"].names}
+    assert before - after == {301, 302, 303}
+    assert font["name"].getDebugName(300) == "Alt forms"   # still referenced
+    assert font["name"].getDebugName(1) == "Test"          # < 256 untouched
+    assert build.prune_orphan_names(font) == []            # idempotent

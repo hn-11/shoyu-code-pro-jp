@@ -36,14 +36,14 @@ import json
 import sys
 from pathlib import Path
 
-import uharfbuzz as hb
 from fontTools.pens.boundsPen import BoundsPen
 from fontTools.pens.recordingPen import RecordingPen
 from fontTools.ttLib import TTFont
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "scripts"))
+from verifylib import glyph_has_hint, make_shaper  # noqa: E402
 
-HINT_OPS = {"hstem", "vstem", "hstemhm", "vstemhm", "hintmask", "cntrmask"}
 HINT_CHARS = "Aax=日"
 
 FEATURE_SETS = [
@@ -101,7 +101,6 @@ class Reporter:
 
 
 def build_corpus():
-    sys.path.insert(0, str(ROOT / "scripts"))
     from verify import CASES
 
     with open(ROOT / "data" / "mona_ligs.json", encoding="utf-8") as f:
@@ -118,18 +117,6 @@ def build_corpus():
     return uniq
 
 
-def make_shaper(path):
-    font = hb.Font(hb.Face(hb.Blob.from_file_path(str(path))))
-
-    def shape(text, feats):
-        buf = hb.Buffer()
-        buf.add_str(text)
-        buf.guess_segment_properties()
-        hb.shape(font, buf, feats)
-        return list(buf.glyph_infos), list(buf.glyph_positions)
-    return shape
-
-
 def feature_tags(tf, table_tag):
     if table_tag not in tf:
         return None
@@ -137,37 +124,6 @@ def feature_tags(tf, table_tag):
     if table.FeatureList is None:
         return set()
     return {fr.FeatureTag for fr in table.FeatureList.FeatureRecord}
-
-
-def _bias(n):
-    return 107 if n < 1240 else 1131 if n < 33900 else 32768
-
-
-def glyph_has_hint(cs, local_subrs=None, global_subrs=None, seen=None):
-    """Does this charstring carry a hint op, following callsubr/callgsubr?"""
-    cs.decompile()
-    if seen is None:
-        local_subrs = list(getattr(cs.private, "Subrs", []) or [])
-        global_subrs = cs.globalSubrs
-        seen = set()
-    stack = []
-    for tok in cs.program:
-        if isinstance(tok, str):
-            if tok in HINT_OPS:
-                return True
-            if tok in ("callsubr", "callgsubr") and stack:
-                subrs = local_subrs if tok == "callsubr" else global_subrs
-                n = len(subrs)
-                idx = int(stack[-1]) + _bias(n)
-                key = (tok, idx)
-                if 0 <= idx < n and key not in seen:
-                    seen.add(key)
-                    if glyph_has_hint(subrs[idx], local_subrs, global_subrs, seen):
-                        return True
-            stack = []
-        elif isinstance(tok, (int, float)):
-            stack.append(tok)
-    return False
 
 
 def check_cmap(rep, cmap_g, cmap_c):

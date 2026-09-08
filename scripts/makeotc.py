@@ -9,6 +9,7 @@ tables and identical structures collapse).
 from pathlib import Path
 
 from fontTools.ttLib import TTCollection, TTFont
+from verifylib import static_faces  # scripts/ is on sys.path (script dir)
 
 DIST = Path(__file__).resolve().parent.parent / "dist"
 LATIN = DIST / "latin"
@@ -73,7 +74,7 @@ def check_cmap_parity(fam, faces, fonts):
 def main():
     for fam in FAMILIES:
         src = SRC_DIR.get(fam, DIST)
-        faces = sorted(src.glob(f"{fam}-*.otf"), key=lambda p: face_key(p, fam))
+        faces = sorted(static_faces(src, fam), key=lambda p: face_key(p, fam))
         if not faces:
             print(f"skip {fam}: no faces")
             continue

@@ -15,7 +15,6 @@ import os
 import sys
 from pathlib import Path
 
-import uharfbuzz as hb
 from fontTools.pens.boundsPen import BoundsPen
 from fontTools.ttLib import TTFont
 from fontTools.varLib.instancer import instantiateVariableFont
@@ -24,6 +23,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 import build  # noqa: E402
 import build_latin_vf  # noqa: E402
+from verifylib import Checker, make_shaper  # noqa: E402
 
 FONT = Path(sys.argv[1]) if len(sys.argv) > 1 else (
     ROOT / "dist" / "latin" / "SumiMoji[wght].otf")
@@ -34,15 +34,6 @@ FONT = Path(sys.argv[1]) if len(sys.argv) > 1 else (
 # and a 4-cell true ligature ("<!--", added in 3.3 — see CHANGELOG).
 LIG_CASES = [("a -> b", 5), ("->>", 3), ("<!--", 1)]
 WEIGHTS = ["Light", "Normal", "Regular", "Medium", "Bold", "Heavy"]
-
-
-def shape(font_bytes, text, feats):
-    hbfont = hb.Font(hb.Face(hb.Blob(font_bytes)))
-    buf = hb.Buffer()
-    buf.add_str(text)
-    buf.guess_segment_properties()
-    hb.shape(hbfont, buf, feats)
-    return list(buf.glyph_infos)
 
 
 def bounds(font, ch):
@@ -66,7 +57,8 @@ def scp_reference(italic):
         return None, None
     scp = TTFont(path)
     weight_pos = {w: round(v, 2) for w, v in
-                  build_latin_vf.weight_positions(scp, shcj, italic).items()}
+                  build_latin_vf.weight_positions(build_latin_vf.scp_source(path),
+                                                  shcj, italic).items()}
     design, breaks = build_latin_vf.scp_design_axis(scp)
     axis = next(a for a in scp["fvar"].axes if a.axisTag == "wght")
     _, _, _, _, to_scp = build_latin_vf.user_axis(weight_pos, design, breaks,
@@ -90,27 +82,23 @@ def instance_bytes(vf, location):
 
 def main():
     tf = TTFont(str(FONT))
-    failed = False
-
-    def check(ok, msg):
-        nonlocal failed
-        print(f"{'ok  ' if ok else 'FAIL'} {msg}")
-        failed |= not ok
+    check = Checker()
 
     name = tf["name"]
-    check("fvar" in tf, "fvar present")
-    axis = next((a for a in tf["fvar"].axes if a.axisTag == "wght"), None)
-    check(axis is not None, "fvar has a wght axis")
-    if axis is not None:
-        check((axis.minValue, axis.maxValue) == (200, 900),
-              f"wght axis range {axis.minValue:.0f}-{axis.maxValue:.0f} (want 200-900)")
-        check(axis.defaultValue == build.WEIGHT_CLASS["Regular"],
-              f"wght axis default {axis.defaultValue:.0f} (want 400 = Regular)")
-        check(tf["OS/2"].usWeightClass == axis.defaultValue,
-              f"OS/2 usWeightClass {tf['OS/2'].usWeightClass} == fvar default")
+    axis = (next((a for a in tf["fvar"].axes if a.axisTag == "wght"), None)
+            if "fvar" in tf else None)
+    if not check(axis is not None, "fvar present with a wght axis"):
+        print("FAILED (not a variable font; nothing else to check)")
+        sys.exit(1)
+    check((axis.minValue, axis.maxValue) == (200, 900),
+          f"wght axis range {axis.minValue:.0f}-{axis.maxValue:.0f} (want 200-900)")
+    check(axis.defaultValue == build.WEIGHT_CLASS["Regular"],
+          f"wght axis default {axis.defaultValue:.0f} (want 400 = Regular)")
+    check(tf["OS/2"].usWeightClass == axis.defaultValue,
+          f"OS/2 usWeightClass {tf['OS/2'].usWeightClass} == fvar default")
     check("avar" in tf and "wght" in tf["avar"].segments,
           "avar maps the usWeightClass axis onto SCP's bar-matched wghts")
-    instances = tf["fvar"].instances if "fvar" in tf else []
+    instances = tf["fvar"].instances
     styles = [name.getDebugName(i.subfamilyNameID) for i in instances]
     check(len(instances) == 6, f"{len(instances)} named instances (want 6): {styles}")
     want_coords = [float(build.WEIGHT_CLASS[w]) for w in WEIGHTS]
@@ -162,6 +150,45 @@ def main():
     check((os2.sTypoAscender, os2.sTypoDescender, os2.sTypoLineGap)
           == (hhea.ascent, hhea.descent, hhea.lineGap) and os2.fsSelection & 0x80,
           "typo metrics == hhea metrics, USE_TYPO_METRICS set")
+    # head / hhea extents must hold every instance, not just the default
+    # one a CFF2 glyph set draws (build_latin_vf.py unions the masters):
+    # the union of the whole glyph set at both axis ends and the default
+    # (unrounded instancing: the instancer's per-operand rounding drifts
+    # an outline by up to 1u along a path, see build_latin_vf.py)
+    union = rsb = None
+    for w in (axis.minValue, axis.defaultValue, axis.maxValue):
+        with build_latin_vf.unrounded_cff2_instancing():
+            inst = instantiateVariableFont(tf, {"wght": w}, inplace=False)
+        gs, metrics = inst.getGlyphSet(), inst["hmtx"].metrics
+        for g in inst.getGlyphOrder():
+            pen = BoundsPen(gs)
+            gs[g].draw(pen)
+            if pen.bounds is None:
+                continue
+            union = pen.bounds if union is None else tuple(
+                f(a, b) for f, a, b in zip((min, min, max, max), union, pen.bounds))
+            right = metrics[g][0] - pen.bounds[2]
+            rsb = right if rsb is None else min(rsb, right)
+    # the box is the integer union over the MASTERS; an instance can sit a
+    # hair past it (16.16 deltas, the merge's 0.01 rounding tolerance —
+    # 0.002u measured); 0.05u leaves headroom for that and still catches
+    # a floor/ceil taken the wrong way (a whole unit)
+    eps = 0.05
+    head = tf["head"]
+    box = (head.xMin, head.yMin, head.xMax, head.yMax)
+    if not check(union is not None, "the instances draw some outline"):
+        union = (0, 0, 0, 0)
+    outline = tuple(round(v, 3) for v in union)
+    check(box[0] - eps <= outline[0] and box[1] - eps <= outline[1]
+          and box[2] + eps >= outline[2] and box[3] + eps >= outline[3],
+          f"head bbox {box} holds every instance's outlines {outline}")
+    check(hhea.xMaxExtent + eps >= outline[2],
+          f"hhea.xMaxExtent {hhea.xMaxExtent} >= the widest instance outline {outline[2]}")
+    check(hhea.minLeftSideBearing - eps <= outline[0],
+          f"hhea.minLeftSideBearing {hhea.minLeftSideBearing} <= leftmost outline {outline[0]}")
+    check(rsb is not None and hhea.minRightSideBearing - eps <= rsb,
+          f"hhea.minRightSideBearing {hhea.minRightSideBearing} <= smallest right side "
+          f"bearing {None if rsb is None else round(rsb, 3)}")
 
     # every named instance: shape the ligature cases, same as the static
     # faces (verify_latin.py / verify.py CASES), on the IN-MEMORY instanced
@@ -180,7 +207,7 @@ def main():
         loc = dict(inst_desc.coordinates)
         inst_font, data = instance_bytes(tf, loc)
         for text, want in LIG_CASES:
-            got = len(shape(data, text, on))
+            got = len(make_shaper(data)(text, on)[0])
             check(got == want, f"[{style}, wght={loc.get('wght', '?'):.0f}] "
                                f"{text!r}: {got} glyphs (want {want})")
         # the matching static face (build_latin.py): same '=' bar (this is
@@ -234,8 +261,8 @@ def main():
     else:
         print("  (skip SCP exactness check: set SCP_VF_U / SCP_VF_I and SHCJ_TTC)")
 
-    print("FAILED" if failed else "all checks passed")
-    sys.exit(1 if failed else 0)
+    print("FAILED" if check.failed else "all checks passed")
+    sys.exit(check.exit_code())
 
 
 if __name__ == "__main__":

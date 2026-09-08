@@ -184,7 +184,7 @@ cmap・GSUB の shaping 結果が roundoff（±1〜2ユニット）を除いて�
 1. ✅ デザインスペース: SCP VF 自身のマスター位置——**wght 200 / 400**
    （事前の見積りは「約 458」だったが、CFF2 の VarStore 領域のピークを
    avar/fvar 経由で逆算すると実際は 400 だった。決め打ちせず
-   `build_latin.confirm_scp_master_wghts` が毎回読み直す）に **Regular
+   `build_latin_vf.confirm_scp_master_wghts` が毎回読み直す）に **Regular
    と Heavy の位置**（既定マスターと軸の上限。SCP の 900 マスターは上限
    の外）と **Monaspace の下限位置**（Monaspace の wght 200 のバーが
    SCP のバーと一致する SCP wght。これより細い側は Monaspace が下限で
@@ -216,8 +216,8 @@ cmap・GSUB の shaping 結果が roundoff（±1〜2ユニット）を除いて�
    静的版の STAT と同じ usWeightClass の値（300/350/400/500/700/900、
    既定 400 = Regular で OS/2 usWeightClass と一致）で、avar が各値を
    段階 1 と同じ「SHCJ の `=` バー×600/667」に一致する SCP wght
-   （実測: Upright 317/374/406/546/669/857、Italic 317/378/399/538/
-   662/841）へ写す（`user_axis`。SCP 自身の avar の折れ点も引き戻して
+   （実測: Upright 317/374/406/545/670/857、Italic 317/377/399/538/
+   661/841）へ写す（`user_axis`。SCP 自身の avar の折れ点も引き戻して
    写像に含めるので、名前付きインスタンスの間でも SCP と厳密に一致
    する——`verify_latin_vf.py` が SCP_VF_U/I を指す環境で検証）。
    name テーブルは SCP VF 自身の慣習（`SourceCodeVF-Upright.otf` /
@@ -251,7 +251,7 @@ cmap・GSUB の shaping 結果が roundoff（±1〜2ユニット）を除いて�
 - **太さの線形性**: SHCJ の各面に対する wght の一致点は二分探索で求めている。
   SCP 側は設計座標を SCP の avar で線形化してあるので中間ウェイトでも
   厳密に一致する（実装済み、`verify_latin_vf.py` で検証）。Monaspace 側は
-  4 マスターの間で線形補間になるため、名前付きインスタンスの間では
+  5 マスターの間で線形補間になるため、名前付きインスタンスの間では
   SCP との太さ一致に 1u 程度のずれが出うる。超える場合はマスターを増やす
   ——実測では Regular 実インスタンスのバー厚が静的版に対し ±1u 以内
   （`scripts/verify_latin_vf.py` で継続確認）
