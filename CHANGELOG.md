@@ -67,23 +67,24 @@
   `getGlyphSet(location=)` のアウトラインと HarfBuzz の variations で
   各位置を検証する（61 秒 → 2 秒）。`makeotc.py` はファミリーごとに
   プロセスを分ける。
-  ワークフローはマトリクスに分割: CI は Regular / Regular Italic /
-  Light Italic の各面を 1 ジョブ 1 面（9 ジョブ）、可変フォント、Sumi Moji
-  Regular への Nerd Fonts パッチ（記号セット 1 つ: `SHOYU_NERD_SETS`。
-  `--complete` は面の大きさによらず 1 面 1 分かかるため、全面・全セットは
-  リリースで）を並列に組んで 1 分程度（`upstream-sync.yml` の
-  `REQUIRED_CHECKS` はこのジョブ名一覧）。リリースはウェイト × 書体の
-  12 ジョブがそれぞれ Latin ドナー・JP 3 面・NF パッチ（Sumi Moji の
-  パッチは JP 面のビルドと並行）まで組んで `verify_many.py` で並列に
-  検証し、可変フォント 2 ジョブと並行、`package` ジョブが
-  アーティファクトを集めて Sumi Moji（静的・NF）の usWinAscent/Descent
-  をファミリー全体で揃え（`harmonize_latin.py`）、VF を静的面と
-  突き合わせ、TTC・zip・リリースを作る。FontForge は apt ではなく
-  展開済みの AppImage をキャッシュして使う（12〜15 秒 → 1 秒）。
-  面フィルタは語の組み合わせになり、「Light Upright」「Regular Upright
-  Term」「Regular Italic base」のように書体（Upright / Italic）と変種を
-  絞れる（`build_latin.py` では `ship` / `term`）。共通の準備手順は
-  `.github/actions/setup-build`
+  ワークフローはマトリクスに分割（同時に走るジョブは 10 前後が上限で、
+  それを超えると待ちが出る）: CI は Regular Upright / Regular Italic /
+  Light Italic をそれぞれ 1 ジョブ（全ファミリーの面を並列に組む）、
+  可変フォントと Sumi Moji Regular への Nerd Fonts パッチ（記号セット
+  1 つ: `SHOYU_NERD_SETS`。`--complete` は面の大きさによらず 1 面 1 分
+  かかるため、全面・全セットはリリースで）を 1 ジョブ、の 5 ジョブで
+  1 分程度（`upstream-sync.yml` の `REQUIRED_CHECKS` はこのジョブ名
+  一覧）。リリースはファミリー × ウェイト 2 つ組の 9 ジョブがそれぞれ
+  Latin ドナー 4 面・JP 4 面・NF パッチ（Sumi Moji のパッチは JP 面の
+  ビルドと並行）まで組んで `verify_many.py` で並列に検証し、`package`
+  ジョブが可変フォント 2 本を組み、アーティファクトを集めて Sumi Moji
+  （静的・NF）の usWinAscent/Descent をファミリー全体で揃え
+  （`harmonize_latin.py`）、VF を静的面と突き合わせ、TTC・zip・リリースを
+  作る。FontForge は apt ではなく展開済みの AppImage をキャッシュして
+  使う（12〜15 秒 → 1 秒）。面フィルタは語の組み合わせになり、
+  「Light Upright」「Regular Upright Term」「Light Normal base」のように
+  書体（Upright / Italic）・変種・複数ウェイトを絞れる（`build_latin.py`
+  では `ship` / `term`）。共通の準備手順は `.github/actions/setup-build`
 - Sumi Moji 静的面（とその VF のマスター）の hmtx 左サイドベアリングが
   SCP VF の既定マスター（wght 200）の値のままだった（CFF の lsb は
   fontTools が保守しない。インスタンス化でアウトラインだけ動く）。

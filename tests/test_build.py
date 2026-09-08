@@ -158,7 +158,13 @@ def test_rescaled_advance_all_ligature_widths():
     ("Regular Upright base", "Regular", "Regular", "", True),
     ("Regular Upright base", "Regular", "Regular", "35", False),
     ("Semibold", "Bold", "Bold", "", False),  # not a weight, suffix or style
-    ("Regular Term Extra", "Regular", "Regular", "Term", False),
+    ("Regular Term Extra", "Regular", "Regular", "Term", True),   # "Extra": a variant nobody has
+    ("Regular Extra", "Regular", "Regular", "Term", False),
+    ("Light Normal base", "Normal", "Normal Italic", "", True),   # either weight
+    ("Light Normal base", "Regular", "Regular", "", False),
+    ("Light Normal Term 35", "Light", "Light", "35", True),      # either variant
+    ("Light Normal Term 35", "Light", "Light", "", False),
+    ("Upright Italic Bold", "Bold", "Bold Italic", "Term", True),
 ])
 def test_face_matches(only, weight, label, suffix, want):
     assert build.face_matches(only, weight, label, suffix) is want

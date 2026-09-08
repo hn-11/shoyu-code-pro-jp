@@ -2,12 +2,13 @@
 # x 3 families = 36 faces plus the 12 Sumi Moji statics and the two
 # variable fonts), verify, Nerd-patch everything, zip, GitHub release.
 #
-# One weight and style per job — its Latin donors, its three JP faces,
-# their Nerd Fonts patches (the Sumi Moji one patched while the JP faces
-# build), verified side by side and uploaded as an artifact — with the two
-# variable fonts built beside them; the package job assembles dist/ from
-# the artifacts, harmonizes the Latin families' win metrics (a per-job
-# build never sees a family whole), bundles the collections and publishes.
+# A family's two weights per job — its Latin donors, its four JP faces,
+# their Nerd Fonts patches and a share of the Sumi Moji ones (patched
+# while the JP faces build), verified side by side and uploaded as an
+# artifact; the package job builds the two variable fonts, assembles
+# dist/ from the artifacts, harmonizes the Latin families' win metrics (a
+# per-job build never sees a family whole), bundles the collections and
+# publishes.
 name: Release
 on:
   push:
@@ -26,36 +27,60 @@ permissions:
 env:
   SHOYU_VERSION_TAG: ${{ inputs.tag || github.ref_name }}
 jobs:
+  # a family's two weights, both styles, per job (nine jobs: more than
+  # about ten queue behind each other): its four Latin donors, its four
+  # JP faces, and the Nerd Fonts patches — the JP faces' own, plus two of
+  # the Sumi Moji faces (base: upright, 35: italic) patched while the JP
+  # faces build
   faces:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        weight: [Light, Normal, Regular, Medium, Bold, Heavy]
-        style: [Upright, Italic]
-    name: faces (${{ matrix.weight }} ${{ matrix.style }})
+        family: [base, 35, Term]
+        weights: [Light Normal, Regular Medium, Bold Heavy]
+        include:
+          - family: base
+            latin: ship
+            latin_nf: upright
+          - family: 35
+            latin: ship
+            latin_nf: italic
+          - family: Term
+            latin: term
+    name: faces (${{ matrix.family }} ${{ matrix.weights }})
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: ./.github/actions/setup-build
         with:
           fontforge: "true"
       - run: echo "SHOYU_VERSION=${SHOYU_VERSION_TAG#v}" >> "$GITHUB_ENV"
-      - run: python scripts/build_latin.py "${{ matrix.weight }} ${{ matrix.style }}"
-      - name: Build the JP faces, patching Sumi Moji meanwhile
+      - run: python scripts/build_latin.py "${{ matrix.weights }} ${{ matrix.latin }}"
+      - name: Build the JP faces and patch everything
+        env:
+          LATIN_NF: ${{ matrix.latin_nf }}
         run: |
-          python scripts/nerdpatch.py FontPatcher SumiMoji- > nerd-latin.log 2>&1 &
-          latin=$!
-          python scripts/build.py "${{ matrix.weight }} ${{ matrix.style }}"
-          python scripts/nerdpatch.py FontPatcher ShoyuCodeProJP
-          wait $latin || { cat nerd-latin.log; exit 1; }
-          cat nerd-latin.log
+          latin=
+          if [ -n "$LATIN_NF" ]; then
+            faces=$(for w in ${{ matrix.weights }}; do
+              echo "dist/latin/SumiMoji-$w$([ "$LATIN_NF" = italic ] && echo Italic).otf"
+            done)
+            python scripts/nerdpatch.py FontPatcher $faces > nerd-latin.log 2>&1 &
+            latin=$!
+          fi
+          python scripts/build.py "${{ matrix.weights }} ${{ matrix.family }}"
+          python scripts/nerdpatch.py FontPatcher dist/*.otf
+          if [ -n "$latin" ]; then
+            wait $latin || { cat nerd-latin.log; exit 1; }
+            cat nerd-latin.log
+          fi
       - run: >-
           python scripts/verify_many.py
-          dist/*.otf dist/nerd/*.otf dist/latin/*.otf dist/nerd/latin/*.otf
+          'dist/*.otf' 'dist/nerd/*.otf' 'dist/latin/*.otf' 'dist/nerd/latin/*.otf'
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: faces-${{ matrix.weight }}-${{ matrix.style }}
+          name: faces-${{ matrix.family }}-${{ strategy.job-index }}
           path: |
             dist/*.otf
             dist/latin/*.otf
@@ -64,48 +89,21 @@ jobs:
             dist/nerd/latin/*.otf
           if-no-files-found: error
           retention-days: 7
-  variable:
+  # the two variable fonts (built here, beside the download: a quarter
+  # minute), the faces from the artifacts, then the bundles and the release
+  package:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - style: upright
-            font: SumiMoji[wght].otf
-          - style: italic
-            font: SumiMoji-Italic[wght].otf
-    name: variable (${{ matrix.style }})
+    timeout-minutes: 15
+    needs: faces
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: ./.github/actions/setup-build
       - run: echo "SHOYU_VERSION=${SHOYU_VERSION_TAG#v}" >> "$GITHUB_ENV"
-      - run: python scripts/build_latin_vf.py ${{ matrix.style }}
-      # against Source Code Pro itself here; the comparison with the static
-      # faces runs in the package job, where both are present
-      - run: python scripts/verify_latin_vf.py "dist/latin/${{ matrix.font }}"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: variable-${{ matrix.style }}
-          path: dist/latin/*.otf
-          if-no-files-found: error
-          retention-days: 7
-  package:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    needs: [faces, variable]
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: ./.github/actions/setup-build
+      - run: python scripts/build_latin_vf.py
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: faces-*
           path: dist
-          merge-multiple: true
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          pattern: variable-*
-          path: dist/latin
           merge-multiple: true
       - run: python scripts/harmonize_latin.py
       - name: Verify the variable fonts against the static faces

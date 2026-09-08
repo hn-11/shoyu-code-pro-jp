@@ -34,13 +34,13 @@ for anyone who wants it back.
 
 Usage:
   python scripts/build.py [FILTER]
-  FILTER is a run of words a face must all match: a weight name ("Bold"),
-  a style ("Italic" / "Upright") or a variant ("35" / "Term" / "base" for
-  the suffix-less family; "" alone is that family). "Regular" takes
-  Regular and Regular Italic of every family, "Light Italic" one face per
-  family, "Light Upright Term" one face (CI builds a face per job, the
-  release a weight and style per job). Whole words, never a substring
-  match (see face_matches).
+  FILTER is a run of words: weight names ("Bold"), styles ("Italic" /
+  "Upright") and variants ("35" / "Term" / "base" for the suffix-less
+  family; "" alone is that family). A face must be one of the words of
+  every kind named: "Regular" takes Regular and Regular Italic of every
+  family, "Light Italic" one face per family, "Light Upright Term" one
+  face, "Light Normal base" four (the release builds a family's two
+  weights per job). Whole words, never a substring match (face_matches).
   With no FILTER, dist/ShoyuCodeProJP*.otf is cleared before building, so a
   full build never leaves faces from an older roster behind. A filtered run
   never deletes anything.
@@ -2344,36 +2344,37 @@ class _WarningCounter(logging.Handler):
 
 
 def face_matches(only, weight, face_label, suffix):
-    """Command-line filter: words, every one of which the face must match.
-    A weight name ("Regular"), the style words "Italic" / "Upright", or a
-    variant suffix ("Term", "35", or "base" for the suffix-less family;
-    "" alone is that family too).
-    So "Regular" takes Regular and Regular Italic, "Light Italic" one
-    face per family, "Light Upright Term" exactly one face (the release
-    workflow builds one weight and style per job) — whole words only,
-    never a substring match, and a word that is none of these matches
-    nothing."""
+    """Command-line filter: words of three kinds — weight names
+    ("Regular"), the styles "Italic" / "Upright", and variants ("Term",
+    "35", or "base" for the suffix-less family; "" alone is that family
+    too). A face matches when, for every kind named, it is one of the
+    words of that kind: "Regular" takes Regular and Regular Italic of
+    every family, "Light Italic" one face per family, "Light Upright
+    Term" exactly one face, "Light Normal base" four (the release
+    workflow builds a family's two weights per job). Whole words only,
+    never a substring match; a word that is none of these is a variant
+    nobody has, so on its own it matches nothing."""
     if only is None:
         return True
     words = only.split()
     if not words:
         return suffix == ""
-    italic = face_label.endswith(" Italic")
     weights = {w for w, _, _ in FACES}
+    styles = {"Italic", "Upright"}
+    kinds = {"weight": [], "style": [], "variant": []}
     for word in words:
-        if word == "Italic":
-            ok = italic
-        elif word == "Upright":
-            ok = not italic
-        elif word in weights:
-            ok = word == weight
+        if word in weights:
+            kinds["weight"].append(word)
+        elif word in styles:
+            kinds["style"].append(word)
         elif word == "base":
-            ok = suffix == ""     # the suffix-less family, next to other words
+            kinds["variant"].append("")
         else:
-            ok = word == suffix
-        if not ok:
-            return False
-    return True
+            kinds["variant"].append(word)
+    style = "Italic" if face_label.endswith(" Italic") else "Upright"
+    return all(value in named for value, named in
+               ((weight, kinds["weight"]), (style, kinds["style"]), (suffix, kinds["variant"]))
+               if named)
 
 
 def env_paths(spec):

@@ -1,9 +1,10 @@
-# Gate for every push/PR, in about a minute: every Regular face (upright and
-# italic), the Light Italic faces (the erosion path), the variable Sumi
-# Moji and a Nerd Fonts patch, one face per job, each assembled from the
-# live upstreams. upstream-sync.yml waits on these jobs by name
-# (REQUIRED_CHECKS there): renaming one here means renaming it there.
-# The full 36-face build happens in release.yml.
+# Gate for every push/PR, in about a minute: the Regular faces (upright
+# and italic) and the Light Italic faces (the erosion path) of every
+# family, the variable Sumi Moji and a Nerd Fonts patch, assembled from
+# the live upstreams in a handful of parallel jobs (more jobs than that
+# queue behind each other and finish late). upstream-sync.yml waits on
+# these jobs by name (REQUIRED_CHECKS there): renaming one here means
+# renaming it there. The full 36-face build happens in release.yml.
 name: CI
 on:
   push:
@@ -26,61 +27,47 @@ jobs:
       - run: pip install -r requirements.txt ruff pytest
       - run: ruff check scripts/ tests/
       - run: python -m pytest tests/ -q
-  # one JP face per job: its Latin donor (build_latin.py, the one profile
-  # the face reads), the face on top (build.py), both verified
-  face:
+  # one weight and style per job, every family: the two Latin donors
+  # (build_latin.py, side by side), the three JP faces on top (build.py,
+  # side by side), all five verified side by side
+  faces:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
         face: [Regular Upright, Regular Italic, Light Italic]
-        family: [base, 35, Term]
-        include:
-          - family: base
-            latin: ship
-          - family: 35
-            latin: ship
-          - family: Term
-            latin: term
-    name: face (${{ matrix.face }} ${{ matrix.family }})
+    name: faces (${{ matrix.face }})
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: ./.github/actions/setup-build
       # the Latin layer (Sumi Moji, provisional name) is assembled first
       # from the VFs; build.py grafts it into Source Han Sans
-      - run: python scripts/build_latin.py "${{ matrix.face }} ${{ matrix.latin }}"
-      - run: python scripts/build.py "${{ matrix.face }} ${{ matrix.family }}"
-      # the donor (dist/latin/ or dist/latin/term/) and the face — verify_many
-      # expands the patterns itself, so the empty directory is no error
-      - run: python scripts/verify_many.py 'dist/latin/*/*.otf' 'dist/latin/*.otf' 'dist/*.otf'
-  # the variable Sumi Moji needs only the upstreams (upright only here,
-  # Italic is covered in release.yml); verify_latin_vf.py's static-face
-  # comparison skips when dist/latin has no statics and its check against
-  # Source Code Pro itself still runs
-  variable:
+      - run: python scripts/build_latin.py "${{ matrix.face }}"
+      - run: python scripts/build.py "${{ matrix.face }}"
+      - run: python scripts/verify_many.py 'dist/latin/term/*.otf' 'dist/latin/*.otf' 'dist/*.otf'
+  # the variable Sumi Moji (upright only here, Italic is covered in
+  # release.yml; verify_latin_vf.py's static-face comparison skips when
+  # dist/latin has no statics and its check against Source Code Pro
+  # itself still runs), then nerdpatch.py end to end on the Sumi Moji
+  # Regular face (a CID-keyed CFF like the JP faces: FontForge's
+  # flattening, font-patcher, the renaming and the metadata restore all
+  # run) with one symbol set — font-patcher's --complete takes a minute a
+  # face regardless of the face's size, so the release is where every
+  # face gets everything
+  variable-nerd-font:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: ./.github/actions/setup-build
-      - run: python scripts/build_latin_vf.py upright
-      - run: python scripts/verify_latin_vf.py "dist/latin/SumiMoji[wght].otf"
-  # nerdpatch.py end to end on the Sumi Moji Regular face (a CID-keyed
-  # CFF like the JP faces: FontForge's flattening, font-patcher, the
-  # renaming and the icon fitting all run), with one symbol set —
-  # font-patcher's --complete takes a minute a face regardless of the
-  # face's size, so the release is where every face gets everything
-  nerd-font:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+    name: variable + Nerd Font
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: ./.github/actions/setup-build
         with:
           fontforge: "true"
+      - run: python scripts/build_latin_vf.py upright
+      - run: python scripts/verify_latin_vf.py "dist/latin/SumiMoji[wght].otf"
       - run: python scripts/build_latin.py "Regular Upright ship"
-      - run: python scripts/nerdpatch.py FontPatcher
+      - run: python scripts/nerdpatch.py FontPatcher dist/latin/SumiMoji-Regular.otf
         env:
           SHOYU_NERD_SETS: --powerline
       - run: python scripts/verify_latin.py dist/nerd/latin/SumiMojiNF-Regular.otf

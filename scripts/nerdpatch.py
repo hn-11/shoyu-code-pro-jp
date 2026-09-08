@@ -5,7 +5,10 @@ For each font: flatten the CID-keyed CFF with FontForge (font-patcher can't
 address glyphs by Unicode in CID fonts), run font-patcher --complete, then
 restore the "Term" family distinction that the patcher's renaming drops.
 
-Usage: python scripts/nerdpatch.py <path-to-FontPatcher-dir> [name-filter]
+Usage: python scripts/nerdpatch.py <path-to-FontPatcher-dir> [FONT ...]
+  FONT: a face to patch (a path under dist/ or dist/latin/), or a
+  substring of the file names to take; none patches every face in
+  dist/ and dist/latin/.
 Requires: fontforge on PATH.
 Env (optional): SHOYU_NERD_SETS — font-patcher's symbol-set options in
 place of "--complete" (e.g. "--powerline": CI's smoke test of this
@@ -219,18 +222,32 @@ def fix_names(patched: Path, src: Path) -> Path:
     return out
 
 
-def main():
-    patcher_dir = Path(sys.argv[1])
-    name_filter = sys.argv[2] if len(sys.argv) > 2 else ""
-    OUT.mkdir(exist_ok=True)
-    LATIN_OUT.mkdir(exist_ok=True)
-    # dist/*.otf (non-recursive, so dist/latin/ is untouched here) plus the
-    # public Sumi Moji static faces specifically — never "*.otf" in
-    # dist/latin/, which would also sweep up the dist/latin/term/ donor
-    # family, and not the variable fonts (a VF is not patched)
+def sources_for(args):
+    """[(face, output dir)] for the command line: explicit paths (a JP
+    face in dist/ goes to dist/nerd/, a Sumi Moji face in dist/latin/ to
+    dist/nerd/latin/), a name substring, or — with no argument — every
+    face in dist/ (non-recursive, so dist/latin/ is untouched there) plus
+    the public Sumi Moji static faces specifically: never "*.otf" in
+    dist/latin/, which would also sweep up the dist/latin/term/ donor
+    family, and not the variable fonts (a VF is not patched)."""
+    paths = [Path(a) for a in args if Path(a).is_file()]
+    if paths:
+        return [(p.resolve(), LATIN_OUT if p.resolve().parent == LATIN_DIR else OUT)
+                for p in paths]
     sources = [(p, OUT) for p in sorted(DIST.glob("*.otf"))]
     sources += [(p, LATIN_OUT) for p in static_faces(LATIN_DIR, "SumiMoji")]
-    sources = [(p, out) for p, out in sources if not name_filter or name_filter in p.name]
+    return [(p, out) for p, out in sources if not args or any(a in p.name for a in args)]
+
+
+def main():
+    # absolute: FontForge's AppImage runs its scripts from its own
+    # directory, so a relative FontPatcher path would not resolve there
+    patcher_dir = Path(sys.argv[1]).resolve()
+    OUT.mkdir(exist_ok=True)
+    LATIN_OUT.mkdir(exist_ok=True)
+    sources = sources_for(sys.argv[2:])
+    if not sources:
+        sys.exit(f"nothing to patch for {sys.argv[2:]!r}")
     with tempfile.TemporaryDirectory() as tmp:
         flatten_script = Path(tmp) / "flatten.py"
         flatten_script.write_text(FLATTEN)

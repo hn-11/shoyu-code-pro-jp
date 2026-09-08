@@ -133,3 +133,32 @@ def test_restore_metadata_keeps_win_metrics_that_never_covered_the_box():
     os2 = patched["OS/2"]
     assert (os2.usWinAscent, os2.usWinDescent) == (1133, 320)
     assert patched["head"].yMax == 1800 and patched["head"].yMin == -1000
+
+
+def test_sources_for_paths_names_and_everything(tmp_path, monkeypatch):
+    dist = tmp_path / "dist"
+    latin = dist / "latin"
+    (latin / "term").mkdir(parents=True)
+    for name in ("ShoyuCodeProJP-Light.otf", "ShoyuCodeProJPTerm-Light.otf"):
+        (dist / name).write_bytes(b"")
+    for name in ("SumiMoji-Light.otf", "SumiMoji-LightItalic.otf", "SumiMoji[wght].otf",
+                 "term/SumiMojiTerm-Light.otf"):
+        (latin / name).write_bytes(b"")
+    monkeypatch.setattr(nerdpatch, "DIST", dist)
+    monkeypatch.setattr(nerdpatch, "LATIN_DIR", latin)
+    monkeypatch.setattr(nerdpatch, "OUT", dist / "nerd")
+    monkeypatch.setattr(nerdpatch, "LATIN_OUT", dist / "nerd" / "latin")
+
+    everything = nerdpatch.sources_for([])
+    assert [p.name for p, _ in everything] == [
+        "ShoyuCodeProJP-Light.otf", "ShoyuCodeProJPTerm-Light.otf",
+        "SumiMoji-Light.otf", "SumiMoji-LightItalic.otf"]      # no VF, no term donor
+    assert [out.name for _, out in everything] == ["nerd", "nerd", "latin", "latin"]
+    assert [p.name for p, _ in nerdpatch.sources_for(["Term"])] == ["ShoyuCodeProJPTerm-Light.otf"]
+    assert [p.name for p, _ in nerdpatch.sources_for(["Term", "Italic"])] == [
+        "ShoyuCodeProJPTerm-Light.otf", "SumiMoji-LightItalic.otf"]
+    explicit = nerdpatch.sources_for([str(latin / "SumiMoji-Light.otf"),
+                                      str(dist / "ShoyuCodeProJP-Light.otf")])
+    assert [(p.name, out.name) for p, out in explicit] == [
+        ("SumiMoji-Light.otf", "latin"), ("ShoyuCodeProJP-Light.otf", "nerd")]
+    assert nerdpatch.sources_for(["nothing-like-this"]) == []
