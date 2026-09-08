@@ -6,11 +6,15 @@ identical tables across faces (CFF stays per-face, but name/cmap-adjacent
 tables and identical structures collapse).
 """
 
+import sys
 from pathlib import Path
 
 from fontTools.ttLib import TTCollection, TTFont
 
 DIST = Path(__file__).resolve().parent.parent / "dist"
+sys.path.insert(0, str(DIST.parent / "scripts"))
+from verifylib import static_faces  # noqa: E402
+
 LATIN = DIST / "latin"
 FAMILIES = ["ShoyuCodeProJP", "ShoyuCodeProJP35", "ShoyuCodeProJPTerm", "SumiMoji"]
 
@@ -73,7 +77,7 @@ def check_cmap_parity(fam, faces, fonts):
 def main():
     for fam in FAMILIES:
         src = SRC_DIR.get(fam, DIST)
-        faces = sorted(src.glob(f"{fam}-*.otf"), key=lambda p: face_key(p, fam))
+        faces = sorted(static_faces(src, fam), key=lambda p: face_key(p, fam))
         if not faces:
             print(f"skip {fam}: no faces")
             continue

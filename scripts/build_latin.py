@@ -34,9 +34,7 @@ Env (all required):
 Env (optional): SHOYU_VERSION, SHOYU_SKIP_AUTOHINT
 """
 
-import concurrent.futures
 import io
-import os
 import sys
 from pathlib import Path
 
@@ -227,7 +225,7 @@ def build_face(job):
                             build.MONA_STANDALONE + build.MONA_AMBIGUOUS, dy, MONA_K)
     add_missing_from_mona(base, mona, build.MONA_AMBIGUOUS, dy, MONA_K)
     remap_scp_stylistic_sets(base)
-    build.add_gsub(base, added, alts, None, build.LIGATURES, None)
+    build.add_gsub(base, added, alts, build.LIGATURES)
     if "DSIG" in base:
         del base["DSIG"]
     use_typo_metrics(base)
@@ -246,13 +244,11 @@ def build_face(job):
     out_path = Path(out_dir) / subdir
     out_path.mkdir(parents=True, exist_ok=True)
     out = out_path / f"{ps}.otf"
-    base.save(out)
     # every glyph: fontTools' CFF2 instancing leaves the SCP outlines
     # without their hints (the VF's charstrings carry them inside blended
     # subroutines that the instancer flattens), so the whole font is
     # hinted here against SCP's own alignment zones
-    build.autohint_face(out, base.getGlyphOrder())
-    build.subroutinize_face(out)
+    build.write_face(base, out, base.getGlyphOrder())
     return (f"{label}: bar {target:.1f} ligs={len(added)} "
             f"glyphs={base['maxp'].numGlyphs} -> {out.relative_to(out_dir)}", str(out))
 
@@ -266,14 +262,12 @@ def _copy_instance(scp):
     return TTFont(buf)
 
 
+VF_ENV = ("SCP_VF_U", "SCP_VF_I", "MONA_VF", "SHCJ_TTC")   # all required
+
+
 def main():
     only = sys.argv[1] if len(sys.argv) > 1 else None
-    env = {k: os.environ.get(k) for k in
-           ("SCP_VF_U", "SCP_VF_I", "MONA_VF", "SHCJ_TTC")}
-    missing = [k for k, v in env.items() if not v or not Path(v).exists()]
-    if missing:
-        sys.exit(f"missing env: {missing}")
-    env["SHOYU_VERSION"] = os.environ.get("SHOYU_VERSION")
+    env = build.env_paths(dict.fromkeys(VF_ENV))
     out_dir = build.ROOT / "dist" / "latin"
     out_dir.mkdir(parents=True, exist_ok=True)
     jobs = []
@@ -287,36 +281,21 @@ def main():
     if not jobs:
         sys.exit(f"no face matches {only!r}")
     outs = {p: [] for p in PROFILES}
-    failures = []
 
     def done(job, result):
         msg, path = result
         print(msg)
         outs[job[0]].append(path)
 
-    if only:
-        for job in jobs:
-            try:
-                done(job, build_face(job))
-            except Exception as exc:
-                failures.append((job[1], job[0], exc))
-    else:
-        with concurrent.futures.ProcessPoolExecutor() as pool:
-            futures = {pool.submit(build_face, j): j for j in jobs}
-            for fut in concurrent.futures.as_completed(futures):
-                job = futures[fut]
-                try:
-                    done(job, fut.result())
-                except Exception as exc:
-                    failures.append((job[1], job[0], exc))
-    for profile, paths in outs.items():
-        if paths:
-            a, d = harmonize_win_metrics(paths)
-            print(f"{profile}: win metrics {a}/{d} over {len(paths)} faces")
-    if failures:
-        for weight, profile, exc in failures:
-            print(f"FAILED {weight} [{profile}]: {exc!r}", file=sys.stderr)
-        sys.exit(f"{len(failures)}/{len(jobs)} faces failed")
+    try:
+        build.run_faces(jobs, only, build_face,
+                        label=lambda job: f"{job[1]} [{job[0]}]", on_result=done)
+    finally:
+        # the faces that did build still get family-wide win metrics
+        for profile, paths in outs.items():
+            if paths:
+                a, d = harmonize_win_metrics(paths)
+                print(f"{profile}: win metrics {a}/{d} over {len(paths)} faces")
 
 
 if __name__ == "__main__":

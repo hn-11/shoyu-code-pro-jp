@@ -15,7 +15,6 @@ import os
 import sys
 from pathlib import Path
 
-import uharfbuzz as hb
 from fontTools.pens.boundsPen import BoundsPen
 from fontTools.ttLib import TTFont
 from fontTools.varLib.instancer import instantiateVariableFont
@@ -24,6 +23,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 import build  # noqa: E402
 import build_latin_vf  # noqa: E402
+from verifylib import Checker, make_shaper  # noqa: E402
 
 FONT = Path(sys.argv[1]) if len(sys.argv) > 1 else (
     ROOT / "dist" / "latin" / "SumiMoji[wght].otf")
@@ -34,15 +34,6 @@ FONT = Path(sys.argv[1]) if len(sys.argv) > 1 else (
 # and a 4-cell true ligature ("<!--", added in 3.3 — see CHANGELOG).
 LIG_CASES = [("a -> b", 5), ("->>", 3), ("<!--", 1)]
 WEIGHTS = ["Light", "Normal", "Regular", "Medium", "Bold", "Heavy"]
-
-
-def shape(font_bytes, text, feats):
-    hbfont = hb.Font(hb.Face(hb.Blob(font_bytes)))
-    buf = hb.Buffer()
-    buf.add_str(text)
-    buf.guess_segment_properties()
-    hb.shape(hbfont, buf, feats)
-    return list(buf.glyph_infos)
 
 
 def bounds(font, ch):
@@ -90,27 +81,23 @@ def instance_bytes(vf, location):
 
 def main():
     tf = TTFont(str(FONT))
-    failed = False
-
-    def check(ok, msg):
-        nonlocal failed
-        print(f"{'ok  ' if ok else 'FAIL'} {msg}")
-        failed |= not ok
+    check = Checker()
 
     name = tf["name"]
-    check("fvar" in tf, "fvar present")
-    axis = next((a for a in tf["fvar"].axes if a.axisTag == "wght"), None)
-    check(axis is not None, "fvar has a wght axis")
-    if axis is not None:
-        check((axis.minValue, axis.maxValue) == (200, 900),
-              f"wght axis range {axis.minValue:.0f}-{axis.maxValue:.0f} (want 200-900)")
-        check(axis.defaultValue == build.WEIGHT_CLASS["Regular"],
-              f"wght axis default {axis.defaultValue:.0f} (want 400 = Regular)")
-        check(tf["OS/2"].usWeightClass == axis.defaultValue,
-              f"OS/2 usWeightClass {tf['OS/2'].usWeightClass} == fvar default")
+    axis = (next((a for a in tf["fvar"].axes if a.axisTag == "wght"), None)
+            if "fvar" in tf else None)
+    if not check(axis is not None, "fvar present with a wght axis"):
+        print("FAILED (not a variable font; nothing else to check)")
+        sys.exit(1)
+    check((axis.minValue, axis.maxValue) == (200, 900),
+          f"wght axis range {axis.minValue:.0f}-{axis.maxValue:.0f} (want 200-900)")
+    check(axis.defaultValue == build.WEIGHT_CLASS["Regular"],
+          f"wght axis default {axis.defaultValue:.0f} (want 400 = Regular)")
+    check(tf["OS/2"].usWeightClass == axis.defaultValue,
+          f"OS/2 usWeightClass {tf['OS/2'].usWeightClass} == fvar default")
     check("avar" in tf and "wght" in tf["avar"].segments,
           "avar maps the usWeightClass axis onto SCP's bar-matched wghts")
-    instances = tf["fvar"].instances if "fvar" in tf else []
+    instances = tf["fvar"].instances
     styles = [name.getDebugName(i.subfamilyNameID) for i in instances]
     check(len(instances) == 6, f"{len(instances)} named instances (want 6): {styles}")
     want_coords = [float(build.WEIGHT_CLASS[w]) for w in WEIGHTS]
@@ -180,7 +167,7 @@ def main():
         loc = dict(inst_desc.coordinates)
         inst_font, data = instance_bytes(tf, loc)
         for text, want in LIG_CASES:
-            got = len(shape(data, text, on))
+            got = len(make_shaper(data)(text, on)[0])
             check(got == want, f"[{style}, wght={loc.get('wght', '?'):.0f}] "
                                f"{text!r}: {got} glyphs (want {want})")
         # the matching static face (build_latin.py): same '=' bar (this is
@@ -234,8 +221,8 @@ def main():
     else:
         print("  (skip SCP exactness check: set SCP_VF_U / SCP_VF_I and SHCJ_TTC)")
 
-    print("FAILED" if failed else "all checks passed")
-    sys.exit(1 if failed else 0)
+    print("FAILED" if check.failed else "all checks passed")
+    sys.exit(check.exit_code())
 
 
 if __name__ == "__main__":

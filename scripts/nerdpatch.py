@@ -20,6 +20,7 @@ from fontTools.pens.boundsPen import BoundsPen
 from fontTools.pens.t2CharStringPen import T2CharStringPen
 from fontTools.pens.transformPen import TransformPen
 from fontTools.ttLib import TTFont
+from verifylib import static_faces
 
 ROOT = Path(__file__).resolve().parent.parent
 DIST = ROOT / "dist"
@@ -175,10 +176,11 @@ def main():
     OUT.mkdir(exist_ok=True)
     LATIN_OUT.mkdir(exist_ok=True)
     # dist/*.otf (non-recursive, so dist/latin/ is untouched here) plus the
-    # public Sumi Moji faces specifically — never "*.otf" in dist/latin/,
-    # which would also sweep up the dist/latin/term/ donor family.
+    # public Sumi Moji static faces specifically — never "*.otf" in
+    # dist/latin/, which would also sweep up the dist/latin/term/ donor
+    # family, and not the variable fonts (a VF is not patched)
     sources = [(p, OUT) for p in sorted(DIST.glob("*.otf"))]
-    sources += [(p, LATIN_OUT) for p in sorted(LATIN_DIR.glob("SumiMoji-*.otf"))]
+    sources += [(p, LATIN_OUT) for p in static_faces(LATIN_DIR, "SumiMoji")]
     with tempfile.TemporaryDirectory() as tmp:
         flatten_script = Path(tmp) / "flatten.py"
         flatten_script.write_text(FLATTEN)

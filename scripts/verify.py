@@ -6,9 +6,11 @@ import os
 import sys
 from pathlib import Path
 
-import uharfbuzz as hb
-
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "scripts"))
+from fontTools.pens.basePen import NullPen  # noqa: E402
+from verifylib import make_shaper  # noqa: E402
+
 FONT = Path(sys.argv[1]) if len(sys.argv) > 1 else (
     ROOT / "dist" / "ShoyuCodeProJP-Regular.otf"
 )
@@ -71,8 +73,8 @@ def is_italic(tf):
 
 def expected_metrics(tf):
     fam = family_name(tf)
-    # longest/most-specific suffix match first ("Term" and "35" are both
-    # substrings that could otherwise collide with unrelated family text)
+    # whole-token match: "Term" / "35" are separate words in the family
+    # name ("Shoyu Code Pro JP Term"), never substrings of another word
     for suffix, pair in FAMILY_METRICS.items():
         if suffix in fam.split(" "):
             return pair
@@ -105,8 +107,9 @@ def main():
                   "\u2500": exp_half, "\u2460": exp_full, "\u203b": exp_full}
     else:
         policy = {"\u2192": exp_full, "\u2460": exp_full}
-    # half-width kana: SHCJ's 500 in the 2:3 family, one cell in the 600 ones
-    policy["\uff71"] = 500 if exp_half == 667 else exp_half
+    # half-width kana and the half-width symbols (￩ U+FFE9): SHCJ's 500 in
+    # the 2:3 family, one cell in the 600 ones (fit_halfwidth_forms)
+    policy["\uff71"] = policy["\uffe9"] = 500 if exp_half == 667 else exp_half
     # SCP-only Latin (ł ğ ₽) is grafted half-width in every family; so is
     # SHS's proportional ς — upright only, SCP Italic has no Greek
     policy.update({"\u0142": exp_half, "\u011f": exp_half, "\u20bd": exp_half})
@@ -120,6 +123,20 @@ def main():
         assert got == want, (
             f"{FONT}: U+{ord(ch):04X} {ch!r} advance {got}, want {want}")
     print(f"ok   ambiguous-width policy ({len(policy)} probes)")
+
+    # every charstring's own width (encoded against its FD's nominalWidthX)
+    # must agree with hmtx: a glyph appended under one FD and re-homed to
+    # another (add_latin_fd) would carry a stale width — invisible to
+    # renderers, which read hmtx, but wrong for anything reading the CFF
+    gs = tf.getGlyphSet()
+    off = []
+    for name in tf.getGlyphOrder():
+        g = gs[name]
+        g.draw(NullPen())
+        if g.width != hmtx[name][0]:
+            off.append((name, g.width, hmtx[name][0]))
+    assert not off, f"{FONT}: CFF width != hmtx for {len(off)} glyphs, e.g. {off[:5]}"
+    print(f"ok   CFF charstring widths agree with hmtx ({len(tf.getGlyphOrder())} glyphs)")
 
     angle = tf["post"].italicAngle
     if italic:
@@ -157,15 +174,7 @@ def main():
               f"BOLD/ITALIC clear (fsSelection={fsel:#06x})")
         failed |= not ok
 
-    blob = hb.Blob.from_file_path(str(FONT))
-    font = hb.Font(hb.Face(blob))
-
-    def shape_infos(text, feats):
-        buf = hb.Buffer()
-        buf.add_str(text)
-        buf.guess_segment_properties()
-        hb.shape(font, buf, feats)
-        return list(buf.glyph_infos), list(buf.glyph_positions)
+    shape_infos = make_shaper(FONT)
 
     def shape_len(text, feats):
         return len(shape_infos(text, feats)[0])

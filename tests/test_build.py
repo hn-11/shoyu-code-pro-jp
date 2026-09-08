@@ -605,7 +605,7 @@ def gsub_font_bytes():
         ">=": {"cells": 2, "glyphs": ["ge"], "group": "ss01"},
     }
     added = {"->": "lig_hg", "-->": "lig_hhg", "<-": "lig_lh", ">=": "lig_ge"}
-    build.add_gsub(font, added, {}, {}, ligatures, {})
+    build.add_gsub(font, added, {}, ligatures, {}, {})
 
     buf = io.BytesIO()
     font.save(buf)
@@ -885,3 +885,69 @@ def test_stretch_path_shortens_the_shaft(axis):
     length = (lambda b: b[2] - b[0]) if axis == 0 else (lambda b: b[3] - b[1])
     assert length(b1) == pytest.approx(length(b0) - 40)
     assert abs(out.area) == pytest.approx(abs(src.area) - 40 * 20)
+
+
+# --- set_cmap / HALFWIDTH_FORMS / env_paths / run_faces --------------------
+
+def test_set_cmap_replaces_existing_and_adds_only_when_asked():
+    font = _tt_font([".notdef", "a", "b", "c"], {0x61: "a", 0x10000: "b"},
+                    {"a": 600, "b": 600, "c": 600})
+    formats = {t.format for t in font["cmap"].tables if t.isUnicode()}
+    assert formats == {4, 12}   # BMP-only and full-range subtables
+    build.set_cmap(font, {0x61: "c", 0x62: "c"})
+    for t in font["cmap"].tables:
+        assert t.cmap[0x61] == "c"
+        assert 0x62 not in t.cmap            # not added without add_new
+    build.set_cmap(font, {0x62: "c", 0x10001: "c"}, add_new=True)
+    for t in font["cmap"].tables:
+        assert t.cmap[0x62] == "c"
+        assert (0x10001 in t.cmap) == (t.format == 12)   # BMP-only skips it
+
+
+def test_halfwidth_forms_cover_every_halfwidth_codepoint():
+    """Unicode's East Asian Width 'H' set is exactly what fit_halfwidth_forms
+    re-centres — including ￩ U+FFE9 and its neighbours past U+FFDC."""
+    import unicodedata
+    covered = {cp for lo, hi in build.HALFWIDTH_FORMS for cp in range(lo, hi + 1)}
+    halfwidth = {cp for cp in range(0xFF00, 0xFFF0)
+                 if unicodedata.east_asian_width(chr(cp)) == "H"}
+    assert halfwidth <= covered
+    assert 0xFFE9 in covered
+
+
+def test_env_paths_reads_defaults_and_exits_on_missing(tmp_path, monkeypatch, capsys):
+    a, b = tmp_path / "a", tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
+    monkeypatch.setenv("SHS_DIR", str(a))
+    monkeypatch.delenv("SHCJ_TTC", raising=False)
+    monkeypatch.setenv("SHOYU_VERSION", "9.9.9")
+    env = build.env_paths({"SHS_DIR": None, "SHCJ_TTC": str(b)})
+    assert env == {"SHS_DIR": str(a), "SHCJ_TTC": str(b), "SHOYU_VERSION": "9.9.9"}
+    monkeypatch.setenv("SHCJ_TTC", str(tmp_path / "nowhere"))
+    monkeypatch.delenv("SHS_DIR")
+    with pytest.raises(SystemExit, match=r"missing env: \['SHS_DIR', 'SHCJ_TTC'\]"):
+        build.env_paths({"SHS_DIR": None, "SHCJ_TTC": str(b)})
+
+
+def _face_worker(job):
+    if job == "bad":
+        raise KeyError("reference face not found")
+    return f"built {job}"
+
+
+def test_run_faces_serial_collects_every_failure(capsys):
+    results = []
+    with pytest.raises(SystemExit, match="1/3 faces failed"):
+        build.run_faces(["x", "bad", "y"], "Regular", _face_worker,
+                        label=lambda j: f"{j} [base]",
+                        on_result=lambda j, r: results.append(r))
+    assert results == ["built x", "built y"]   # the failure did not stop the run
+    assert "FAILED bad [base]: KeyError('reference face not found')" in capsys.readouterr().err
+
+
+def test_run_faces_pool_runs_every_job():
+    results = []
+    build.run_faces(["x", "y"], None, _face_worker,
+                    label=lambda j: j, on_result=lambda j, r: results.append(r))
+    assert sorted(results) == ["built x", "built y"]

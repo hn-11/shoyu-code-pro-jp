@@ -7,7 +7,6 @@ own. Usage: python scripts/verify_latin.py dist/latin/SumiMoji-Regular.otf"""
 import sys
 from pathlib import Path
 
-import uharfbuzz as hb
 from fontTools.ttLib import TTFont
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -15,6 +14,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import build  # noqa: E402
 import build_latin  # noqa: E402
 from verify import CASES  # noqa: E402
+from verifylib import Checker, glyph_has_hint, make_shaper  # noqa: E402
 
 FONT = Path(sys.argv[1]) if len(sys.argv) > 1 else (
     ROOT / "dist" / "latin" / "SumiMoji-Regular.otf")
@@ -23,12 +23,7 @@ CELL = build.SCP_CELL
 
 def main():
     tf = TTFont(str(FONT))
-    failed = False
-
-    def check(ok, msg):
-        nonlocal failed
-        print(f"{'ok  ' if ok else 'FAIL'} {msg}")
-        failed |= not ok
+    check = Checker()
 
     name = tf["name"]
     fam = name.getDebugName(16) or name.getDebugName(1)
@@ -65,24 +60,9 @@ def main():
     td = cff[cff.fontNames[0]]
     check(len(td.FDArray) == 1,
           f"one FontDict ({[getattr(fd, 'FontName', '?') for fd in td.FDArray]})")
-    private = td.FDArray[0].Private
 
-    def hinted(cs, depth=0):
-        """Hint operators, following (cffsubr's) subroutine calls."""
-        cs.decompile()
-        prog = cs.program
-        for i, t in enumerate(prog):
-            if t in ("hstem", "vstem", "hstemhm", "vstemhm", "hintmask"):
-                return True
-            if t in ("callsubr", "callgsubr") and depth < 6:
-                subrs = private.Subrs if t == "callsubr" else cff.GlobalSubrs
-                n = len(subrs)
-                bias = 107 if n < 1240 else 1131 if n < 33900 else 32768
-                if hinted(subrs[prog[i - 1] + bias], depth + 1):
-                    return True
-        return False
     for ch in "HAx=":
-        check(hinted(td.CharStrings[cmap[ord(ch)]]), f"{ch!r} carries hints")
+        check(glyph_has_hint(td.CharStrings[cmap[ord(ch)]]), f"{ch!r} carries hints")
 
     tags = {fr.FeatureTag for fr in tf["GSUB"].table.FeatureList.FeatureRecord}
     for tag in ("calt", "liga", "ss01", "ss08", "cv99", "zero", "cv01", "ss11"):
@@ -109,16 +89,7 @@ def main():
           f"win metrics cover the bbox ({os2.usWinAscent}/{os2.usWinDescent} "
           f"vs {head.yMax}/{-head.yMin})")
 
-    blob = hb.Blob.from_file_path(str(FONT))
-    font = hb.Font(hb.Face(blob))
-
-    def shape(text, feats):
-        buf = hb.Buffer()
-        buf.add_str(text)
-        buf.guess_segment_properties()
-        hb.shape(font, buf, feats)
-        return list(buf.glyph_infos), list(buf.glyph_positions)
-
+    shape = make_shaper(FONT)
     on = {"calt": True, "liga": True}
     for text, want in CASES:
         if any(ord(c) > 0x2FFF for c in text):
@@ -135,8 +106,8 @@ def main():
     check(len(shape("a -> b", off)[0]) == 6, "calt/liga off leaves '->' plain")
     check(len(shape("a -> b", dict(off, ss02=True))[0]) == 5, "ss02 alone ligates '->'")
 
-    print("FAILED" if failed else "all checks passed")
-    sys.exit(1 if failed else 0)
+    print("FAILED" if check.failed else "all checks passed")
+    sys.exit(check.exit_code())
 
 
 if __name__ == "__main__":

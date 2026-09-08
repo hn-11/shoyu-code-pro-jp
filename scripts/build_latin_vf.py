@@ -72,7 +72,6 @@ Env (optional): SHOYU_VERSION
 import contextlib
 import copy
 import functools
-import os
 import sys
 from pathlib import Path
 
@@ -295,7 +294,7 @@ def graft_master(base, mona_source, slant):
                             build.MONA_STANDALONE + build.MONA_AMBIGUOUS, dy, MONA_K)
     build_latin.add_missing_from_mona(base, mona, build.MONA_AMBIGUOUS, dy, MONA_K)
     build_latin.remap_scp_stylistic_sets(base)
-    build.add_gsub(base, added, alts, None, build.LIGATURES, None)
+    build.add_gsub(base, added, alts, build.LIGATURES)
     build.classify_unicode_marks(base)
     if "DSIG" in base:
         del base["DSIG"]
@@ -551,12 +550,7 @@ def main():
     only = sys.argv[1] if len(sys.argv) > 1 else None
     if only and only not in STYLES:
         sys.exit(f"unknown style {only!r} (want {list(STYLES)})")
-    env = {k: os.environ.get(k) for k in
-           ("SCP_VF_U", "SCP_VF_I", "MONA_VF", "SHCJ_TTC")}
-    missing = [k for k, v in env.items() if not v or not Path(v).exists()]
-    if missing:
-        sys.exit(f"missing env: {missing}")
-    env["SHOYU_VERSION"] = os.environ.get("SHOYU_VERSION")
+    env = build.env_paths(dict.fromkeys(build_latin.VF_ENV))
     out_dir = build.ROOT / "dist" / "latin"
     styles = [only] if only else list(STYLES)
     for style in styles:
