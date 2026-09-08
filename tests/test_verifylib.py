@@ -76,7 +76,7 @@ def test_hmtx_mismatches_reports_widths_and_bearings():
     font, _ = _extents_font()
     assert verifylib.hmtx_mismatches(font) == ([], [])
     font["hmtx"].metrics["A"] = (650, 0)       # width off by 50, lsb off by 20
-    font["hmtx"].metrics["B"] = (700, -41)     # a rounding hair off: fine
+    font["hmtx"].metrics["space"] = (600, 50)  # blank: no xMin to disagree with
     widths, bearings = verifylib.hmtx_mismatches(font)
     assert widths == [("A", 600, 650)]
     assert bearings == [("A", 20, 0)]

@@ -1175,10 +1175,10 @@ def test_sync_lsb_sets_bearings_from_the_outlines():
     font, boxes = _extents_font()
     metrics = font["hmtx"].metrics
     metrics["A"] = (600, 0)          # stale: the outline starts at 20
-    metrics["space"] = (600, 7)      # blank glyph: 0
+    metrics["space"] = (600, 7)      # blank glyph: left alone
 
-    assert build.sync_lsb(font) == 2
+    assert build.sync_lsb(font) == 1
 
     assert metrics["A"] == (600, 20) and metrics["B"] == (700, -40)
-    assert metrics["space"] == (600, 0)
+    assert metrics["space"] == (600, 7)
     assert build.sync_lsb(font) == 0
