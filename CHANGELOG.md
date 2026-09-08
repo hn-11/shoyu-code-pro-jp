@@ -47,7 +47,55 @@
   `nerdpatch.py` は面ごとの FontForge 実行をコア数分並列に、
   `build_latin_vf.py` は Upright と Italic を並列に組む。CI は可変フォント
   を別ジョブで並行して組む。JP の Regular 6 面はローカル 4 コアで
-  2 分（以前は 9 分）
+  2 分（以前は 9 分）。
+  さらに、保存のたびに fontTools が外接矩形と hhea / vhea の広がりを
+  求め直すために全グリフ（JP 1 面あたり約 1.9 万）を 3 回描き、描いた
+  charstring を全部コンパイルし直していたのをやめ、`update_bbox` が
+  1 回の走査で head / CFF FontBBox / hhea / vhea を揃えて（値は fontTools
+  の再計算と同一）、以後の保存（面の保存、otfautohint、cffsubr、
+  `makeotc.py`、`nerdpatch.py`）は再計算なし。走査で解いた charstring の
+  バイトコードは戻すので、触っていないグリフは読んだままの形で書き出す。
+  otfautohint は子プロセスではなく同一プロセスで呼ぶ（その保存も再計算
+  なし）。`=` バーの二分探索は VF をインスタンス化せず
+  `getGlyphSet(location=)` で各位置のアウトラインを直接読む（1 プローブ
+  0.8〜2.3 秒 → ほぼ 0 秒。丸めなしのバーを見るので、収束位置が以前と
+  1 wght 前後ずれ、静的 Sumi Moji のアウトラインが 1〜2u 動く）。
+  ローカル 4 コアで、JP Regular 6 面 55 秒（2 分 → ）、Sumi Moji Regular
+  6 面 15 秒（64 秒 → ）、VF Upright 21 秒（3 分 → ）、`verify_latin_vf.py`
+  61 秒（112 秒 → ）、TTC 6 面 3 秒（42 秒 → ）。
+  `verify_latin_vf.py` は VF をインスタンス化せず（40 回していた）、
+  `getGlyphSet(location=)` のアウトラインと HarfBuzz の variations で
+  各位置を検証する（61 秒 → 2 秒）。`makeotc.py` はファミリーごとに
+  プロセスを分ける。
+  ワークフローはマトリクスに分割（同時に走るジョブは 10 前後が上限で、
+  それを超えると待ちが出る）: CI は Regular Upright / Regular Italic /
+  Light Italic をドナー別（ship → 基本 + 35 の面、term → Term の面）に
+  1 ジョブずつの 6 ジョブ、可変フォントと Sumi Moji Regular への Nerd
+  Fonts パッチ（記号セット 1 つ: `SHOYU_NERD_SETS`。`--complete` は面の
+  大きさによらず 1 面 1 分かかるため、全面・全セットはリリースで）を
+  1 ジョブ、の 8 ジョブで 1 分程度（`upstream-sync.yml` の
+  `REQUIRED_CHECKS` はこのジョブ名一覧）。リリースはファミリー × ウェイト 2 つ組の 9 ジョブがそれぞれ
+  Latin ドナー 4 面・JP 4 面・NF パッチ（Sumi Moji のパッチは JP 面の
+  ビルドと並行）まで組んで `verify_many.py` で並列に検証し、`package`
+  ジョブが可変フォント 2 本を組み、アーティファクトを集めて Sumi Moji
+  （静的・NF）の usWinAscent/Descent をファミリー全体で揃え
+  （`harmonize_latin.py`）、VF を静的面と突き合わせ、TTC・zip・リリースを
+  作る。FontForge は apt ではなく展開済みの AppImage をキャッシュして
+  使う（12〜15 秒 → 1 秒）。面フィルタは語の組み合わせになり、
+  「Light Upright」「Regular Upright Term」「Light Normal base」のように
+  書体（Upright / Italic）・変種・複数ウェイトを絞れる（`build_latin.py`
+  では `ship` / `term`）。共通の準備手順は `.github/actions/setup-build`
+- Sumi Moji 静的面（とその VF のマスター）の hmtx 左サイドベアリングが
+  SCP VF の既定マスター（wght 200）の値のままだった（CFF の lsb は
+  fontTools が保守しない。インスタンス化でアウトラインだけ動く）。
+  `static_base` がアウトラインから測り直す（`build.sync_lsb`）。
+  `verify.py` / `verify_latin.py` が全グリフの lsb と xMin の一致も検査する
+- Nerd Fonts 変種: FontForge の往復で消えていた元の面のメタデータを
+  `nerdpatch.py` が戻す — STAT テーブル（FontForge は書き出さない）、
+  post.isFixedPitch / PANOSE の等幅宣言、usWeightClass・fsSelection・
+  ベンダー ID・typo / win メトリクス（Sumi Moji は外接矩形全体を覆う方針
+  なのでアイコンの分まで広げる。JP 各面は Source Han Code JP の値のまま）。
+  `verify_latin.py` は平坦化された NF 面の FDArray 検査を飛ばす
 - リファクタリング: 7 箇所に複製されていたグリフ追加の前置き
   （`append_context`）、方針の違う 4 箇所の cmap 書き込み（`set_cmap`）、
   `build.py` / `build_latin.py` の `main()` と面の後処理

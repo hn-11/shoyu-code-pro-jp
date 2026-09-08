@@ -10,14 +10,12 @@ Usage: python scripts/verify_latin_vf.py [FONT]
   FONT defaults to dist/latin/SumiMoji[wght].otf.
 """
 
-import io
 import os
 import sys
 from pathlib import Path
 
 from fontTools.pens.boundsPen import BoundsPen
 from fontTools.ttLib import TTFont
-from fontTools.varLib.instancer import instantiateVariableFont
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -36,9 +34,11 @@ LIG_CASES = [("a -> b", 5), ("->>", 3), ("<!--", 1)]
 WEIGHTS = ["Light", "Normal", "Regular", "Medium", "Bold", "Heavy"]
 
 
-def bounds(font, ch):
-    pen = BoundsPen(font.getGlyphSet())
-    font.getGlyphSet()[font.getBestCmap()[ord(ch)]].draw(pen)
+def bounds(gs, cmap, ch):
+    """Bounds of `ch` drawn from the glyph set `gs` (a font's, or a VF's
+    at a location)."""
+    pen = BoundsPen(gs)
+    gs[cmap[ord(ch)]].draw(pen)
     return pen.bounds
 
 
@@ -64,20 +64,6 @@ def scp_reference(italic):
     _, _, _, _, to_scp = build_latin_vf.user_axis(weight_pos, design, breaks,
                                                    axis.minValue)
     return scp, to_scp
-
-
-def instance_bytes(vf, location):
-    """Instance `vf` (already loaded) at `location` in memory and return
-    (instanced TTFont, its saved bytes) — a fresh copy each time since
-    instantiateVariableFont mutates in place."""
-    buf = io.BytesIO()
-    vf.save(buf)
-    buf.seek(0)
-    inst = TTFont(buf)
-    instantiateVariableFont(inst, location, inplace=True)
-    out = io.BytesIO()
-    inst.save(out)
-    return inst, out.getvalue()
 
 
 def main():
@@ -152,15 +138,17 @@ def main():
           "typo metrics == hhea metrics, USE_TYPO_METRICS set")
     # head / hhea extents must hold every instance, not just the default
     # one a CFF2 glyph set draws (build_latin_vf.py unions the masters):
-    # the union of the whole glyph set at both axis ends and the default
-    # (unrounded instancing: the instancer's per-operand rounding drifts
-    # an outline by up to 1u along a path, see build_latin_vf.py)
+    # the union of the whole glyph set at both axis ends and the default.
+    # Every location below is read off the VF's own glyph set
+    # (getGlyphSet(location=): fontTools blends the outlines on the fly,
+    # unrounded — the instancer's per-operand rounding drifts an outline
+    # by up to 1u along a path, see build_latin_vf.py); nothing is
+    # instanced, and HarfBuzz shapes the VF itself at each location
     union = rsb = None
+    metrics = tf["hmtx"].metrics     # no HVAR: advances are the same everywhere
     for w in (axis.minValue, axis.defaultValue, axis.maxValue):
-        with build_latin_vf.unrounded_cff2_instancing():
-            inst = instantiateVariableFont(tf, {"wght": w}, inplace=False)
-        gs, metrics = inst.getGlyphSet(), inst["hmtx"].metrics
-        for g in inst.getGlyphOrder():
+        gs = tf.getGlyphSet(location={"wght": w})
+        for g in tf.getGlyphOrder():
             pen = BoundsPen(gs)
             gs[g].draw(pen)
             if pen.bounds is None:
@@ -191,23 +179,24 @@ def main():
           f"bearing {None if rsb is None else round(rsb, 3)}")
 
     # every named instance: shape the ligature cases, same as the static
-    # faces (verify_latin.py / verify.py CASES), on the IN-MEMORY instanced
-    # bytes -- this is the actual varLib.build-merged GSUB, per weight
+    # faces (verify_latin.py / verify.py CASES) -- HarfBuzz on the VF at
+    # that location: the actual varLib.build-merged GSUB, per weight
     on = {"calt": True, "liga": True}
     scp, to_scp = scp_reference(is_italic)
+    vf_bytes = FONT.read_bytes()
+    cmap = tf.getBestCmap()
+    equals = cmap[ord("=")]
     # Monaspace's own wght floor, as this VF carries it: the '=' bar at the
     # axis minimum. A static face whose bar is thinner than that could only
     # have got there by erosion (build_latin.py, static faces only — a VF
     # master can't erode, see build_latin_vf.py), so its bar is not
     # comparable; its SCP-side glyphs still are.
-    floor_font, _ = instance_bytes(tf, {"wght": axis.minValue})
-    floor_bar = build.bar_thickness(floor_font, floor_font.getBestCmap()[ord("=")])
+    floor_bar = build.bar_thickness(tf.getGlyphSet(location={"wght": axis.minValue}), equals)
     for inst_desc in instances:
         style = name.getDebugName(inst_desc.subfamilyNameID) or "?"
         loc = dict(inst_desc.coordinates)
-        inst_font, data = instance_bytes(tf, loc)
         for text, want in LIG_CASES:
-            got = len(make_shaper(data)(text, on)[0])
+            got = len(make_shaper(vf_bytes, loc)(text, on)[0])
             check(got == want, f"[{style}, wght={loc.get('wght', '?'):.0f}] "
                                f"{text!r}: {got} glyphs (want {want})")
         # the matching static face (build_latin.py): same '=' bar (this is
@@ -219,7 +208,8 @@ def main():
         static_path = ROOT / "dist" / "latin" / static_name
         if static_path.exists():
             ref = TTFont(str(static_path))
-            bar_i = build.bar_thickness(inst_font, inst_font.getBestCmap()[ord("=")])
+            gs = tf.getGlyphSet(location=loc)
+            bar_i = build.bar_thickness(gs, equals)
             bar_r = build.bar_thickness(ref, ref.getBestCmap()[ord("=")])
             if bar_r < floor_bar:
                 check(abs(bar_i - floor_bar) <= 1,
@@ -233,29 +223,25 @@ def main():
             # 3u: the static face carries fontTools' instancer rounding
             # drift (relative charstring operands rounded one by one,
             # see build_latin_vf.unrounded_cff2_instancing); the VF's
-            # instance does not, so they can differ by that drift
-            bi, br = bounds(inst_font, "A"), bounds(ref, "A")
+            # blend here does not, so they can differ by that drift
+            bi, br = bounds(gs, cmap, "A"), bounds(ref.getGlyphSet(), ref.getBestCmap(), "A")
             check(close(bi, br, 3), f"[{style}] instanced 'A' bounds {bi} vs static "
                                     f"{static_name} 'A' bounds {br} (want within 3u)")
         else:
             print(f"  (skip bar/bounds compare: {static_path} not found — "
                   f"run build_latin.py first)")
     # exactness against SCP itself, at the named weights AND between them:
-    # our instance at user U must equal SCP instanced at the SCP wght our
-    # avar maps U to (see build_latin_vf.scp_design_axis / user_axis).
-    # Both sides are instanced WITHOUT the instancer's integer rounding
-    # (build_latin_vf.unrounded_cff2_instancing): that rounding drifts
-    # along a path by several units and differently per location, which
-    # would show as a false mismatch; the blends themselves must agree
-    # to 1u (16.16 fixed precision).
+    # our blend at user U must equal SCP's blend at the SCP wght our avar
+    # maps U to (see build_latin_vf.scp_design_axis / user_axis), to 1u
+    # (16.16 fixed precision)
     if scp is not None:
+        scp_cmap = scp.getBestCmap()
         for u in (250, 300, 325, 350, 375, 400, 450, 500, 600, 700, 800, 900):
             s = to_scp(u)
-            with build_latin_vf.unrounded_cff2_instancing():
-                inst_font = instantiateVariableFont(tf, {"wght": u}, inplace=False)
-                ref = instantiateVariableFont(scp, {"wght": s}, inplace=False)
+            gs = tf.getGlyphSet(location={"wght": u})
+            ref = scp.getGlyphSet(location={"wght": s})
             for ch in "AlHm¾":     # SCP-only glyphs ('=' is Monaspace's)
-                bi, br = bounds(inst_font, ch), bounds(ref, ch)
+                bi, br = bounds(gs, cmap, ch), bounds(ref, scp_cmap, ch)
                 check(close(bi, br, 1), f"[wght {u} = SCP {s:.1f}] {ch!r} bounds {bi} vs "
                                         f"SCP {br} (want within 1u)")
     else:

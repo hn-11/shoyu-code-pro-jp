@@ -7,17 +7,22 @@ scripts (makeotc.py, nerdpatch.py) share.
 from pathlib import Path
 
 import uharfbuzz as hb
+from fontTools.pens.boundsPen import BoundsPen
 
 # every Type 2 hint operator; a glyph carrying any of them counts as hinted
 HINT_OPS = frozenset({"hstem", "vstem", "hstemhm", "vstemhm", "hintmask", "cntrmask"})
 
 
-def make_shaper(source):
+def make_shaper(source, variations=None):
     """shape(text, feats) -> (glyph infos, glyph positions) for a font
-    given as a path or as the font's bytes."""
+    given as a path or as the font's bytes; `variations` ({axis tag:
+    user value}) sets a variable font's location — HarfBuzz shapes the
+    VF itself there, no instancing needed."""
     blob = (hb.Blob(source) if isinstance(source, (bytes, bytearray))
             else hb.Blob.from_file_path(str(source)))
     font = hb.Font(hb.Face(blob))
+    if variations:
+        font.set_variations(variations)
 
     def shape(text, feats):
         buf = hb.Buffer()
@@ -74,6 +79,31 @@ def glyph_has_hint(cs, local_subrs=None, global_subrs=None, seen=None):
         elif isinstance(tok, (int, float)):
             stack.append(tok)
     return False
+
+
+def hmtx_mismatches(font):
+    """Glyphs whose hmtx disagrees with their CFF charstring: (name,
+    charstring width, hmtx advance) where the advances differ, and
+    (name, xMin, hmtx lsb) where the bearing is two units or more off
+    the outline's xMin. Less is rounding: Source Han Sans sets a few
+    bearings from the on-curve points, up to a unit right of a curve's
+    true extreme (the stale Sumi Moji bearings this catches were tens of
+    units off). A blank glyph has no xMin and is left alone. Every glyph
+    is drawn once."""
+    cff = font["CFF "].cff
+    charstrings = cff[cff.fontNames[0]].CharStrings
+    hmtx = font["hmtx"].metrics
+    widths, bearings = [], []
+    for name in font.getGlyphOrder():
+        cs = charstrings[name]
+        pen = BoundsPen(None)
+        cs.draw(pen)
+        adv, lsb = hmtx[name]
+        if cs.width != adv:
+            widths.append((name, cs.width, adv))
+        if pen.bounds and abs(pen.bounds[0] - lsb) >= 2:
+            bearings.append((name, pen.bounds[0], lsb))
+    return widths, bearings
 
 
 def static_faces(src_dir, family):

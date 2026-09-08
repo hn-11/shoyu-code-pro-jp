@@ -5,18 +5,28 @@ For each font: flatten the CID-keyed CFF with FontForge (font-patcher can't
 address glyphs by Unicode in CID fonts), run font-patcher --complete, then
 restore the "Term" family distinction that the patcher's renaming drops.
 
-Usage: python scripts/nerdpatch.py <path-to-FontPatcher-dir> [name-filter]
+Usage: python scripts/nerdpatch.py <path-to-FontPatcher-dir> [FONT ...]
+  FONT: a face to patch (a path under dist/ or dist/latin/), or a
+  substring of the file names to take; none patches every face in
+  dist/ and dist/latin/.
 Requires: fontforge on PATH.
+Env (optional): SHOYU_NERD_SETS — font-patcher's symbol-set options in
+place of "--complete" (e.g. "--powerline": CI's smoke test of this
+pipeline patches one set; a release always patches everything).
 """
 
 import concurrent.futures
+import copy
 import os
+import re
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 import build  # scripts/ is on sys.path (script dir, or test's own insert)
+from build_latin import fit_win_metrics
 from fontTools.pens.boundsPen import BoundsPen
 from fontTools.pens.t2CharStringPen import T2CharStringPen
 from fontTools.pens.transformPen import TransformPen
@@ -126,33 +136,35 @@ def fit_nerd_glyphs(font, cell):
     return done
 
 
-def fix_names(patched: Path, src: Path) -> Path:
-    """Rebuild the patched font's name table from the source font.
+def nf_name(s):
+    """The Nerd Fonts name of one of our names: the NF marker spliced in
+    after the family, variant token included."""
+    # JP-font convention (HackGen/PlemolJP/UDEV): NF goes AFTER the
+    # variant token — "Shoyu Code Pro JP Term NF", not "... NF Term".
+    s = re.sub(r"(Shoyu Code Pro JP(?: 35| Term)?)", r"\1 NF", s, count=1)
+    s = re.sub(r"(ShoyuCodeProJP(?:35|Term)?)", r"\1NF", s, count=1)
+    # Sumi Moji is a single Latin-only family (no 35/Term variants to
+    # preserve — Sumi Moji Term is the internal donor and is never
+    # patched), so this is a plain literal substitution.
+    s = re.sub(r"(Sumi Moji)", r"\1 NF", s, count=1)
+    return re.sub(r"(SumiMoji)", r"\1NF", s, count=1)
 
-    font-patcher can't parse SHCJ's subfamily scheme (N/R/M/B/H + Italic)
-    and collapses every face to "Regular", colliding on disk and at install
-    time. Take the source names verbatim and splice in the NF marker.
-    """
-    import re
 
-    def nf_name(s):
-        # JP-font convention (HackGen/PlemolJP/UDEV): NF goes AFTER the
-        # variant token — "Shoyu Code Pro JP Term NF", not "... NF Term".
-        s = re.sub(r"(Shoyu Code Pro JP(?: 35| Term)?)", r"\1 NF", s, count=1)
-        s = re.sub(r"(ShoyuCodeProJP(?:35|Term)?)", r"\1NF", s, count=1)
-        # Sumi Moji is a single Latin-only family (no 35/Term variants to
-        # preserve — Sumi Moji Term is the internal donor and is never
-        # patched), so this is a plain literal substitution.
-        s = re.sub(r"(Sumi Moji)", r"\1 NF", s, count=1)
-        return re.sub(r"(SumiMoji)", r"\1NF", s, count=1)
+# what FontForge's round trip (the flattening, font-patcher's generate)
+# resets to its own defaults, put back from the source face: the
+# monospace declaration (set_monospace_metadata), weight/width classes,
+# fsSelection / fsType / vendor and the typo and win metrics
+OS2_FIELDS = ("panose", "fsSelection", "fsType", "achVendID", "usWeightClass",
+              "usWidthClass", "sTypoAscender", "sTypoDescender", "sTypoLineGap",
+              "usWinAscent", "usWinDescent")
+POST_FIELDS = ("isFixedPitch", "italicAngle", "underlinePosition", "underlineThickness")
 
-    font = TTFont(patched)
-    src_font = TTFont(src)
 
-    src_cmap = src_font.getBestCmap()
-    cell = src_font["hmtx"].metrics[src_cmap[ord("a")]][0]
-    fit_nerd_glyphs(font, cell)
-
+def restore_metadata(font, src_font):
+    """Give the patched font the source face's names (NF marker spliced
+    in), its OS/2 and post declarations and its STAT (FontForge writes
+    none), then extents from the outlines and win metrics widened to hold
+    the icons. Returns the PostScript name."""
     font["name"].names = []
     for rec in src_font["name"].names:
         s = rec.toUnicode()
@@ -164,25 +176,78 @@ def fix_names(patched: Path, src: Path) -> Path:
     font["name"].setName(ps, 6, 3, 1, 0x409)
     if "CFF " in font:
         font["CFF "].cff.fontNames[0] = ps
+    os2, src_os2 = font["OS/2"], src_font["OS/2"]
+    for field in OS2_FIELDS:
+        setattr(os2, field, copy.deepcopy(getattr(src_os2, field)))
+    os2.version = max(os2.version, src_os2.version)
+    for field in POST_FIELDS:
+        setattr(font["post"], field, getattr(src_font["post"], field))
+    if "STAT" in src_font:
+        font["STAT"] = src_font["STAT"]   # its name IDs are the ones copied above
+    # extents from the outlines (build.update_bbox), not fontTools'
+    # save-time recalc (three full draws of the face): the fitted icons
+    # moved, and font-patcher replaces glyphs the face already had (SCP's
+    # own Powerline symbols), so the source's box is no shortcut
+    build.update_bbox(font)
+    # the win metrics follow the source's own policy: Sumi Moji's hold its
+    # whole box (build_latin.fit_win_metrics), so they widen to whatever
+    # the icons add; the JP faces carry Source Han Code JP's line metrics
+    # (build.copy_line_metrics), which do not cover SHS's outliers, and
+    # keep them as they are
+    src_head = src_font["head"]
+    if (src_os2.usWinAscent >= src_head.yMax
+            and src_os2.usWinDescent >= -src_head.yMin):
+        fit_win_metrics(font)
+    return ps
+
+
+def fix_names(patched: Path, src: Path) -> Path:
+    """Finish one font-patcher output: icons fitted to the cell
+    (fit_nerd_glyphs), names and metadata from the source face
+    (restore_metadata — font-patcher can't parse SHCJ's subfamily scheme
+    (N/R/M/B/H + Italic) and collapses every face to "Regular", colliding
+    on disk and at install time), saved under its PostScript name."""
+    font = TTFont(patched)
+    src_font = TTFont(src)
+
+    src_cmap = src_font.getBestCmap()
+    cell = src_font["hmtx"].metrics[src_cmap[ord("a")]][0]
+    fit_nerd_glyphs(font, cell)
+    ps = restore_metadata(font, src_font)
     out = patched.parent / f"{ps}.otf"
+    font.recalcBBoxes = False
     font.save(out)
     if out != patched and patched.exists():
         patched.unlink()
     return out
 
 
-def main():
-    patcher_dir = Path(sys.argv[1])
-    name_filter = sys.argv[2] if len(sys.argv) > 2 else ""
-    OUT.mkdir(exist_ok=True)
-    LATIN_OUT.mkdir(exist_ok=True)
-    # dist/*.otf (non-recursive, so dist/latin/ is untouched here) plus the
-    # public Sumi Moji static faces specifically — never "*.otf" in
-    # dist/latin/, which would also sweep up the dist/latin/term/ donor
-    # family, and not the variable fonts (a VF is not patched)
+def sources_for(args):
+    """[(face, output dir)] for the command line: explicit paths (a JP
+    face in dist/ goes to dist/nerd/, a Sumi Moji face in dist/latin/ to
+    dist/nerd/latin/), a name substring, or — with no argument — every
+    face in dist/ (non-recursive, so dist/latin/ is untouched there) plus
+    the public Sumi Moji static faces specifically: never "*.otf" in
+    dist/latin/, which would also sweep up the dist/latin/term/ donor
+    family, and not the variable fonts (a VF is not patched)."""
+    paths = [Path(a) for a in args if Path(a).is_file()]
+    if paths:
+        return [(p.resolve(), LATIN_OUT if p.resolve().parent == LATIN_DIR else OUT)
+                for p in paths]
     sources = [(p, OUT) for p in sorted(DIST.glob("*.otf"))]
     sources += [(p, LATIN_OUT) for p in static_faces(LATIN_DIR, "SumiMoji")]
-    sources = [(p, out) for p, out in sources if not name_filter or name_filter in p.name]
+    return [(p, out) for p, out in sources if not args or any(a in p.name for a in args)]
+
+
+def main():
+    # absolute: FontForge's AppImage runs its scripts from its own
+    # directory, so a relative FontPatcher path would not resolve there
+    patcher_dir = Path(sys.argv[1]).resolve()
+    OUT.mkdir(exist_ok=True)
+    LATIN_OUT.mkdir(exist_ok=True)
+    sources = sources_for(sys.argv[2:])
+    if not sources:
+        sys.exit(f"nothing to patch for {sys.argv[2:]!r}")
     with tempfile.TemporaryDirectory() as tmp:
         flatten_script = Path(tmp) / "flatten.py"
         flatten_script.write_text(FLATTEN)
@@ -203,6 +268,7 @@ def patch_face(src, out_dir, tmp, flatten_script, patcher_dir):
     paths; raises on a FontForge or font-patcher failure."""
     print(f"patching: {src.name}")
     flat = tmp / src.name
+    t0 = time.monotonic()
     try:
         subprocess.run(
             ["fontforge", "-script", str(flatten_script), str(src), str(flat)],
@@ -211,9 +277,11 @@ def patch_face(src, out_dir, tmp, flatten_script, patcher_dir):
         print(e.stdout)
         print(e.stderr)
         raise
+    sets = os.environ.get("SHOYU_NERD_SETS", "--complete").split()
+    t_flat = time.monotonic()
     r = subprocess.run(
         ["fontforge", "-script", str(patcher_dir / "font-patcher"),
-         "--complete", "--quiet", "--outputdir", str(out_dir), str(flat)],
+         *sets, "--quiet", "--outputdir", str(out_dir), str(flat)],
         check=False, capture_output=True, text=True, env=ff_env())
     if r.returncode != 0:
         print(r.stdout)
@@ -226,10 +294,13 @@ def patch_face(src, out_dir, tmp, flatten_script, patcher_dir):
         raise SystemExit(
             f"no faces parsed from font-patcher output for {src.name} "
             "(check font-patcher's \"===> '...'\" output format for changes)")
+    t_patch = time.monotonic()
     finals = []
     for prod in produced:
         path = Path(prod) if Path(prod).is_absolute() else ROOT / prod
         finals.append(fix_names(path, src))
+    print(f"  {src.name}: flatten {t_flat - t0:.0f} s, font-patcher {' '.join(sets)} "
+          f"{t_patch - t_flat:.0f} s, names {time.monotonic() - t_patch:.0f} s")
     return finals
 
 

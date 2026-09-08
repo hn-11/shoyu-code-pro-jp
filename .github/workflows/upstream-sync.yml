@@ -31,14 +31,19 @@ concurrency:
 
 env:
   # Job names from ci.yml that must be green on the PR head before it merges.
-  REQUIRED_CHECKS: '["lint-test","build"]'
+  REQUIRED_CHECKS: >-
+    ["lint-test",
+     "faces (Regular Upright base 35)", "faces (Regular Upright Term)",
+     "faces (Regular Italic base 35)", "faces (Regular Italic Term)",
+     "faces (Light Italic base 35)", "faces (Light Italic Term)",
+     "variable + Nerd Font"]
   GH_TOKEN: ${{ github.token }}
 
 jobs:
   sync:
     runs-on: ubuntu-latest
-    # Generous: most of the wall clock is spent waiting on CI's own 20-minute
-    # build of the Regular faces.
+    # Generous: most of the wall clock is spent waiting on CI's own build
+    # of the Regular faces (about a minute across its parallel jobs).
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0

@@ -8,8 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
-from fontTools.pens.basePen import NullPen  # noqa: E402
-from verifylib import Checker, make_shaper  # noqa: E402
+from verifylib import Checker, hmtx_mismatches, make_shaper  # noqa: E402
 
 FONT = Path(sys.argv[1]) if len(sys.argv) > 1 else (
     ROOT / "dist" / "ShoyuCodeProJP-Regular.otf"
@@ -130,16 +129,16 @@ def main():
     # renderers, which read hmtx, but wrong for anything reading the CFF
     # (a TTFont glyph set's .width is hmtx's; the charstring's own decoded
     # width is what has to be compared)
-    charstrings = tf["CFF "].cff[0].CharStrings
-    mismatched = []
-    for name in tf.getGlyphOrder():
-        cs = charstrings[name]
-        cs.draw(NullPen())
-        if cs.width != hmtx[name][0]:
-            mismatched.append((name, cs.width, hmtx[name][0]))
-    assert not mismatched, (f"{FONT}: CFF width != hmtx for {len(mismatched)} glyphs, "
-                            f"e.g. {mismatched[:5]}")
-    print(f"ok   CFF charstring widths agree with hmtx ({len(tf.getGlyphOrder())} glyphs)")
+    # -- and the left side bearing must be the outline's xMin (a CFF
+    # font's lsb is nothing fontTools maintains: the Latin donors used to
+    # carry SCP's default-master bearings at every weight)
+    widths, bearings = hmtx_mismatches(tf)
+    assert not widths, (f"{FONT}: CFF width != hmtx for {len(widths)} glyphs, "
+                        f"e.g. {widths[:5]}")
+    assert not bearings, (f"{FONT}: hmtx lsb != outline xMin for {len(bearings)} glyphs, "
+                          f"e.g. {bearings[:5]}")
+    print(f"ok   CFF charstring widths and bearings agree with hmtx "
+          f"({len(tf.getGlyphOrder())} glyphs)")
 
     angle = tf["post"].italicAngle
     if italic:

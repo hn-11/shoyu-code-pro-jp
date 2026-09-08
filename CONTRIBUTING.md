@@ -38,7 +38,17 @@ SCP_VF_U=... SCP_VF_I=... MONA_VF=... SHCJ_TTC=... \
 SHS_DIR=... SHCJ_TTC=... \
   python scripts/build.py                 # 全ファミリー
   python scripts/build.py "Regular"       # Regular 系のみ（動作確認用、速い）
+  python scripts/build.py "Light Upright Term"   # 1 面だけ
 ```
+
+フィルタは語の組み合わせで、面がすべての語に合うものを組みます:
+ウェイト名（`Light` … `Heavy`）、書体（`Upright` / `Italic`）、変種
+（`35` / `Term` / 変種なしの基本ファミリーは `base`。`build_latin.py` では
+プロファイル名 `ship` / `term` がこの位置に入る）。同じ種類の語を複数
+書けばそのいずれか（`"Light Normal base"` は基本ファミリーの Light と
+Normal の 4 面）。`"Regular"` は Regular と Regular Italic の全ファミリー、
+`"Light Italic"` はファミリーごとに 1 面、`""`（空文字列）だけなら基本
+ファミリーです。
 
 可変フォント版の Sumi Moji は `python scripts/build_latin_vf.py`
 （`build_latin.py` と同じ環境変数）で `dist/latin/SumiMoji[wght].otf` /
@@ -56,14 +66,23 @@ python scripts/verify.py dist/ShoyuCodeProJP-Regular.otf
 グリフの合成漏れやメトリクスの崩れなど、シェイピングまわりの回帰を
 チェックします。変更を提出する前に、少なくとも `Regular` 面で通ることを
 確認してください。CI（`.github/workflows/ci.yml`）でも push / PR 時に
-同じ検証が走ります。ビルド前後の出力を比べたいときは
+同じ検証が走ります（Regular Upright / Regular Italic / Light Italic を
+ドナー別に 1 ジョブずつ、可変フォントと Sumi Moji への Nerd Fonts パッチ
+（記号セット 1 つのスモークテスト）を 1 ジョブ、並列に組んで 1 分程度。リリース
+`release.yml` はファミリー × ウェイト 2 つ組の 9 ジョブのあと `package`
+ジョブが可変フォントを組み、`harmonize_latin.py` → `makeotc.py` → zip →
+GitHub Release を作り、5 分程度）。複数の面をまとめて検証するときは
+`python scripts/verify_many.py dist/*.otf dist/latin/*.otf` が面ごとに
+プロセスを分けて走らせます。ビルド前後の出力を比べたいときは
 `python scripts/golden.py <前の dist> <今の dist>` が cmap・送り幅・
 シェーピング・アウトライン・メタデータ・ヒントを突き合わせます。
 
-NF（Nerd Fonts）変種の生成を試す場合:
+NF（Nerd Fonts）変種の生成を試す場合（`fontforge` が PATH にあること。CI は
+FontForge の AppImage を展開して使う。`SHOYU_NERD_SETS=--powerline` の
+ように記号セットを絞ると 1 面数秒で終わり、パイプラインの確認に向く）:
 
 ```sh
-python scripts/nerdpatch.py <FontPatcher dir>
+python scripts/nerdpatch.py <FontPatcher dir> [名前の一部]
 ```
 
 ## 合字を追加・変更する（`data/mona_ligs.json`）
@@ -122,7 +141,7 @@ python scripts/nerdpatch.py <FontPatcher dir>
    換える（ダウンロード URL を事前に HEAD で検証するので、上流がアセット
    名を変えた場合はここで落ちる）。
 2. `chore/upstream-sync` ブランチに PR を作成する。
-3. CI（`lint-test` / `build`）が緑になるのを待って squash マージする。
+3. CI の各ジョブ（`upstream-sync.yml` の `REQUIRED_CHECKS`）が緑になるのを待って squash マージする。
 4. パッチを 1 つ上げたタグで `release.yml` を dispatch する。
 
 Issue は起票しません。PR 自体が同じ情報に加えて「そのピンでビルドが通る」

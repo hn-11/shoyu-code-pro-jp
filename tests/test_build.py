@@ -9,7 +9,7 @@ import uharfbuzz as hb
 from fontTools.fontBuilder import FontBuilder
 from fontTools.misc.roundTools import otRound
 from fontTools.pens.t2CharStringPen import T2CharStringPen
-from fontTools.ttLib import newTable
+from fontTools.ttLib import TTFont, newTable
 from fontTools.ttLib.tables import otTables
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -147,6 +147,24 @@ def test_rescaled_advance_all_ligature_widths():
     ("35", "Heavy", "Heavy Italic", "35", True),
     ("", "Bold", "Bold", "", True),          # "" selects the base family
     ("", "Bold", "Bold", "Term", False),
+    ("Light Upright", "Light", "Light", "", True),
+    ("Light Upright", "Light", "Light Italic", "", False),
+    ("Light Upright", "Light", "Light", "Term", True),   # every family
+    ("Light Upright Term", "Light", "Light", "Term", True),
+    ("Light Upright Term", "Light", "Light", "", False),
+    ("Term Regular Italic", "Regular", "Regular Italic", "Term", True),
+    ("Upright", "Bold", "Bold", "35", True),
+    ("Upright", "Bold", "Bold Italic", "35", False),
+    ("Regular Upright base", "Regular", "Regular", "", True),
+    ("Regular Upright base", "Regular", "Regular", "35", False),
+    ("Semibold", "Bold", "Bold", "", False),  # not a weight, suffix or style
+    ("Regular Term Extra", "Regular", "Regular", "Term", True),   # "Extra": a variant nobody has
+    ("Regular Extra", "Regular", "Regular", "Term", False),
+    ("Light Normal base", "Normal", "Normal Italic", "", True),   # either weight
+    ("Light Normal base", "Regular", "Regular", "", False),
+    ("Light Normal Term 35", "Light", "Light", "35", True),      # either variant
+    ("Light Normal Term 35", "Light", "Light", "", False),
+    ("Upright Italic Bold", "Bold", "Bold Italic", "Term", True),
 ])
 def test_face_matches(only, weight, label, suffix, want):
     assert build.face_matches(only, weight, label, suffix) is want
@@ -1070,3 +1088,97 @@ def test_shift_charstring_declines_a_seac_endchar():
     cs, private = _t2([100, 200, 65, 66, "endchar"])
     assert not build.shift_charstring(cs, 100, 1200, private)
     assert cs.program == [100, 200, 65, 66, "endchar"]
+
+
+# --- glyph_bounds / update_bbox (extents in one pass, saves without recalc) --
+
+def _extents_font():
+    """CFF font with vertical metrics, saved and reloaded so every
+    charstring carries bytecode (as a loaded Source Han Sans does)."""
+    boxes = {"A": (20, -30, 520, 700), "B": (-40, 0, 300, 850)}
+    glyph_order = [".notdef", "A", "B", "space"]
+    charstrings = {}
+    for g in glyph_order:
+        pen = T2CharStringPen(700 if g == "B" else 600, None)
+        if g in boxes:
+            x0, y0, x1, y1 = boxes[g]
+            pen.moveTo((x0, y0))
+            pen.lineTo((x1, y0))
+            pen.lineTo((x1, y1))
+            pen.lineTo((x0, y1))
+            pen.closePath()
+        charstrings[g] = pen.getCharString()
+    fb = FontBuilder(1000, isTTF=False)
+    fb.setupGlyphOrder(glyph_order)
+    fb.setupCharacterMap({ord("A"): "A", ord("B"): "B", ord(" "): "space"})
+    fb.setupCFF("Test", {"FullName": "Test"}, charstrings, {})
+    fb.setupHorizontalMetrics({".notdef": (600, 0), "A": (600, 20),
+                               "B": (700, -40), "space": (600, 0)})
+    fb.setupHorizontalHeader(ascent=800, descent=-200)
+    fb.setupVerticalMetrics({g: (1000, 100) for g in glyph_order})
+    fb.setupVerticalHeader(ascent=880, descent=-120)
+    fb.setupNameTable({"familyName": "Test", "styleName": "Regular"})
+    fb.setupOS2()
+    fb.setupPost()
+    buf = io.BytesIO()
+    fb.font.save(buf)
+    buf.seek(0)
+    return TTFont(buf), boxes
+
+
+def test_glyph_bounds_measures_every_inked_glyph_and_keeps_bytecode():
+    font, boxes = _extents_font()
+    charstrings = font["CFF "].cff.topDictIndex[0].CharStrings
+    assert all(charstrings[g].bytecode is not None for g in boxes)
+
+    bounds = build.glyph_bounds(font)
+
+    assert bounds == boxes                     # blank glyphs are absent
+    # drawn, but saved as loaded: the bytecode is back, nothing recompiles
+    assert all(charstrings[g].bytecode is not None for g in boxes)
+    assert all(charstrings[g].program is None for g in boxes)
+
+
+def test_update_bbox_sets_head_cff_hhea_and_vhea_like_fonttools():
+    import copy
+    font, boxes = _extents_font()
+    stale = font["hhea"]
+    stale.xMaxExtent = stale.minLeftSideBearing = 0
+
+    assert build.update_bbox(font) == [-40, -30, 520, 850]
+
+    head = font["head"]
+    assert (head.xMin, head.yMin, head.xMax, head.yMax) == (-40, -30, 520, 850)
+    cff = font["CFF "].cff
+    assert cff[cff.fontNames[0]].FontBBox == [-40, -30, 520, 850]
+    # the same numbers fontTools' save-time recalc would produce
+    for tag, fields in (("hhea", ("advanceWidthMax", "minLeftSideBearing",
+                                  "minRightSideBearing", "xMaxExtent")),
+                        ("vhea", ("advanceHeightMax", "minTopSideBearing",
+                                  "minBottomSideBearing", "yMaxExtent"))):
+        ref = copy.copy(font[tag])
+        ref.recalc(font)
+        assert {f: getattr(font[tag], f) for f in fields} == \
+            {f: getattr(ref, f) for f in fields}, tag
+    assert font["hhea"].advanceWidthMax == 700
+    assert font["hhea"].minLeftSideBearing == -40
+    assert font["hhea"].minRightSideBearing == 600 - 20 - 500   # A: 80
+    assert font["hhea"].xMaxExtent == 20 + 500                  # A: 520
+
+
+def test_update_bbox_leaves_an_inkless_font_alone():
+    font = make_font([".notdef", "a"], {ord("a"): "a"}, {"a": 600})
+    assert build.update_bbox(font) is None
+
+
+def test_sync_lsb_sets_bearings_from_the_outlines():
+    font, boxes = _extents_font()
+    metrics = font["hmtx"].metrics
+    metrics["A"] = (600, 0)          # stale: the outline starts at 20
+    metrics["space"] = (600, 7)      # blank glyph: left alone
+
+    assert build.sync_lsb(font) == 1
+
+    assert metrics["A"] == (600, 20) and metrics["B"] == (700, -40)
+    assert metrics["space"] == (600, 7)
+    assert build.sync_lsb(font) == 0

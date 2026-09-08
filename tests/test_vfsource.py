@@ -91,3 +91,21 @@ def test_matched_caches_by_rounded_target(vf_path):
     assert src.matched(70.3) is a
     assert src.matched(71) is not a
     assert src.matched(70, erode=False) is not a
+
+
+def test_search_probes_without_instancing(vf_path, monkeypatch):
+    """The nine halvings read the VF's glyph set at each location; only
+    the converged wght is instanced (once, for the cached instance)."""
+    src = build.VFSource(vf_path, 1.0, {"wght": 0})
+    calls = []
+    real = src._instance
+
+    def counted(axes):
+        calls.append(axes["wght"])
+        return real(axes)
+    monkeypatch.setattr(src, "_instance", counted)
+    inst = src.matched(70)
+    assert len(calls) == 1
+    assert calls[0] == inst.wght
+    assert src.floor_bar() == pytest.approx(40)
+    assert len(calls) == 1          # the floor is a probe too

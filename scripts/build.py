@@ -34,11 +34,13 @@ for anyone who wants it back.
 
 Usage:
   python scripts/build.py [FILTER]
-  FILTER matches a face when it equals the weight name ("Bold"), the full
-  face label ("Bold Italic"), the variant suffix ("35" / "Term" / "" for
-  the base family), or is a leading word-run of the label ("Regular" also
-  takes "Regular Italic", and "Bold" likewise takes "Bold Italic"). It is
-  a whole-word match, not a substring one.
+  FILTER is a run of words: weight names ("Bold"), styles ("Italic" /
+  "Upright") and variants ("35" / "Term" / "base" for the suffix-less
+  family; "" alone is that family). A face must be one of the words of
+  every kind named: "Regular" takes Regular and Regular Italic of every
+  family, "Light Italic" one face per family, "Light Upright Term" one
+  face, "Light Normal base" four (the release builds a family's two
+  weights per job). Whole words, never a substring match (face_matches).
   With no FILTER, dist/ShoyuCodeProJP*.otf is cleared before building, so a
   full build never leaves faces from an older roster behind. A filtered run
   never deletes anything.
@@ -61,11 +63,11 @@ import concurrent.futures
 import contextlib
 import copy
 import json
+import logging
 import math
 import os
 import shutil
 import string
-import subprocess
 import sys
 import tempfile
 import traceback
@@ -74,6 +76,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 import pathops
+from fontTools.misc.roundTools import otRound
 from fontTools.otlLib import builder as otl
 from fontTools.pens.boundsPen import BoundsPen
 from fontTools.pens.recordingPen import RecordingPen
@@ -269,10 +272,18 @@ def _quad_roots(a, b, c):
     return [(-b + r) / (2 * a), (-b - r) / (2 * a)]
 
 
+def _glyphset(source):
+    """`source` as a glyph set: a TTFont's, or a glyph set handed over as
+    is (TTFont.getGlyphSet(location=...) for a VF probed at a location
+    without instancing it — see VFSource._probe_bar)."""
+    return source.getGlyphSet() if hasattr(source, "getGlyphSet") else source
+
+
 def _record_contours(font, glyph_name):
-    """[(kind, points, start_point), ...] per closed OR open contour."""
+    """[(kind, points, start_point), ...] per closed OR open contour.
+    `font` is a TTFont or a glyph set (_glyphset)."""
     pen = RecordingPen()
-    font.getGlyphSet()[glyph_name].draw(pen)
+    _glyphset(font)[glyph_name].draw(pen)
     contours, cur, cursor, start = [], [], None, None
     for op, args in pen.value:
         if op == "moveTo":
@@ -300,7 +311,8 @@ def bar_thickness(font, glyph_name):
 
     The minimum contour height over all contours: both bars of '=' have the
     same thickness, so min-height is robust against contour order (and
-    against a font whose '=' carries extra bits)."""
+    against a font whose '=' carries extra bits). `font` is a TTFont or a
+    glyph set."""
     heights = [b[3] - b[1] for b in _contour_bounds(
         _record_contours(font, glyph_name))]
     return min(heights) if heights else 0
@@ -323,13 +335,15 @@ class VFSource:
         self._ranges = None
 
     def _source(self):
-        """Load (and fully decompile) the VF once; iterations deepcopy it."""
+        """The VF, loaded once: the search probes it (getGlyphSet at a
+        location) and reads its axis ranges; it is never instanced in
+        place."""
         if self._vf is None:
             vf = TTFont(self.vf_path)
-            vf.ensureDecompiled()
             self._vf = vf
             self._ranges = {a.axisTag: (a.minValue, a.maxValue)
                             for a in vf["fvar"].axes}
+            self._equals = vf.getBestCmap()[ord("=")]
         return self._vf
 
     def axis_range(self, tag, default):
@@ -337,9 +351,20 @@ class VFSource:
         return self._ranges.get(tag, default)
 
     def _instance(self, axes):
-        inst = copy.deepcopy(self._source())
+        """A static instance at `axes`: a fresh load of the file (faster
+        than deep-copying a decompiled VF) instanced in place."""
+        inst = TTFont(self.vf_path)
         instantiateVariableFont(inst, axes, inplace=True)
         return inst
+
+    def _probe_bar(self, axes):
+        """The '=' bar at `axes`, in the donor's units, read off the VF's
+        own glyph set at that location (fontTools blends the outline on
+        the fly): no instancing, so the nine-step search costs
+        milliseconds instead of nine instancings. Unrounded — the
+        instancer rounds its outlines, so the instance built at the
+        converged wght can measure up to ~1u off this probe."""
+        return bar_thickness(self._source().getGlyphSet(location=axes), self._equals)
 
     def _axes_for(self, slant):
         """The axis template with `slant` on the slnt axis, clamped to
@@ -358,38 +383,37 @@ class VFSource:
     def matched_wght(self, target_units, slant=None):
         """The wght matched() converges on for `target_units`, as a plain
         number (build_latin_vf.py places fvar instances and masters by it,
-        so they sit exactly where the static faces are). Nine halvings of
-        the axis: ~1.4 wght on SCP's 700-wide axis, well under 1u of bar.
-        Targets are cached by their rounded value, so two weights whose
-        SHCJ bars round together would share one wght — the six SHCJ
-        faces are 15u+ apart, and build_latin_vf.user_axis rejects a
-        non-monotonic pairing anyway."""
-        return self.matched(target_units, slant, erode=False).wght
+        so they sit exactly where the static faces are) — the search
+        alone, no instance built. Nine halvings of the axis: ~1.4 wght on
+        SCP's 700-wide axis, well under 1u of bar."""
+        return self._converge(target_units / self.scale, self._axes_for(slant))
+
+    def _converge(self, pre_scale_target, axes):
+        """Nine halvings of the wght axis on the '=' bar (in the donor's
+        units), probing the VF's glyph set at each step."""
+        lo, hi = self.axis_range("wght", (200.0, 800.0))
+        lo, hi = float(lo), float(hi)
+        for _ in range(9):
+            mid = (lo + hi) / 2
+            if self._probe_bar(dict(axes, wght=mid)) < pre_scale_target:
+                lo = mid
+            else:
+                hi = mid
+        return (lo + hi) / 2
 
     def floor_bar(self, slant=None):
         """The '=' bar, in the consumer's units, at the wght axis floor:
         the thinnest this donor can go without erosion."""
         lo, _ = self.axis_range("wght", (200.0, 800.0))
-        probe = self._instance(dict(self._axes_for(slant), wght=float(lo)))
-        return bar_thickness(probe, probe.getBestCmap()[ord("=")]) * self.scale
+        return self._probe_bar(dict(self._axes_for(slant), wght=float(lo))) * self.scale
 
     def matched(self, target_units, slant=None, erode=True):
         key = (round(target_units), slant if slant is None else round(slant), erode)
         if key in self._cache:
             return self._cache[key]
         pre_scale_target = target_units / self.scale
-        lo, hi = self.axis_range("wght", (200.0, 800.0))
-        lo, hi = float(lo), float(hi)
         axes = self._axes_for(slant)
-        for _ in range(9):
-            mid = (lo + hi) / 2
-            probe = self._instance(dict(axes, wght=mid))
-            t = bar_thickness(probe, probe.getBestCmap()[ord("=")])
-            if t < pre_scale_target:
-                lo = mid
-            else:
-                hi = mid
-        wght = (lo + hi) / 2
+        wght = self._converge(pre_scale_target, axes)
         inst = self._instance(dict(axes, wght=wght))
         inst.wght = wght
         # slant the axis could not deliver (SCP Italic is -12, Monaspace's
@@ -537,7 +561,7 @@ def charstring_lsb(cs):
     except Exception as exc:
         print(f"  WARNING: calcBounds failed for appended glyph ({exc}); lsb=0")
         return 0
-    return round(bounds[0]) if bounds else 0
+    return otRound(bounds[0]) if bounds else 0
 
 
 def vmtx_donor(font, fullwidth=True):
@@ -1935,24 +1959,68 @@ def rescale(font, cell, ky=None, also_rescale=()):
     note_redrawn(font, new_cs)
 
 
-def update_bbox(font):
-    """Recompute the font bounding box. Grafting, widening and rescaling all
-    move ink around, and nothing else rewrites CFF FontBBox / head — a stale
-    box makes rasterizers clip or mis-cache glyphs."""
+def glyph_bounds(font):
+    """{glyph name: (xMin, yMin, xMax, yMax)} for every glyph with ink,
+    each drawn once. Drawing a CFF charstring decompiles it, and a
+    decompiled charstring is recompiled at save — all 19k of a JP face,
+    for a pass that changed nothing — so an untouched glyph gets its
+    bytecode back and saves as it was loaded."""
     gs = font.getGlyphSet()
-    xmin = ymin = xmax = ymax = None
+    charstrings = None
+    if "CFF " in font:
+        charstrings = font["CFF "].cff.topDictIndex[0].CharStrings
+    bounds = {}
     for name in font.getGlyphOrder():
+        cs = charstrings[name] if charstrings is not None else None
+        bytecode = cs.bytecode if cs is not None else None
         pen = BoundsPen(gs)
         gs[name].draw(pen)
-        if pen.bounds is None:
+        if bytecode is not None:
+            cs.bytecode, cs.program = bytecode, None
+        if pen.bounds is not None:
+            bounds[name] = pen.bounds
+    return bounds
+
+
+def sync_lsb(font):
+    """hmtx left side bearings from the outlines (otRound(xMin), like
+    charstring_lsb; a blank glyph keeps its own). A CFF font's lsb is nothing
+    fontTools maintains: an instanced VF keeps the default master's
+    hmtx while its outlines move, so build_latin.static_base's faces
+    carried SCP's wght-200 bearings at every weight. Returns the number
+    of glyphs whose lsb changed."""
+    bounds = glyph_bounds(font)
+    metrics = font["hmtx"].metrics
+    changed = 0
+    for name, (adv, lsb) in list(metrics.items()):
+        if name not in bounds:
             continue
-        x0, y0, x1, y1 = pen.bounds
-        xmin = x0 if xmin is None else min(xmin, x0)
-        ymin = y0 if ymin is None else min(ymin, y0)
-        xmax = x1 if xmax is None else max(xmax, x1)
-        ymax = y1 if ymax is None else max(ymax, y1)
-    if xmin is None:
+        want = otRound(bounds[name][0])
+        if want != lsb:
+            metrics[name] = (adv, want)
+            changed += 1
+    return changed
+
+
+def update_bbox(font):
+    """Recompute the font's extents from its outlines, in one pass:
+    the CFF FontBBox, head's box and the hhea / vhea extents
+    (advanceWidthMax, minLeftSideBearing, minRightSideBearing, xMaxExtent
+    and their vertical counterparts — fontTools' own hhea.recalc /
+    vhea.recalc, from the same bounds). Grafting, widening and rescaling
+    all move ink around, and a stale box makes rasterizers clip or
+    mis-cache glyphs. Every save of a face in this repo runs with
+    TTFont.recalcBBoxes off (fontTools would otherwise draw every glyph
+    three more times per save — 7 s of a JP face's 0.3 s save — and
+    recompile them all), so this is the one place the extents are set.
+    Returns the box, or None for a font with no ink."""
+    bounds = glyph_bounds(font)
+    if not bounds:
         return None
+    xmin = min(b[0] for b in bounds.values())
+    ymin = min(b[1] for b in bounds.values())
+    xmax = max(b[2] for b in bounds.values())
+    ymax = max(b[3] for b in bounds.values())
     box = [math.floor(xmin), math.floor(ymin), math.ceil(xmax), math.ceil(ymax)]
     # CFF2 (a variable font, build_latin_vf.py) has no FontBBox — head's
     # box is the only one that exists there
@@ -1961,7 +2029,30 @@ def update_bbox(font):
         cff[cff.fontNames[0]].FontBBox = box
     head = font["head"]
     head.xMin, head.yMin, head.xMax, head.yMax = box
+    if "hmtx" in font and "hhea" in font:
+        _update_extents(font["hhea"], font["hmtx"].metrics, bounds, 0,
+                        ("advanceWidthMax", "minLeftSideBearing",
+                         "minRightSideBearing", "xMaxExtent"))
+    if "vmtx" in font and "vhea" in font:
+        _update_extents(font["vhea"], font["vmtx"].metrics, bounds, 1,
+                        ("advanceHeightMax", "minTopSideBearing",
+                         "minBottomSideBearing", "yMaxExtent"))
     return box
+
+
+def _update_extents(table, metrics, bounds, axis, fields):
+    """hhea (axis 0) / vhea (axis 1) extents the way fontTools' recalc
+    computes them: the advance max over every glyph, and over the inked
+    ones the min side bearing from the metrics table, the min far-side
+    bearing and the max extent from the integer-widened outline size."""
+    adv_max, min_sb, min_far, max_extent = fields
+    setattr(table, adv_max, max(adv for adv, _ in metrics.values()))
+    sizes = {name: int(math.ceil(b[2 + axis]) - math.floor(b[axis]))
+             for name, b in bounds.items()}
+    sb = {name: metrics[name][1] for name in sizes}
+    setattr(table, min_sb, min(sb.values()))
+    setattr(table, min_far, min(metrics[n][0] - sb[n] - sizes[n] for n in sizes))
+    setattr(table, max_extent, max(sb[n] + sizes[n] for n in sizes))
 
 
 def classify_marks(font, marks):
@@ -2174,6 +2265,7 @@ def subroutinize_face(path):
     subroutines — smaller than the v3.2.0 files — and keeps the hints."""
     import cffsubr
     font = TTFont(path)
+    font.recalcBBoxes = False   # extents were set by update_bbox; outlines unchanged
     cffsubr.subroutinize(font)
     font.save(path)
 
@@ -2190,32 +2282,102 @@ def autohint_face(path, glyph_names):
         return
     if not glyph_names:
         return
+    # otfautohint's own entry point, in this process rather than a
+    # `python -m afdko.otfautohint` child: its font is opened through
+    # autohint.openFont, and that font gets TTFont.recalcBBoxes switched
+    # off before it is saved (hints move no outline; update_bbox set the
+    # extents; fontTools' recalc would draw every glyph of the face three
+    # times over — 7 s a face). The glyph hinting still fans out over
+    # otfautohint's own process pool.
+    from afdko.otfautohint import autohint
+    from afdko.otfautohint.__main__ import get_options
+
     path = Path(path)
     with tempfile.TemporaryDirectory() as tmp:
         listing = Path(tmp) / "glyphs.txt"
         listing.write_text(",".join(sorted(glyph_names)))
         out = Path(tmp) / path.name
-        cmd = [sys.executable, "-m", "afdko.otfautohint",
-               "--glyphs-file", str(listing), "-o", str(out), str(path)]
-        proc = subprocess.run(cmd, stdout=subprocess.PIPE, check=False,
-                              stderr=subprocess.STDOUT, text=True)
-        if proc.returncode != 0 or not out.exists():
-            raise RuntimeError(f"otfautohint failed for {path.name}:\n"
-                               f"{proc.stdout[-2000:]}")
-        warnings = [ln for ln in proc.stdout.splitlines()
-                    if "WARNING" in ln or "ERROR" in ln]
+        options, _ = get_options(["--glyphs-file", str(listing),
+                                  "-o", str(out), str(path)])
+        # get_options configured root logging; otfautohint's own per-glyph
+        # warnings are counted below, not printed (as when it was a child
+        # process), other libraries' warnings stay visible
+        for handler in logging.root.handlers:
+            if not any(isinstance(f, _MuteOtfautohint) for f in handler.filters):
+                handler.addFilter(_MuteOtfautohint())
+        counter = _WarningCounter()
+        logger = logging.getLogger("afdko.otfautohint")
+        logger.addHandler(counter)
+        open_font = autohint.openFont
+
+        def open_without_recalc(font_path, opts):
+            data = open_font(font_path, opts)
+            data.ttFont.recalcBBoxes = False
+            return data
+
+        autohint.openFont = open_without_recalc
+        try:
+            autohint.hintFiles(options)
+        finally:
+            autohint.openFont = open_font
+            logger.removeHandler(counter)
+        if not out.exists():
+            raise RuntimeError(f"otfautohint wrote nothing for {path.name}")
         shutil.move(str(out), str(path))
-    print(f"  autohint: {len(glyph_names)} glyphs, {len(warnings)} warnings")
+    print(f"  autohint: {len(glyph_names)} glyphs, {counter.count} warnings")
+
+
+class _MuteOtfautohint(logging.Filter):
+    """Drops afdko's records below ERROR from a handler."""
+
+    def filter(self, record):
+        return not (record.name.startswith("afdko") and record.levelno < logging.ERROR)
+
+
+class _WarningCounter(logging.Handler):
+    """Counts otfautohint's WARNING+ records (the per-glyph notes it
+    used to print to stdout when run as a child process)."""
+
+    def __init__(self):
+        super().__init__(logging.WARNING)
+        self.count = 0
+
+    def emit(self, record):
+        self.count += 1
 
 
 def face_matches(only, weight, face_label, suffix):
-    """Command-line filter. Exact on the weight, the full face label or the
-    variant suffix, plus a word-boundary prefix so "Regular" still takes
-    "Regular Italic" — whole words only, never a substring match."""
+    """Command-line filter: words of three kinds — weight names
+    ("Regular"), the styles "Italic" / "Upright", and variants ("Term",
+    "35", or "base" for the suffix-less family; "" alone is that family
+    too). A face matches when, for every kind named, it is one of the
+    words of that kind: "Regular" takes Regular and Regular Italic of
+    every family, "Light Italic" one face per family, "Light Upright
+    Term" exactly one face, "Light Normal base" four (the release
+    workflow builds a family's two weights per job). Whole words only,
+    never a substring match; a word that is none of these is a variant
+    nobody has, so on its own it matches nothing."""
     if only is None:
-        return True   # "" is a real filter: the base (suffix-less) family
-    return (face_label == only or weight == only or suffix == only
-            or face_label.startswith(only + " "))
+        return True
+    words = only.split()
+    if not words:
+        return suffix == ""
+    weights = {w for w, _, _ in FACES}
+    styles = {"Italic", "Upright"}
+    kinds = {"weight": [], "style": [], "variant": []}
+    for word in words:
+        if word in weights:
+            kinds["weight"].append(word)
+        elif word in styles:
+            kinds["style"].append(word)
+        elif word == "base":
+            kinds["variant"].append("")
+        else:
+            kinds["variant"].append(word)
+    style = "Italic" if face_label.endswith(" Italic") else "Upright"
+    return all(value in named for value, named in
+               ((weight, kinds["weight"]), (style, kinds["style"]), (suffix, kinds["variant"]))
+               if named)
 
 
 def env_paths(spec):
@@ -2263,7 +2425,10 @@ def run_faces(jobs, worker, label, on_result, pool_from=3):
 
 def write_face(font, out, hint_glyphs):
     """Save `font` to `out`, then hint `hint_glyphs` (otfautohint) and
-    subroutinize the file in place — the tail every static face shares."""
+    subroutinize the file in place — the tail every static face shares.
+    The caller has run update_bbox: the save does not recompute the
+    extents (see there)."""
+    font.recalcBBoxes = False
     font.save(out)
     autohint_face(out, hint_glyphs)
     subroutinize_face(out)
