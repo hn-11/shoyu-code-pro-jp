@@ -57,7 +57,8 @@ def scp_reference(italic):
         return None, None
     scp = TTFont(path)
     weight_pos = {w: round(v, 2) for w, v in
-                  build_latin_vf.weight_positions(scp, shcj, italic).items()}
+                  build_latin_vf.weight_positions(build_latin_vf.scp_source(path),
+                                                  shcj, italic).items()}
     design, breaks = build_latin_vf.scp_design_axis(scp)
     axis = next(a for a in scp["fvar"].axes if a.axisTag == "wght")
     _, _, _, _, to_scp = build_latin_vf.user_axis(weight_pos, design, breaks,

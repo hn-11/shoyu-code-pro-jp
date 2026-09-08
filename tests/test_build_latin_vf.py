@@ -171,7 +171,7 @@ def _vf_with_instances(default=400):
 
 def test_default_instance_takes_name_id_6_and_drops_its_private_record():
     font, ids = _vf_with_instances()
-    assert vf.name_default_instance_by_font(font) == "Regular"
+    vf.name_default_instance_by_font(font)
     insts = {i.coordinates["wght"]: i for i in font["fvar"].instances}
     assert insts[400].postscriptNameID == 6
     assert font["name"].getDebugName(ids["Regular"][1]) is None
@@ -186,7 +186,7 @@ def test_default_instance_missing_raises():
         vf.name_default_instance_by_font(font)
 
 
-# --- build_stat -------------------------------------------------------------
+# --- build.add_stat (family form, as the VF uses it) -------------------------------------------------------------
 
 def _stat_values(font):
     stat = font["STAT"].table
@@ -199,9 +199,9 @@ def _stat_values(font):
     return out
 
 
-def test_build_stat_uses_usweightclass_values():
+def test_add_stat_family_form_uses_usweightclass_values():
     font = _vf_meta()
-    vf.build_stat(font, italic=False)
+    build.add_stat(font, [w for w, _, _ in build.FACES], italic=False)
     vals = _stat_values(font)
     assert [(n, v) for n, v, _, _ in vals["wght"]] == \
         [(w, build.WEIGHT_CLASS[w]) for w, _, _ in build.FACES]
@@ -210,9 +210,9 @@ def test_build_stat_uses_usweightclass_values():
     assert vals["ital"] == [("Regular", 0, 0x2, 1)]
 
 
-def test_build_stat_italic_file_declares_ital_1():
+def test_add_stat_family_form_italic_file_declares_ital_1():
     font = _vf_meta()
-    vf.build_stat(font, italic=True)
+    build.add_stat(font, [w for w, _, _ in build.FACES], italic=True)
     assert _stat_values(font)["ital"] == [("Italic", 1, 0, None)]
 
 

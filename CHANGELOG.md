@@ -1,5 +1,49 @@
 # Changelog
 
+## Unreleased
+
+- セルフレビューで見つけた不具合の修正:
+  - JP 各面の合字グリフ（61 種 + cv99 の 2 種）の CFF charstring 幅が
+    hmtx の送り幅と 510u ずれていた（記号用 FD の nominalWidthX で符号化
+    した後に `add_latin_fd` が A の FD 複製へ移していたため。描画は hmtx を
+    読むので見た目には出ないが、CFF を読む処理には誤った幅が見えていた）。
+    `latin_ligatures` も他の追加処理と同じ A の FD で追加するようにし、
+    `verify.py` が全グリフの CFF 幅と hmtx の一致を検査する
+  - 600 セルの 35 / Term ファミリーで半角記号 ￩￪￫￬￭￮（U+FFE9〜FFEE）の
+    送り幅が 500 のままだった（`HALFWIDTH_FORMS` が U+FFDC で止まって
+    いた）。East Asian Width "H" の 2 範囲を対象にし、`verify.py` が
+    U+FFE9 を検査する
+  - `makeotc.py` / `nerdpatch.py` の `SumiMoji-*.otf` 探索が VF の
+    `SumiMoji-Italic[wght].otf` も拾い、リリースの TTC 化が 13 面で止まり
+    Nerd Fonts パッチが CFF2 の VF を受け取る状態だった。静的面だけを
+    列挙する `verifylib.static_faces` に置き換え
+  - Sumi Moji VF: `head` の外接矩形が既定マスター（Regular）だけの値
+    だったのをマスター全体の和にした。GSUB の FeatureParams を付け替えた
+    後に元の name レコード 73 件が参照されないまま残っていたのを削除。
+    `harmonize_win_metrics` は実行した面だけでなく出力ディレクトリ内の
+    ファミリー全面を対象にする（CI は Regular と Light Italic を別ステップ
+    で組む）。SCP VF のマスター位置の読み取りを wght 軸に限定
+  - `requirements.txt` の fontTools 下限を 4.52.4 に（`cffLib.CFF2ToCFF` と
+    `instantiateCFF2(round=)` を使うため。4.50 では import で落ちる）
+  - `_shcj_ref` がプール内で `sys.exit` していたのを例外に（他の面の
+    失敗と一緒に報告される）。`verify_latin_vf.py` は wght 軸が無い
+    フォントで FAIL を出して終了する
+- リファクタリング: 7 箇所に複製されていたグリフ追加の前置き
+  （`append_context`）、方針の違う 4 箇所の cmap 書き込み（`set_cmap`）、
+  `build.py` / `build_latin.py` の `main()` と面の後処理
+  （`env_paths` / `run_faces` / `write_face`）、STAT 構築（`add_stat` が
+  静的面の 1 値と VF の全値の両方を担当）、SHCJ のバー目標
+  （`shcj_bar_target`）、VF 側の wght 探索（`VFSource.matched_wght` /
+  `floor_bar` — 静的面と同じ探索になり、VF の名前付きインスタンスが
+  静的面と厳密に同じ位置に乗る）を共通化。検証・梱包スクリプト共通の
+  `scripts/verifylib.py`（HarfBuzz シェイパー、ok/FAIL 集計、ヒント
+  検出、静的面の列挙）。未使用の `mona_onecell` と 667 セル前提の
+  `MONA_K` 既定値、`fetch-upstreams` の未使用 `cache` 入力を削除。
+  面数が 3 以上ならフィルタ付きでもプロセスプールで組む
+- ドキュメント: CONTRIBUTING が旧い 1 段階ビルドを説明していたのを 2 段階
+  に更新。README / CHANGELOG の「Sumi Moji に TTC・NF は無い」を訂正
+  （リリースは `SumiMoji.ttc` / `SumiMoji-NerdFont.zip` を添付済み）
+
 ## v3.3.0
 
 - `scripts/build_latin_vf.py` を追加: Sumi Moji を CFF2 可変フォントとして

@@ -5,7 +5,7 @@ punctuation/ligatures/one-cell arrows — but assembled as a CFF2 variable
 font instead of twelve static instances. Two files come out, mirroring
 Source Code Pro's own Upright/Italic split:
 
-  dist/latin/SumiMoji[wght].otf         wght 200-900 (SCP's own range)
+  dist/latin/SumiMoji[wght].otf         wght 200-900 (usWeightClass terms)
   dist/latin/SumiMoji-Italic[wght].otf  from SCP_VF_I, Monaspace slnt +
                                         the residual shear mona_transform
                                         already applies for the static
@@ -82,7 +82,6 @@ from fontTools.designspaceLib import (
     SourceDescriptor,
 )
 from fontTools.misc.roundTools import noRound
-from fontTools.otlLib import builder as otl
 from fontTools.ttLib import TTFont
 from fontTools.varLib import build as varlib_build
 from fontTools.varLib import instancer
@@ -95,8 +94,7 @@ import build_latin  # noqa: E402
 
 CELL = build_latin.CELL     # 600, SCP's own advance
 MONA_K = build_latin.MONA_K  # 600/1240
-FAMILY = "Sumi Moji"
-PS_FAMILY = "SumiMoji"
+_, FAMILY, PS_FAMILY = build.LATIN_PROFILES["ship"]   # "Sumi Moji", "SumiMoji"
 
 STYLES = {
     # style -> (env var for the SCP VF, italic bool, output filename)
@@ -105,42 +103,56 @@ STYLES = {
 }
 
 
-def bisect_scp_wght(vf, target_bar, iters=16):
-    """Binary-search SCP's OWN wght (no Monaspace involved) so its '=' bar
-    equals `target_bar`. Used only to PLACE the fvar named instances / STAT
-    values at the SCP wght matching each SHCJ weight's bar — the same
-    pairing build.VFSource.matched does per static face, but that returns
-    an instanced font, not the raw wght number fvar/STAT need."""
-    axis = next(a for a in vf["fvar"].axes if a.axisTag == "wght")
-    lo, hi = float(axis.minValue), float(axis.maxValue)
-
-    def bar_at(wght):
-        inst = copy.deepcopy(vf)
-        instantiateVariableFont(inst, {"wght": wght}, inplace=True)
-        return build.bar_thickness(inst, inst.getBestCmap()[ord("=")])
-
-    for _ in range(iters):
-        mid = (lo + hi) / 2
-        if bar_at(mid) < target_bar:
-            lo = mid
-        else:
-            hi = mid
-    return (lo + hi) / 2
+def scp_source(scp_path):
+    """The SCP VF as a build.VFSource: wght only, bars in SCP's own units
+    (scale 1.0). Its matched() search is the one build_latin.py's static
+    faces are placed by, so matched_wght() puts the VF's named instances
+    exactly where the statics are."""
+    return build._vf_source(scp_path, 1.0, {"wght": 0})
 
 
-def weight_positions(vf, shcj_ttc_path, italic):
+def weight_positions(scp, shcj_ttc_path, italic):
     """{weight name: SCP wght} for the six named weights build.FACES lists
     — the SCP wght whose own '=' bar equals SHCJ's bar x 600/667 for that
     face, exactly build_latin.py's static pairing (build_face looks up
     the SHCJ Italic face for an italic style, same here — SHCJ's italic
-    faces do not measure the same bar as their upright counterparts)."""
+    faces do not measure the same bar as their upright counterparts).
+    `scp` is a scp_source()."""
     factor = CELL / build.CELL   # 600/667
-    out = {}
-    for weight, ref_name, _ in build.FACES:
-        ref = build._shcj_ref(shcj_ttc_path, ref_name + (" Italic" if italic else ""))
-        target = build.bar_thickness(ref, ref.getBestCmap()[ord("=")]) * factor
-        out[weight] = bisect_scp_wght(vf, target)
-    return out
+    return {weight: scp.matched_wght(build.shcj_bar_target(shcj_ttc_path, ref_name,
+                                                           italic, factor))
+            for weight, ref_name, _ in build.FACES}
+
+
+def confirm_scp_master_wghts(vf):
+    """The SCP VF's own wght master locations, read back from the CFF2
+    VarStore's region peaks (on the wght axis) through avar/fvar rather
+    than assumed — the variable Sumi Moji's masters go exactly where
+    SCP's own are, so no interpolation error is introduced on the SCP
+    side; only Monaspace needs matching per master.
+
+    A region's PeakCoord is in POST-avar normalized space; forward-map a
+    fine wght grid through fvar-normalize + avar and take, for each peak,
+    the raw wght whose forward map lands closest to it. Always includes
+    the axis default (peak 0.0, not itself stored as a region)."""
+    axes = [a.axisTag for a in vf["fvar"].axes]
+    wi = axes.index("wght")
+    axis = vf["fvar"].axes[wi]
+    avar = vf["avar"].segments.get("wght", {}) if "avar" in vf else {}
+    cff2 = vf["CFF2"].cff
+    td = cff2[cff2.fontNames[0]]
+    peaks = sorted({round(r.VarRegionAxis[wi].PeakCoord, 6)
+                    for r in td.VarStore.otVarStore.VarRegionList.Region} | {0.0})
+
+    def forward(wght):
+        lin = normalizeValue(wght, (axis.minValue, axis.defaultValue, axis.maxValue))
+        return piecewiseLinearMap(lin, avar) if avar else lin
+
+    grid = [(forward(w), w) for w in
+            (axis.minValue + i * (axis.maxValue - axis.minValue) / 7000
+             for i in range(7001))]
+    return sorted({round(min(grid, key=lambda fw: abs(fw[0] - peak))[1])
+                   for peak in peaks})
 
 
 def scp_design_axis(vf):
@@ -208,22 +220,22 @@ def user_axis(weight_pos, scp_design, scp_breaks, lo):
 
 
 def master_scp_wghts(scp_masters, to_scp, lo, default_u, hi_u, extra=()):
-    """SCP user wghts to instance our masters at: SCP's own master
-    locations inside our range, plus the Regular position (our default
-    master), the Heavy position (our axis maximum) and any `extra`
-    positions inside the range (the Monaspace floor, see mona_floor_wght)
-    — sorted. The caller rounds weight_pos to 1/100 wght first, so the
-    set dedupes exactly; an extra within 0.5 wght of a master is dropped."""
+    """SCP user wghts to instance our masters at: the axis minimum, the
+    Regular position (our default master) and the Heavy position (our
+    axis maximum) first — their exact values are load-bearing — then
+    SCP's own master locations and any `extra` positions (the Monaspace
+    floor, see mona_floor_wght) inside the range, each dropped when it
+    sits within 0.5 wght of a master already placed (two near-coincident
+    masters would give varLib a near-singular model). Sorted."""
     top = to_scp(hi_u)
-    ws = {float(lo), to_scp(default_u), top}
-    ws |= {float(w) for w in scp_masters if lo < w < top}
-    for w in extra:
+    ws = [float(lo), to_scp(default_u), top]
+    for w in [float(w) for w in scp_masters] + [round(float(w), 2) for w in extra]:
         if lo < w < top and all(abs(w - x) > 0.5 for x in ws):
-            ws.add(round(float(w), 2))
+            ws.append(w)
     return sorted(ws)
 
 
-def mona_floor_wght(vf, mona_source, slant):
+def mona_floor_wght(scp, mona_source, slant):
     """The SCP wght at which Monaspace's bar-matching first hits its own
     wght floor (Monaspace wght 200's '=' bar, at our scale, equals SCP's
     bar there). A master goes here: below it every master carries the
@@ -231,15 +243,9 @@ def mona_floor_wght(vf, mona_source, slant):
     the static faces' erode=False matching is), above it Monaspace
     tracks SCP's bar — without this master the VF would interpolate
     Monaspace linearly from the floor at wght 200 up to the 400 master,
-    putting e.g. Normal's punctuation 4u too heavy."""
-    axes = dict(mona_source.axes)
-    if slant is not None and "slnt" in axes:
-        smin, smax = mona_source.axis_range("slnt", (-11.0, 0.0))
-        axes["slnt"] = max(smin, min(smax, slant))
-    lo, _ = mona_source.axis_range("wght", (200.0, 800.0))
-    probe = mona_source._instance(dict(axes, wght=float(lo)))
-    floor_bar = build.bar_thickness(probe, probe.getBestCmap()[ord("=")]) * mona_source.scale
-    return bisect_scp_wght(vf, floor_bar)
+    putting e.g. Normal's punctuation 4u too heavy. `scp` is a
+    scp_source()."""
+    return scp.matched_wght(mona_source.floor_bar(slant))
 
 
 @contextlib.contextmanager
@@ -316,6 +322,7 @@ def harmonize_feature_names(font):
     string travels with the new ID."""
     gsub = font["GSUB"].table
     name = font["name"]
+    replaced = set()
     for i, fr in enumerate(gsub.FeatureList.FeatureRecord):
         params = fr.Feature.FeatureParams
         if params is None:
@@ -328,26 +335,16 @@ def harmonize_feature_names(font):
             canon = 900 + i
             name.setName(text, canon, 3, 1, 0x409)
             setattr(params, attr, canon)
-
-
-def build_stat(font, italic):
-    """STAT for the VF: all six named wght values in USER (usWeightClass)
-    terms — the same numbers build.add_stat stamps one-per-face into the
-    static faces (Regular elidable, linked to Bold) — plus this file's own
-    ital value (0 upright / 1 italic, upright linked to italic): Source
-    Code Pro's own two-file STAT convention (SourceCodeVF-Upright.otf /
-    -Italic.otf)."""
-    wght_values = []
-    for weight, _, _ in build.FACES:
-        v = {"value": build.WEIGHT_CLASS[weight], "name": weight}
-        if weight == "Regular":
-            v.update(flags=0x2, linkedValue=build.WEIGHT_CLASS["Bold"])
-        wght_values.append(v)
-    ital_value = ({"value": 1, "name": "Italic"} if italic else
-                  {"value": 0, "name": "Regular", "flags": 0x2, "linkedValue": 1})
-    axes = [{"tag": "wght", "name": "Weight", "values": wght_values},
-            {"tag": "ital", "name": "Italic", "values": [ital_value]}]
-    otl.buildStatTable(font, axes, elidedFallbackName="Regular", macNames=False)
+            if nid >= 256:
+                replaced.add(nid)
+    # the records the old IDs pointed at now hang from nothing (unless a
+    # canonical ID happens to coincide): drop them, or 70-odd strings of
+    # SCP's feature names ride along unreferenced
+    still_used = {getattr(fr.Feature.FeatureParams, attr, None)
+                  for fr in gsub.FeatureList.FeatureRecord if fr.Feature.FeatureParams
+                  for attr in ("UINameID", "FeatUILabelNameID")}
+    for nid in replaced - still_used:
+        name.removeNames(nameID=nid)
 
 
 def finalize_vf_names(vf, italic, version, credits, italic_angle):
@@ -363,14 +360,13 @@ def finalize_vf_names(vf, italic, version, credits, italic_angle):
     Source Code Pro's own VF omits them too — with fvar+STAT already
     describing the family, and nameID 1/2 here already being the plain
     RIBBI pair (no weight suffix at the file level), they are redundant
-    (and 4.64 does not itself add them for a VF)."""
-    ps = build.set_names(vf, "", "Regular", italic, italic_angle,
+    (and varLib does not itself add them for a VF)."""
+    build.set_names(vf, "", "Regular", italic, italic_angle,
                          version=version, credits=credits,
                          family_base=FAMILY, ps_base=PS_FAMILY, base_credit=None)
     new_ps = f"{PS_FAMILY}-{'Italic' if italic else 'Roman'}"
     name = vf["name"]
-    old3 = name.getDebugName(3) or f";;{ps}"
-    new3 = old3.rsplit(";", 1)[0] + ";" + new_ps
+    new3 = name.getDebugName(3).rsplit(";", 1)[0] + ";" + new_ps   # set_names wrote it
     name.names = [n for n in name.names if n.nameID not in (3, 6, 16, 17)]
     for nid, val in ((3, new3), (6, new_ps), (25, PS_FAMILY)):
         name.setName(val, nid, 3, 1, 0x409)
@@ -388,7 +384,7 @@ def name_default_instance_by_font(vf):
     or a record with the same value (fontbakery
     opentype/varfont/valid_default_instance_nameids); its subfamily name
     already equals nameID 2. The private record is dropped when nothing
-    else refers to it. Returns the default instance's style name."""
+    else refers to it."""
     fvar, name = vf["fvar"], vf["name"]
     default = {a.axisTag: a.defaultValue for a in fvar.axes}
     for inst in fvar.instances:
@@ -399,21 +395,21 @@ def name_default_instance_by_font(vf):
         if old not in (0xFFFF, 6) and not any(i.postscriptNameID == old
                                               for i in fvar.instances):
             name.removeNames(nameID=old)
-        return name.getDebugName(inst.subfamilyNameID)
+        return
     raise RuntimeError("no named instance at the axis default")
 
 
 def build_style(style, env, out_dir):
     env_key, italic, out_name = STYLES[style]
     scp_path = env[env_key]
-    label = "Italic" if italic else "Roman"
 
-    scp_masters = build_latin.confirm_scp_master_wghts(scp_path)
+    vf_meta = TTFont(scp_path)
+    vf_meta.ensureDecompiled()
+    scp_masters = confirm_scp_master_wghts(vf_meta)
     if len(scp_masters) != 3:
         raise RuntimeError(f"{style}: expected 3 SCP master locations, "
                            f"confirmed {scp_masters}")
-    vf_meta = TTFont(scp_path)
-    vf_meta.ensureDecompiled()
+    scp = scp_source(scp_path)
     axis = next(a for a in vf_meta["fvar"].axes if a.axisTag == "wght")
     if round(axis.defaultValue) not in scp_masters:
         raise RuntimeError(f"{style}: axis default {axis.defaultValue} is not "
@@ -431,13 +427,13 @@ def build_style(style, env, out_dir):
     # unrounded 856.768 vs a rounded 856.77 master maps to user 900.001,
     # which varLib rejects as out of range)
     weight_pos = {w: round(v, 2) for w, v in
-                  weight_positions(vf_meta, env["SHCJ_TTC"], italic).items()}
+                  weight_positions(scp, env["SHCJ_TTC"], italic).items()}
     lo_u, default_u, hi_u, axis_map, to_scp = user_axis(
         weight_pos, scp_design, scp_breaks, axis.minValue)
     ref_angle = (vf_meta["post"].italicAngle or -12.0) if italic else None
     mona_source = build._vf_source(env["MONA_VF"], MONA_K,
                                    {"wght": 0, "wdth": 100, "slnt": 0})
-    floor = mona_floor_wght(vf_meta, mona_source, ref_angle)
+    floor = mona_floor_wght(scp, mona_source, ref_angle)
     wghts = master_scp_wghts(scp_masters, to_scp, axis.minValue, default_u, hi_u,
                              extra=[floor])
     default_wght = round(to_scp(default_u), 2)
@@ -501,7 +497,7 @@ def build_style(style, env, out_dir):
     for w in wghts:
         src = SourceDescriptor()
         src.name = f"{style}-{w}"
-        src.path = f"<memory:{label}-{w}>"
+        src.path = f"<memory:{style}-{w}>"
         src.font = bases[w]
         src.location = {"wght": scp_design(w)}
         if w == default_wght:
@@ -523,8 +519,8 @@ def build_style(style, env, out_dir):
         raise RuntimeError(f"{style}: varLib produced no avar from the axis map")
 
     # 6. finishing touches, once, on the merged VF (measured on the
-    #    default master: varLib.build copies OS/2/head/hhea/post wholesale
-    #    from the default source when MVAR/HVAR are excluded)
+    #    default master: varLib.build builds the VF on the default source's
+    #    own tables; MVAR/HVAR excluded, nothing varies them)
     build.set_monospace_metadata(vf)
     build.set_latin_heights(vf)
     build_latin.use_typo_metrics(vf)
@@ -533,9 +529,18 @@ def build_style(style, env, out_dir):
     build.recalc_codepage_range(vf)
     ps = finalize_vf_names(vf, italic, env.get("SHOYU_VERSION"), credits,
                            ref_angle if ref_angle is not None else -12.0)
-    build_stat(vf, italic)
+    # STAT: every weight (Regular elidable, linked to Bold) plus this
+    # file's ital value — Source Code Pro's own two-file STAT convention
+    build.add_stat(vf, [w for w, _, _ in build.FACES], italic)
     name_default_instance_by_font(vf)
+    # head: update_bbox measures the DEFAULT instance (a CFF2 glyph set
+    # draws at the default); the VF's box is the union over the masters
     build.update_bbox(vf)
+    head = vf["head"]
+    head.xMin = min(b["head"].xMin for b in bases.values())
+    head.yMin = min(b["head"].yMin for b in bases.values())
+    head.xMax = max(b["head"].xMax for b in bases.values())
+    head.yMax = max(b["head"].yMax for b in bases.values())
 
     out_path = Path(out_dir) / out_name
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -543,7 +548,7 @@ def build_style(style, env, out_dir):
     return (f"{style}: masters at SCP wght {wghts}, user wght "
             f"{ {build.WEIGHT_CLASS[w]: round(v, 1) for w, v in weight_pos.items()} }, "
             f"ps={ps} glyphs={vf['maxp'].numGlyphs} -> "
-            f"{out_path.relative_to(out_dir)}", out_path)
+            f"{out_path.relative_to(out_dir)}")
 
 
 def main():
@@ -554,8 +559,7 @@ def main():
     out_dir = build.ROOT / "dist" / "latin"
     styles = [only] if only else list(STYLES)
     for style in styles:
-        msg, _ = build_style(style, env, str(out_dir))
-        print(msg)
+        print(build_style(style, env, str(out_dir)))
 
 
 if __name__ == "__main__":

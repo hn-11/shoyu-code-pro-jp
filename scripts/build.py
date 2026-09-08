@@ -339,13 +339,10 @@ class VFSource:
         instantiateVariableFont(inst, axes, inplace=True)
         return inst
 
-    def matched(self, target_units, slant=None, erode=True):
-        key = (round(target_units), slant if slant is None else round(slant), erode)
-        if key in self._cache:
-            return self._cache[key]
-        pre_scale_target = target_units / self.scale
-        lo, hi = self.axis_range("wght", (200.0, 800.0))
-        lo, hi = float(lo), float(hi)
+    def _axes_for(self, slant):
+        """The axis template with `slant` on the slnt axis, clamped to
+        what the font offers (Monaspace's floor is -11; SCP Italic is
+        -12 — mona_transform() shears the remainder in)."""
         axes = dict(self.axes)
         if slant is not None and "slnt" in axes:
             smin, smax = self.axis_range("slnt", (-11.0, 0.0))
@@ -354,6 +351,28 @@ class VFSource:
                 print(f"  slnt {slant:.2f} clamped to {clamped:.2f} "
                       f"(axis {smin}..{smax})")
             axes["slnt"] = clamped
+        return axes
+
+    def matched_wght(self, target_units, slant=None):
+        """The wght matched() converges on for `target_units`, as a plain
+        number (build_latin_vf.py places fvar instances and masters by it)."""
+        return self.matched(target_units, slant, erode=False).wght
+
+    def floor_bar(self, slant=None):
+        """The '=' bar, in the consumer's units, at the wght axis floor:
+        the thinnest this donor can go without erosion."""
+        lo, _ = self.axis_range("wght", (200.0, 800.0))
+        probe = self._instance(dict(self._axes_for(slant), wght=float(lo)))
+        return bar_thickness(probe, probe.getBestCmap()[ord("=")]) * self.scale
+
+    def matched(self, target_units, slant=None, erode=True):
+        key = (round(target_units), slant if slant is None else round(slant), erode)
+        if key in self._cache:
+            return self._cache[key]
+        pre_scale_target = target_units / self.scale
+        lo, hi = self.axis_range("wght", (200.0, 800.0))
+        lo, hi = float(lo), float(hi)
+        axes = self._axes_for(slant)
         for _ in range(9):
             mid = (lo + hi) / 2
             probe = self._instance(dict(axes, wght=mid))
@@ -364,6 +383,7 @@ class VFSource:
                 hi = mid
         wght = (lo + hi) / 2
         inst = self._instance(dict(axes, wght=wght))
+        inst.wght = wght
         # slant the axis could not deliver (SCP Italic is -12, Monaspace's
         # slnt floor is -11); mona_transform() shears the remainder in
         inst.residual_slant = (slant - axes["slnt"]
@@ -814,7 +834,7 @@ def copy_line_metrics(base, ref):
 # every sample character for it is in the final cmap. Only these bits are
 # touched by recalc_codepage_range() — everything else in the field (Mac
 # charset, OEM/DOS, codepages we don't sample for...) stays whatever
-# Source Han Sans declared.
+# the base font declared.
 CODEPAGE_SAMPLES = {
     0: "éàü",    # 1252 Latin 1
     1: "łőřș",   # 1250 Latin 2
@@ -827,7 +847,7 @@ CODEPAGE_SAMPLES = {
 
 def recalc_codepage_range(font):
     """Set the ulCodePageRange1 bits CODEPAGE_SAMPLES covers from the final
-    cmap; leave every other bit as inherited from the SHS base."""
+    cmap; leave every other bit as inherited from the base font."""
     cmap = font.getBestCmap()
     os2 = font["OS/2"]
     bits = os2.ulCodePageRange1
@@ -1697,7 +1717,6 @@ def add_gsub(font, added, alts, ligatures, variant_maps=None,
     """calt/liga carry every ligature (default on); each Monaspace-style
     group is additionally exposed as ssNN so users can toggle selectively
     (calt off + ssNN on). cv99 switches to the .alt operator designs."""
-    ligatures = LIGATURES if ligatures is None else ligatures
     cmap = font.getBestCmap()
     gsub = font["GSUB"].table
 
@@ -1974,19 +1993,25 @@ def add_latin_fd(font):
     return index
 
 
-def add_stat(font, weight, italic):
-    """STAT for a static face: ONE value per axis, this face's own (wght
-    from WEIGHT_CLASS, ital 0/1). Regular links to Bold and upright to
-    Italic (Format 3, elidable), the rest are plain Format 1. A static
-    font that lists the whole family's values instead confuses Windows'
-    family model (fontbakery: multiple-STAT-entries)."""
-    wght = WEIGHT_CLASS[weight]
-    wght_value = {"value": wght, "name": weight}
-    if weight == "Regular":
-        wght_value.update(flags=0x2, linkedValue=WEIGHT_CLASS["Bold"])
+def add_stat(font, weights, italic):
+    """STAT: the wght values for `weights` (one weight name for a static
+    face — its own value only: a static font listing the whole family's
+    values confuses Windows' family model, fontbakery
+    multiple-STAT-entries — or every weight for a variable font) from
+    WEIGHT_CLASS, plus this file's ital value (0 upright / 1 italic).
+    Regular links to Bold and upright to Italic (Format 3, elidable), the
+    rest are plain Format 1 — Source Code Pro's own convention."""
+    if isinstance(weights, str):
+        weights = [weights]
+    wght_values = []
+    for weight in weights:
+        value = {"value": WEIGHT_CLASS[weight], "name": weight}
+        if weight == "Regular":
+            value.update(flags=0x2, linkedValue=WEIGHT_CLASS["Bold"])
+        wght_values.append(value)
     ital_value = ({"value": 1, "name": "Italic"} if italic else
                   {"value": 0, "name": "Regular", "flags": 0x2, "linkedValue": 1})
-    axes = [{"tag": "wght", "name": "Weight", "values": [wght_value]},
+    axes = [{"tag": "wght", "name": "Weight", "values": wght_values},
             {"tag": "ital", "name": "Italic", "values": [ital_value]}]
     otl.buildStatTable(font, axes, elidedFallbackName="Regular",
                        macNames=False)
@@ -2004,11 +2029,11 @@ def subroutinize_face(path):
 
 
 def autohint_face(path, glyph_names):
-    """Hint the glyphs we (re)drew with AFDKO's otfautohint, in place.
-
-    Restricted to `glyph_names` (note_redrawn): Source Han Sans's own
-    hints on untouched glyphs are kept as shipped, and the run stays
+    """Hint `glyph_names` with AFDKO's otfautohint, in place. The JP
+    faces pass the glyphs they (re)drew (note_redrawn): Source Han Sans's
+    own hints on untouched glyphs are kept as shipped, and the run stays
     seconds for the 667 family (grafted Latin only) instead of minutes.
+    The Latin faces pass every glyph — the instancer drops SCP's hints.
     SHOYU_SKIP_AUTOHINT=1 skips it for quick local iterations."""
     if os.environ.get("SHOYU_SKIP_AUTOHINT"):
         print("  autohint skipped (SHOYU_SKIP_AUTOHINT)")
@@ -2056,21 +2081,22 @@ def env_paths(spec):
     return env
 
 
-def run_faces(jobs, only, worker, label, on_result):
-    """Run `worker` over `jobs`: serially for a filtered run (`only` is
-    not None — usually one or two faces, and a traceback then stays
-    readable), else across a process pool. Every failure is collected
-    and reported at the end, `label(job)` naming the face, and the run
-    exits non-zero if any face failed."""
+def run_faces(jobs, worker, label, on_result):
+    """Run `worker` over `jobs`: in-process for one or two faces (a
+    traceback then stays readable), else across a process pool. Every
+    failure is collected and reported at the end, `label(job)` naming the
+    face, and the run exits non-zero if any face failed."""
     failures = []
 
     def take(job, result):
         try:
-            on_result(job, result())
+            value = result()
         except Exception as exc:
             failures.append((label(job), exc))
+            return
+        on_result(job, value)
 
-    if only is not None:
+    if len(jobs) <= 2:
         for job in jobs:
             take(job, lambda: worker(job))
     else:
@@ -2177,6 +2203,15 @@ def _vf_source(path, scale, axes):
     return _VF_CACHE[key]
 
 
+def shcj_bar_target(ttc_path, ref_name, italic, factor):
+    """The '=' bar of the Source Han Code JP face `ref_name` (its Italic
+    when `italic`) times `factor`: the stroke weight the Latin donors are
+    matched to (build_latin.py: 600/667 for the shipped profile, 1.0 for
+    the unscaled term profile; build_latin_vf.py likewise)."""
+    ref = _shcj_ref(ttc_path, ref_name + (" Italic" if italic else ""))
+    return bar_thickness(ref, ref.getBestCmap()[ord("=")]) * factor
+
+
 def _shcj_ref(ttc_path, name):
     key = str(ttc_path)
     if key not in _REF_CACHE:
@@ -2219,7 +2254,7 @@ def main():
                              ref_name, shs_file, italic, env, str(out_dir)))
     if not jobs:
         sys.exit(f"no face matches {only!r}")
-    run_faces(jobs, only, build_face,
+    run_faces(jobs, build_face,
               label=lambda job: f"{job[4]} [{job[0] or 'base'}]",
               on_result=lambda job, msg: print(msg))
 

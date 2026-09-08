@@ -291,7 +291,7 @@ def test_remap_scp_stylistic_sets_shifts_ss_and_sorts_the_feature_list():
     assert set(ls.FeatureIndex) == set(range(len(records)))
 
 
-# --- PROFILES / FAMILY / PS_FAMILY -----------------------------------------
+# --- PROFILES -----------------------------------------
 
 def test_profiles_has_ship_and_term():
     assert set(build_latin.PROFILES) == {"ship", "term"}
@@ -310,11 +310,6 @@ def test_term_profile_is_unscaled_and_distinctly_named():
     assert factor == 1.0
     assert family != build_latin.PROFILES["ship"][1]
     assert ps_family != build_latin.PROFILES["ship"][2]
-
-
-def test_family_constants_mirror_the_ship_profile():
-    assert build_latin.PROFILES["ship"][1] == build_latin.FAMILY
-    assert build_latin.PROFILES["ship"][2] == build_latin.PS_FAMILY
 
 
 # --- CELL / MONA_K constants -------------------------------------------

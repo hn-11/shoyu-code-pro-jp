@@ -936,18 +936,27 @@ def _face_worker(job):
     return f"built {job}"
 
 
-def test_run_faces_serial_collects_every_failure(capsys):
+def test_run_faces_collects_every_failure_across_the_pool(capsys):
     results = []
     with pytest.raises(SystemExit, match="1/3 faces failed"):
-        build.run_faces(["x", "bad", "y"], "Regular", _face_worker,
+        build.run_faces(["x", "bad", "y"], _face_worker,
                         label=lambda j: f"{j} [base]",
                         on_result=lambda j, r: results.append(r))
-    assert results == ["built x", "built y"]   # the failure did not stop the run
+    assert sorted(results) == ["built x", "built y"]   # the failure did not stop the run
     assert "FAILED bad [base]: KeyError('reference face not found')" in capsys.readouterr().err
 
 
-def test_run_faces_pool_runs_every_job():
+def test_run_faces_small_run_stays_in_process(capsys):
     results = []
-    build.run_faces(["x", "y"], None, _face_worker,
-                    label=lambda j: j, on_result=lambda j, r: results.append(r))
-    assert sorted(results) == ["built x", "built y"]
+    with pytest.raises(SystemExit, match="1/2 faces failed"):
+        build.run_faces(["bad", "y"], _face_worker,
+                        label=lambda j: j, on_result=lambda j, r: results.append(r))
+    assert results == ["built y"]
+    assert "FAILED bad: KeyError" in capsys.readouterr().err
+
+
+def test_run_faces_result_handler_errors_are_not_face_failures():
+    def boom(job, result):
+        raise RuntimeError("handler bug")
+    with pytest.raises(RuntimeError, match="handler bug"):
+        build.run_faces(["x"], _face_worker, label=lambda j: j, on_result=boom)
