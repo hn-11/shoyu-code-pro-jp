@@ -255,13 +255,15 @@ wght 200 の下限（＝静的版が erosion で削っている太さ）より�
 [Releases](../../releases) から用途に応じてアセットを選ぶ。いずれの zip にも
 OFL のライセンス全文（LICENSE）を同梱している。
 
-- **`SumiMojiJP.zip`**: 3 ファミリー（Sumi Moji JP / Term / 35）×
-  6 ウェイト × 2 スタイルの 36 面、面ごとの OTF。必要なファミリー・面
-  だけ入れる（TTC は配らない: リリースの単位はインストールする
-  ファイルの単位）。
-- **`SumiMojiJP-NerdFont.zip`**: Nerd Fonts のアイコングリフを追加した
-  NF 変種（ファミリー名は末尾に `NF` が付く、例 `Sumi Moji JP NF`）。
-  ターミナルのプロンプト装飾（アイコン表示）に使う場合はこちら。
+- **`SumiMojiJP.zip` / `SumiMojiJP35.zip` / `SumiMojiJPTerm.zip`**:
+  ファミリーごとの zip（6 ウェイト × 2 スタイルの 12 面、面ごとの OTF、
+  1 本 50 MB 弱）。使うファミリーだけ落として、必要な面だけ入れる
+  （TTC は配らない: リリースの単位はインストールするファイルの単位）。
+- **`SumiMojiJP-NerdFont.zip` / `SumiMojiJP35-NerdFont.zip` /
+  `SumiMojiJPTerm-NerdFont.zip`**: 同じファミリー分けで、Nerd Fonts の
+  アイコングリフを追加した NF 変種（ファミリー名は末尾に `NF` が付く、
+  例 `Sumi Moji JP NF`）。ターミナルのプロンプト装飾（アイコン表示）に
+  使う場合はこちら。
 - **`SumiMoji.zip`**: 和文を含まない欧文のみの Sumi Moji。可変フォント
   2面（`SumiMoji[wght].otf` / `SumiMoji-Italic[wght].otf`、wght 軸に
   Light〜Heavy 6 ウェイトの名前付きインスタンス）。静的面は配布しない。

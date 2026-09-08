@@ -14,6 +14,14 @@
 - TTC を全部廃止（`SumiMojiJP*.ttc` / `SumiMoji.ttc`、`makeotc.py` ごと）。
   リリースの単位を利用の単位（インストールする OTF）に揃える。中身は
   zip の 12 面と同じで、サイズも 3% しか違わなかった
+- zip はファミリーごとに（`SumiMojiJP.zip` / `SumiMojiJP35.zip` /
+  `SumiMojiJPTerm.zip` と、その `-NerdFont.zip`）。1 回のダウンロードが
+  146 MB（NF は 201 MB）から 3 分の 1 になる。1 面のサイズは Source Han
+  Sans JP の面（4.6 MB）が床で、JP 面 4.7 MB はそこに着いている
+- NF 面は font-patcher のあと cffsubr でサブルーチン化し直す（FontForge
+  の書き出しで CFF のサブルーチンが減り、アイコン 1 万個の flat な
+  charstring も含めて膨らんでいた。JP Regular の NF 面 7.77 → 6.91 MB、
+  1 面 10 秒）
 - セルフレビューで見つけた不具合の修正:
   - JP 各面の合字グリフ（61 種 + cv99 の 2 種）の CFF charstring 幅が
     hmtx の送り幅と 510u ずれていた（記号用 FD の nominalWidthX で符号化
