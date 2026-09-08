@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- ファミリー名を Shoyu Code Pro JP から **Sumi Moji JP** に改名
+  （PostScript 名 `SumiMojiJP*`、NF は `Sumi Moji JP NF` など、
+  ベンダー ID `SUMI`、環境変数 `SHOYU_*` → `SUMI_*`、リリース資産
+  `SumiMojiJP.zip` / `SumiMojiJP-NerdFont.zip` / `SumiMojiJP*.ttc`）。
+  欧文のみの Sumi Moji は仮称を外して正式名に。旧名の面とはファミリー名
+  が違うので共存する（置き換えるなら旧版をアンインストール）
+- `SumiMoji.zip` は可変フォント 2 面だけになり、`SumiMoji.ttc` は廃止。
+  静的 12 面は JP 面のドナー・NF パッチの入力・可変フォントの検証用に
+  組むが配布しない（`SumiMoji-NerdFont.zip` は静的面へのパッチのまま）
 - セルフレビューで見つけた不具合の修正:
   - JP 各面の合字グリフ（61 種 + cv99 の 2 種）の CFF charstring 幅が
     hmtx の送り幅と 510u ずれていた（記号用 FD の nominalWidthX で符号化
@@ -71,7 +80,7 @@
   それを超えると待ちが出る）: CI は Regular Upright / Regular Italic /
   Light Italic をドナー別（ship → 基本 + 35 の面、term → Term の面）に
   1 ジョブずつの 6 ジョブ、可変フォントと Sumi Moji Regular への Nerd
-  Fonts パッチ（記号セット 1 つ: `SHOYU_NERD_SETS`。`--complete` は面の
+  Fonts パッチ（記号セット 1 つ: `SUMI_NERD_SETS`。`--complete` は面の
   大きさによらず 1 面 1 分かかるため、全面・全セットはリリースで）を
   1 ジョブ、の 8 ジョブで 1 分程度（`upstream-sync.yml` の
   `REQUIRED_CHECKS` はこのジョブ名一覧）。リリースはファミリー × ウェイト 2 つ組の 9 ジョブがそれぞれ

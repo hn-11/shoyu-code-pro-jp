@@ -1,4 +1,4 @@
-# Sumi Moji（仮称）— 欧文中間フォント計画
+# Sumi Moji — 欧文中間フォント計画
 
 状態: 段階 1（1a・1b とも）・段階 2（VF 化）とも実装済み（v3.3.0）。
 `scripts/build_latin.py` が Source Code Pro VF + Monaspace VF から直接
@@ -9,15 +9,17 @@ Sumi Moji（`dist/latin`、Term 用の内部プロファイルは `dist/latin/te
 `SumiMoji-Italic[wght].otf`）。wght 軸は usWeightClass の値（既定 400 =
 Regular）で、マスターは SCP VF 自身のマスター位置（wght 200 / 400——CFF2
 の VarStore から実測）に Regular と Heavy の位置、Monaspace の下限位置を
-加えた 5 つ。`SumiMoji.zip` は
-静的12面と VF 2面をまとめてリリース資産に含まれている。名前は仮称
-**Sumi Moji**（墨文字）。衝突調査済み（フォント・技術領域で同名なし、
+加えた 5 つ。`SumiMoji.zip` は VF 2 面（静的 12 面は JP 面のドナー・
+NF パッチの入力・VF の検証に使い、配布しない）。名前は **Sumi Moji**
+（墨文字）で確定し、和文入りは **Sumi Moji JP**（v3.3.0 までの
+Shoyu Code Pro JP を改名。2 節の一覧はリポジトリ名を除き実施済み）。
+衝突調査済み（フォント・技術領域で同名なし、
 商標は未確認、`sumimoji.com` / `.net` は取得済みで `.dev` / `.jp` は
 空き）。
 
 ## 1. 目的
 
-Shoyu Code Pro JP の欧文層（Source Code Pro の文字 + Monaspace の記号・合字）を
+Sumi Moji JP の欧文層（Source Code Pro の文字 + Monaspace の記号・合字）を
 **独立した欧文フォントとして先に完成させ**、JP はそれを Source Han Sans に
 載せるだけの工程にする。
 
@@ -31,7 +33,7 @@ Shoyu Code Pro JP の欧文層（Source Code Pro の文字 + Monaspace の記号
 
 描画結果は現行と同じものを目標にする（リファクタリングであって再設計ではない）。
 
-## 2. 命名（仮）
+## 2. 命名
 
 | 用途 | ファミリー名 | PostScript 名 |
 |---|---|---|
@@ -40,12 +42,13 @@ Shoyu Code Pro JP の欧文層（Source Code Pro の文字 + Monaspace の記号
 | 和文入り | Sumi Moji JP / Sumi Moji JP 35 / Sumi Moji JP Term | SumiMojiJP-Regular, SumiMojiJP35-Regular, SumiMojiJPTerm-Regular |
 | 和文入り NF | Sumi Moji JP NF など | SumiMojiJPNF-Regular など |
 
-リブランディング時に現行の Shoyu Code Pro JP から名前を変える箇所（一括で変更する）:
+リブランディングで Shoyu Code Pro JP から名前を変えた箇所（リポジトリ名と
+`PROJECT_URL` を除き実施済み。リポジトリを改名すれば GitHub は旧 URL を転送する）:
 
 1. `scripts/build.py` の `set_names`（family / PostScript 名のプレフィックス）と `PROJECT_URL` / `PROJECT_COPYRIGHT`
 2. `scripts/nerdpatch.py` の NF 命名正規表現
 3. `scripts/makeotc.py` の TTC ファイル名
-4. `.github/workflows/release.yml` のリリース資産名と `SHOYU_VERSION` 環境変数名
+4. `.github/workflows/release.yml` のリリース資産名と `SUMI_VERSION` 環境変数名
 5. `scripts/verify.py` の `FAMILY_METRICS` 判定（ファミリー名のトークン）
 6. README / CHANGELOG / LICENSE の名前と、リポジトリ名・`git remote`
 
@@ -59,7 +62,7 @@ Shoyu Code Pro JP の欧文層（Source Code Pro の文字 + Monaspace の記号
 - 名前の由来: 墨文字（筆で書いた文字）。`Sumi` 単体は筆文字系フォント名で
   多用されるが、`Sumi Moji` 複合名のフォントは無い。日本に同名の工芸系
   小規模ブランド（T シャツ、ネイル筆、書道用品店「墨文字製作所」）がある
-- name ID 0 / 9 のドナー表記、achVendID `SHYU`、STAT、WWS は JP と同じ規約
+- name ID 0 / 9 のドナー表記、achVendID `SUMI`、STAT、WWS は JP と同じ規約
 
 ## 3. 仕様
 
@@ -120,7 +123,7 @@ scripts/build_latin.py   # SCP VF + Monaspace VF
                           #   -> dist/latin/SumiMoji-*.otf（配布物、35と同じ太さ）
                           #   -> dist/latin/term/SumiMojiTerm-*.otf（内部専用、Term用の太さ）
 scripts/build.py         # SHS + SHCJ + dist/latin{,/term}
-                          #   -> dist/ShoyuCodeProJP*.otf（JP/35/Term）
+                          #   -> dist/SumiMojiJP*.otf（JP/35/Term）
 scripts/verify_latin.py  # 欧文単体の回帰テスト（dist/latin/SumiMoji-*.otf）
 scripts/verify.py        # JP（現行）
 scripts/golden.py        # 2つの dist ディレクトリを比較（cmap・送り幅・
@@ -155,7 +158,7 @@ cmap・GSUB の shaping 結果が roundoff（±1〜2ユニット）を除いて�
 
 ### 段階 1a: 35 から切り出し（実装済み、のち段階 1b で置き換え）
 
-最初の実装。`build_latin.py` を切り出し、`dist/ShoyuCodeProJP35-*.otf`
+最初の実装。`build_latin.py` を切り出し、`dist/SumiMojiJP35-*.otf`
 （`build.py` が既にビルドした 35 面）から `dist/latin/` に
 `SumiMoji-*.otf` 12 面を出す中間形態だった。`verify_latin.py` と
 `SumiMoji.zip` のリリース資産化はこの段階で入り、以降も引き継がれている。
@@ -257,7 +260,7 @@ cmap・GSUB の shaping 結果が roundoff（±1〜2ユニット）を除いて�
   （`scripts/verify_latin_vf.py` で継続確認）
 - **Italic**: SCP Italic は −12°、Monaspace の slnt は −11° が下限。
   残り 1° のシアーは現行どおりマスター生成時に掛ける
-- **名前**: 仮称 Sumi Moji。商標（USPTO / J-PlatPat）はこの環境から未確認、
-  確定前に直接引く。変更箇所の一覧は 2 節
+- **名前**: Sumi Moji / Sumi Moji JP で確定。商標（USPTO / J-PlatPat）は
+  この環境から未確認。変更箇所の一覧は 2 節
 - **バージョン**: JP と同じタグで同時にリリースする（別バージョン番号を
   持たない）

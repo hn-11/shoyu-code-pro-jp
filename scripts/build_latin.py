@@ -3,7 +3,7 @@
 from the variable fonts — Source Code Pro VF as the base, Monaspace VF
 for the punctuation, the ligatures and the one-cell arrows.
 
-This is the Latin layer every Shoyu Code Pro JP family carries, built
+This is the Latin layer every Sumi Moji JP family carries, built
 once and on its own (docs/sumi-moji-plan.md, stage 1b): build.py grafts
 these faces into Source Han Sans instead of instancing the two VFs
 itself. Two weight profiles come out of the same recipe:
@@ -34,7 +34,7 @@ Usage:
                                            # stands in for its variant word
 Env (all required):
   SCP_VF_U, SCP_VF_I, MONA_VF, SHCJ_TTC   as for build.py
-Env (optional): SHOYU_VERSION, SHOYU_SKIP_AUTOHINT
+Env (optional): SUMI_VERSION, SUMI_SKIP_AUTOHINT
 """
 
 import io
@@ -230,7 +230,7 @@ def build_face(job):
     build.set_latin_heights(base)
     ps = build.set_names(base, "", weight, italic,
                          ref_angle if ref_angle is not None else -12.0,
-                         version=env.get("SHOYU_VERSION"), credits=credits,
+                         version=env.get("SUMI_VERSION"), credits=credits,
                          family_base=family, ps_base=ps_family, base_credit=None)
     build.classify_unicode_marks(base)
     build.add_stat(base, weight, italic)

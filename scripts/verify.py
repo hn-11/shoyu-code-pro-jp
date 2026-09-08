@@ -11,7 +11,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from verifylib import Checker, hmtx_mismatches, make_shaper  # noqa: E402
 
 FONT = Path(sys.argv[1]) if len(sys.argv) > 1 else (
-    ROOT / "dist" / "ShoyuCodeProJP-Regular.otf"
+    ROOT / "dist" / "SumiMojiJP-Regular.otf"
 )
 with open(ROOT / "data" / "mona_ligs.json") as _f:
     LIGATURES = json.load(_f)
@@ -73,7 +73,7 @@ def is_italic(tf):
 def expected_metrics(tf):
     fam = family_name(tf)
     # whole-token match: "Term" / "35" are separate words in the family
-    # name ("Shoyu Code Pro JP Term"), never substrings of another word
+    # name ("Sumi Moji JP Term"), never substrings of another word
     for suffix, pair in FAMILY_METRICS.items():
         if suffix in fam.split(" "):
             return pair

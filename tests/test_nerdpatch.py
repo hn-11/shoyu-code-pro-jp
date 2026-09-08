@@ -19,14 +19,14 @@ import nerdpatch  # noqa: E402
 
 
 @pytest.mark.parametrize("name, want", [
-    ("Shoyu Code Pro JP", "Shoyu Code Pro JP NF"),
-    ("Shoyu Code Pro JP Term", "Shoyu Code Pro JP Term NF"),
-    ("Shoyu Code Pro JP 35 Bold Italic", "Shoyu Code Pro JP 35 NF Bold Italic"),
-    ("ShoyuCodeProJPTerm-BoldItalic", "ShoyuCodeProJPTermNF-BoldItalic"),
-    ("ShoyuCodeProJP35-Light", "ShoyuCodeProJP35NF-Light"),
+    ("Sumi Moji JP", "Sumi Moji JP NF"),
+    ("Sumi Moji JP Term", "Sumi Moji JP Term NF"),
+    ("Sumi Moji JP 35 Bold Italic", "Sumi Moji JP 35 NF Bold Italic"),
+    ("SumiMojiJPTerm-BoldItalic", "SumiMojiJPTermNF-BoldItalic"),
+    ("SumiMojiJP35-Light", "SumiMojiJP35NF-Light"),
     ("Sumi Moji", "Sumi Moji NF"),
     ("SumiMoji-RegularItalic", "SumiMojiNF-RegularItalic"),
-    ("3.3.0;SHYU;ShoyuCodeProJP-Regular", "3.3.0;SHYU;ShoyuCodeProJPNF-Regular"),
+    ("3.3.0;SUMI;SumiMojiJP-Regular", "3.3.0;SUMI;SumiMojiJPNF-Regular"),
     ("Source Han Sans", "Source Han Sans"),
 ])
 def test_nf_name(name, want):
@@ -41,7 +41,7 @@ def _rect(pen, x0, y0, x1, y1):
     pen.closePath()
 
 
-def _cff_font(glyphs, cmap, family="Shoyu Code Pro JP", ps="ShoyuCodeProJP-Regular",
+def _cff_font(glyphs, cmap, family="Sumi Moji JP", ps="SumiMojiJP-Regular",
               os2=None):
     """A plain (non-CID) CFF font like font-patcher's output: `glyphs`
     {name: (advance, box or None)}; saved and reloaded."""
@@ -94,24 +94,24 @@ def test_fit_nerd_glyphs_scales_icons_to_the_cell_about_their_center():
 def test_restore_metadata_takes_names_declarations_and_stat_from_the_source():
     src = _cff_font({"a": (667, (50, 0, 600, 500))}, {ord("a"): "a"},
                     os2={"usWinAscent": 900, "usWinDescent": 300, "usWeightClass": 700,
-                         "fsSelection": 0x20, "achVendID": "SHYU"})
+                         "fsSelection": 0x20, "achVendID": "SUMI"})
     build.set_monospace_metadata(src)
     build.add_stat(src, "Bold", False)
     patched = _cff_font({"a": (667, (50, 0, 600, 500)),
                          "icon": (667, (0, -400, 600, 1100))},   # past the source's box
                         {ord("a"): "a", 0xE000: "icon"},
-                        family="Regular", ps="ShoyuCodeProJP",
+                        family="Regular", ps="SumiMojiJP",
                         os2={"usWinAscent": 700, "usWinDescent": 100, "usWeightClass": 400})
     assert "STAT" not in patched and patched["post"].isFixedPitch == 0
 
     ps = nerdpatch.restore_metadata(patched, src)
 
-    assert ps == "ShoyuCodeProJPNF-Regular"
-    assert patched["name"].getDebugName(1) == "Shoyu Code Pro JP NF"
+    assert ps == "SumiMojiJPNF-Regular"
+    assert patched["name"].getDebugName(1) == "Sumi Moji JP NF"
     assert patched["name"].getDebugName(6) == ps
     assert patched["CFF "].cff.fontNames[0] == ps
     os2 = patched["OS/2"]
-    assert (os2.usWeightClass, os2.fsSelection, os2.achVendID) == (700, 0x20, "SHYU")
+    assert (os2.usWeightClass, os2.fsSelection, os2.achVendID) == (700, 0x20, "SUMI")
     assert os2.panose.bProportion == 9 and patched["post"].isFixedPitch == 1
     assert "STAT" in patched
     assert patched["head"].yMax == 1100 and patched["head"].yMin == -400
@@ -139,7 +139,7 @@ def test_sources_for_paths_names_and_everything(tmp_path, monkeypatch):
     dist = tmp_path / "dist"
     latin = dist / "latin"
     (latin / "term").mkdir(parents=True)
-    for name in ("ShoyuCodeProJP-Light.otf", "ShoyuCodeProJPTerm-Light.otf"):
+    for name in ("SumiMojiJP-Light.otf", "SumiMojiJPTerm-Light.otf"):
         (dist / name).write_bytes(b"")
     for name in ("SumiMoji-Light.otf", "SumiMoji-LightItalic.otf", "SumiMoji[wght].otf",
                  "term/SumiMojiTerm-Light.otf"):
@@ -151,16 +151,16 @@ def test_sources_for_paths_names_and_everything(tmp_path, monkeypatch):
 
     everything = nerdpatch.sources_for([])
     assert [p.name for p, _ in everything] == [
-        "ShoyuCodeProJP-Light.otf", "ShoyuCodeProJPTerm-Light.otf",
+        "SumiMojiJP-Light.otf", "SumiMojiJPTerm-Light.otf",
         "SumiMoji-Light.otf", "SumiMoji-LightItalic.otf"]      # no VF, no term donor
     assert [out.name for _, out in everything] == ["nerd", "nerd", "latin", "latin"]
-    assert [p.name for p, _ in nerdpatch.sources_for(["Term"])] == ["ShoyuCodeProJPTerm-Light.otf"]
+    assert [p.name for p, _ in nerdpatch.sources_for(["Term"])] == ["SumiMojiJPTerm-Light.otf"]
     assert [p.name for p, _ in nerdpatch.sources_for(["Term", "Italic"])] == [
-        "ShoyuCodeProJPTerm-Light.otf", "SumiMoji-LightItalic.otf"]
+        "SumiMojiJPTerm-Light.otf", "SumiMoji-LightItalic.otf"]
     explicit = nerdpatch.sources_for([str(latin / "SumiMoji-Light.otf"),
-                                      str(dist / "ShoyuCodeProJP-Light.otf")])
+                                      str(dist / "SumiMojiJP-Light.otf")])
     assert [(p.name, out.name) for p, out in explicit] == [
-        ("SumiMoji-Light.otf", "latin"), ("ShoyuCodeProJP-Light.otf", "nerd")]
+        ("SumiMoji-Light.otf", "latin"), ("SumiMojiJP-Light.otf", "nerd")]
     assert nerdpatch.sources_for(["nothing-like-this"]) == []
 
 

@@ -20,7 +20,7 @@ labels: bug
 
 - OS:
 - フォントのバージョン（リリースタグ or コミット）:
-- 対象ファミリー（Shoyu Code Pro JP / Term / 35）:
+- 対象ファミリー（Sumi Moji JP / Term / 35）:
 
 ## 補足
 

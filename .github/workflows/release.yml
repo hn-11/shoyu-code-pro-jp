@@ -1,6 +1,10 @@
 # Tag push (v*) -> full assembly from live upstreams (6 weights x 2 styles
 # x 3 families = 36 faces plus the 12 Sumi Moji statics and the two
 # variable fonts), verify, Nerd-patch everything, zip, GitHub release.
+# Sumi Moji itself ships as the two variable fonts (its statics are the
+# JP faces' donors, the Nerd Fonts patch's input and the variable fonts'
+# check, not an asset); the JP families ship as statics, zipped and as
+# one collection each.
 #
 # A family's two weights per job — its Latin donors, its four JP faces,
 # their Nerd Fonts patches and a share of the Sumi Moji ones (patched
@@ -31,7 +35,7 @@ on:
 permissions:
   contents: write
 env:
-  SHOYU_VERSION_TAG: ${{ inputs.tag || (github.ref_type == 'tag' && github.ref_name) || 'v0.0.0-dry' }}
+  SUMI_VERSION_TAG: ${{ inputs.tag || (github.ref_type == 'tag' && github.ref_name) || 'v0.0.0-dry' }}
   # the runs that publish: a v* tag, or a dispatch without dry-run
   PUBLISH: ${{ github.event_name == 'push' && github.ref_type == 'tag' || github.event_name == 'workflow_dispatch' && !inputs.dry-run }}
 jobs:
@@ -74,7 +78,7 @@ jobs:
       - uses: ./.github/actions/setup-build
         with:
           fontforge: "true"
-      - run: echo "SHOYU_VERSION=${SHOYU_VERSION_TAG#v}" >> "$GITHUB_ENV"
+      - run: echo "SUMI_VERSION=${SUMI_VERSION_TAG#v}" >> "$GITHUB_ENV"
       - run: python scripts/build_latin.py "${{ matrix.weights }} ${{ matrix.latin }}"
       - name: Build the JP faces and patch everything
         env:
@@ -141,13 +145,16 @@ jobs:
           cp LICENSE dist/nerd/LICENSE
           cp LICENSE dist/latin/LICENSE
           cp LICENSE dist/nerd/latin/LICENSE
-          cd dist && zip -q ShoyuCodeProJP.zip *.otf LICENSE
-          (cd latin && zip -q ../SumiMoji.zip *.otf LICENSE)
-          cd nerd && zip -q ../ShoyuCodeProJP-NerdFont.zip *.otf LICENSE
+          cd dist && zip -q SumiMojiJP.zip *.otf LICENSE
+          (cd latin && zip -q ../SumiMoji.zip 'SumiMoji[wght].otf' 'SumiMoji-Italic[wght].otf' LICENSE)
+          cd nerd && zip -q ../SumiMojiJP-NerdFont.zip *.otf LICENSE
           (cd latin && zip -q ../../SumiMoji-NerdFont.zip *.otf LICENSE)
+      # every asset, on a dry run too (a missing one is a failure here, not
+      # a warning from the release step)
+      - run: ls -l dist/*.zip dist/*.ttc
       - name: Extract changelog section for this tag
         run: |
-          awk -v tag="## ${SHOYU_VERSION_TAG}" '
+          awk -v tag="## ${SUMI_VERSION_TAG}" '
             $0 == tag {flag=1; next}
             flag && /^## / {flag=0}
             flag
@@ -157,16 +164,15 @@ jobs:
         with:
           # on dispatch the tag doesn't exist yet; gh-release creates it
           # at the built commit. Tag pushes keep working unchanged.
-          tag_name: ${{ env.SHOYU_VERSION_TAG }}
+          tag_name: ${{ env.SUMI_VERSION_TAG }}
           target_commitish: ${{ github.sha }}
           generate_release_notes: true
           body_path: release_notes.md
           files: |
-            dist/ShoyuCodeProJP.zip
+            dist/SumiMojiJP.zip
             dist/SumiMoji.zip
-            dist/ShoyuCodeProJP-NerdFont.zip
+            dist/SumiMojiJP-NerdFont.zip
             dist/SumiMoji-NerdFont.zip
-            dist/ShoyuCodeProJP.ttc
-            dist/ShoyuCodeProJP35.ttc
-            dist/ShoyuCodeProJPTerm.ttc
-            dist/SumiMoji.ttc
+            dist/SumiMojiJP.ttc
+            dist/SumiMojiJP35.ttc
+            dist/SumiMojiJPTerm.ttc

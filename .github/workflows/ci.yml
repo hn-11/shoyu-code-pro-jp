@@ -76,5 +76,5 @@ jobs:
       - run: python scripts/build_latin.py "Regular Upright ship"
       - run: python scripts/nerdpatch.py FontPatcher dist/latin/SumiMoji-Regular.otf
         env:
-          SHOYU_NERD_SETS: --powerline
+          SUMI_NERD_SETS: --powerline
       - run: python scripts/verify_latin.py dist/nerd/latin/SumiMojiNF-Regular.otf

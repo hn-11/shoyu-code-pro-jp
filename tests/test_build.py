@@ -778,7 +778,7 @@ def test_set_names():
                          credits=[("Monaspace", "Copyright GitHub",
                                   "Lettermatic")])
 
-    assert ps == "ShoyuCodeProJPTerm-Bold"
+    assert ps == "SumiMojiJPTerm-Bold"
     copyright_ = name.getDebugName(0)
     assert build.PROJECT_COPYRIGHT in copyright_
     assert "© Adobe" in copyright_
@@ -788,11 +788,11 @@ def test_set_names():
     assert "Lettermatic" in designer
     assert name.getDebugName(8) == "hn-11"
     assert name.getDebugName(11) == build.PROJECT_URL
-    assert name.getDebugName(3).endswith(";SHYU;ShoyuCodeProJPTerm-Bold")
-    assert name.getDebugName(6) == "ShoyuCodeProJPTerm-Bold"
+    assert name.getDebugName(3).endswith(";SUMI;SumiMojiJPTerm-Bold")
+    assert name.getDebugName(6) == "SumiMojiJPTerm-Bold"
 
     os2 = font["OS/2"]
-    assert os2.achVendID == "SHYU"
+    assert os2.achVendID == "SUMI"
     assert os2.usWeightClass == 700
     assert os2.fsSelection & 0x20    # bold
     assert os2.fsSelection & 0x100   # WWS
@@ -929,9 +929,9 @@ def test_env_paths_reads_defaults_and_exits_on_missing(tmp_path, monkeypatch, ca
     b.mkdir()
     monkeypatch.setenv("SHS_DIR", str(a))
     monkeypatch.delenv("SHCJ_TTC", raising=False)
-    monkeypatch.setenv("SHOYU_VERSION", "9.9.9")
+    monkeypatch.setenv("SUMI_VERSION", "9.9.9")
     env = build.env_paths({"SHS_DIR": None, "SHCJ_TTC": str(b)})
-    assert env == {"SHS_DIR": str(a), "SHCJ_TTC": str(b), "SHOYU_VERSION": "9.9.9"}
+    assert env == {"SHS_DIR": str(a), "SHCJ_TTC": str(b), "SUMI_VERSION": "9.9.9"}
     monkeypatch.setenv("SHCJ_TTC", str(tmp_path / "nowhere"))
     monkeypatch.delenv("SHS_DIR")
     with pytest.raises(SystemExit, match=r"missing env: \['SHS_DIR', 'SHCJ_TTC'\]"):

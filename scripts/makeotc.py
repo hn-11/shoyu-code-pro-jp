@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bundle dist/*.otf into one OpenType Collection per family.
+"""Bundle dist/*.otf into one OpenType Collection per JP family.
 
 Mirrors upstream SHCJ's single-file .ttc distribution. shareTables dedups
 identical tables across faces (CFF stays per-face, but name/cmap-adjacent
@@ -13,16 +13,10 @@ from fontTools.ttLib import TTCollection, TTFont
 from verifylib import static_faces  # scripts/ is on sys.path (script dir)
 
 DIST = Path(__file__).resolve().parent.parent / "dist"
-LATIN = DIST / "latin"
-FAMILIES = ["ShoyuCodeProJP", "ShoyuCodeProJP35", "ShoyuCodeProJPTerm", "SumiMoji"]
-
-# Per-family input directory to glob "<fam>-*.otf" faces from; every
-# family's .ttc still lands directly in dist/. SumiMoji is the Latin-only
-# family and its built faces live in dist/latin/ (not dist/) —
-# dist/latin/term/ holds the internal donor family "Sumi Moji Term" and
-# must never be bundled; Path.glob() is non-recursive, so pointing this
-# at dist/latin/ alone already excludes that subdirectory.
-SRC_DIR = {"SumiMoji": LATIN}
+# the three JP families, "<fam>-*.otf" in dist/. The Latin-only Sumi Moji
+# (dist/latin/) is released as a variable font, not a collection of its
+# static faces, so it is not bundled.
+FAMILIES = ["SumiMojiJP", "SumiMojiJP35", "SumiMojiJPTerm"]
 
 WEIGHT_ORDER = ["Light", "Normal", "Regular", "Medium", "Bold", "Heavy"]
 EXPECTED = len(WEIGHT_ORDER) * 2  # weights x (upright, italic)
@@ -44,13 +38,9 @@ def check_cmap_parity(fam, faces, fonts):
     builds (stale dist/ files, a partial upstream refresh...), not a real
     per-weight design difference.
 
-    This grouping-by-slant is exactly what SumiMoji needs too: its faces
-    are built straight from Source Code Pro, whose Italic instance maps
-    fewer codepoints than the upright (missing Greek/Cyrillic, same as
-    the JP families' SCP-derived Latin coverage) — far fewer cmap entries
-    overall than the JP families, but the same upright/italic asymmetry.
-    Comparing only within each slant group, never upright against italic,
-    already accommodates that without any family-specific carve-out.
+    The asymmetry comes from Source Code Pro, whose Italic instance maps
+    fewer codepoints than the upright (no Greek/Cyrillic); comparing only
+    within each slant group accommodates that.
     """
     groups = {False: [], True: []}
     for p, tf in zip(faces, fonts):
@@ -76,7 +66,7 @@ def bundle(fam):
     """One family's collection (dist/<fam>.ttc); returns its report line,
     or None when the family has no faces. Raises SystemExit on a wrong
     roster or a cmap mismatch (see check_cmap_parity)."""
-    src = SRC_DIR.get(fam, DIST)
+    src = DIST
     faces = sorted(static_faces(src, fam), key=lambda p: face_key(p, fam))
     if not faces:
         return None
@@ -84,13 +74,12 @@ def bundle(fam):
         present = sorted(p.stem[len(fam) + 1:] for p in faces)
         wanted = [w + s for w in WEIGHT_ORDER for s in ("", "Italic")]
         missing = sorted(set(wanted) - set(present))
-        builder = "build_latin.py" if fam in SRC_DIR else "build.py"
         raise SystemExit(
             f"{fam}: expected {EXPECTED} faces, found {len(faces)}\n"
             f"  present: {present}\n  missing: {missing}\n"
             f"  stale files left over in {src} from an older roster are "
             "the usual cause of an unexpected surplus; an unfiltered "
-            f"`{builder}` run clears {src}/{fam}*.otf first, so rerun it "
+            f"`build.py` run clears {src}/{fam}*.otf first, so rerun it "
             "without a FILTER before bundling")
     fonts = [TTFont(p) for p in faces]
     for f in fonts:

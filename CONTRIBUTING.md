@@ -1,6 +1,6 @@
 # Contributing
 
-Shoyu Code Pro JP は上流フォント（Source Han Sans JP / Source Code Pro /
+Sumi Moji JP は上流フォント（Source Han Sans JP / Source Code Pro /
 Monaspace / Source Han Code JP）を CI 上で合成して作られています。ソース
 グリフを直接同梱していないため、ビルドには毎回それらの上流ファイルが
 必要です。
@@ -12,7 +12,7 @@ pip install -r requirements.txt
 ```
 
 ビルドは2段階です。まず `scripts/build_latin.py` が Source Code Pro VF と
-Monaspace VF から欧文レイヤー Sumi Moji（仮称）を `dist/latin` に組み、
+Monaspace VF から欧文レイヤー Sumi Mojiを `dist/latin` に組み、
 次に `scripts/build.py` がそれを Source Han Sans JP に接ぎ木します。
 それぞれが読む環境変数:
 
@@ -24,8 +24,8 @@ Monaspace VF から欧文レイヤー Sumi Moji（仮称）を `dist/latin` に�
 | `SHCJ_TTC` | 両方（`build.py` は省略時 `upstream/SourceHanCodeJP.ttc`） | `SourceHanCodeJP.ttc` へのパス | [Source Han Code JP Releases](https://github.com/adobe-fonts/source-han-code-jp/releases) |
 | `SHS_DIR` | `build.py` | `SourceHanSansJP-<Weight>.otf` が入ったディレクトリ | [Source Han Sans Releases](https://github.com/adobe-fonts/source-han-sans/releases) |
 | `LATIN_DIR` | `build.py`（任意、既定 `dist/latin`） | `build_latin.py` の出力先 | — |
-| `SHOYU_VERSION` | 3つとも（任意） | リリース版番号（例 `3.3.0`）。未設定なら上流のリビジョンを name に残す | — |
-| `SHOYU_SKIP_AUTOHINT` | `build.py` / `build_latin.py`（任意） | `1` でヒント付けをスキップ（試しビルドの時短用） | — |
+| `SUMI_VERSION` | 3つとも（任意） | リリース版番号（例 `3.3.0`）。未設定なら上流のリビジョンを name に残す | — |
+| `SUMI_SKIP_AUTOHINT` | `build.py` / `build_latin.py`（任意） | `1` でヒント付けをスキップ（試しビルドの時短用） | — |
 
 取得元の URL パターンや正確なタグは `.github/actions/fetch-upstreams/action.yml`
 と `.github/workflows/ci.yml` を参照してください（そのまま実行可能な
@@ -60,7 +60,7 @@ Normal の 4 面）。`"Regular"` は Regular と Regular Italic の全ファミ
 python -m pytest tests/ -q                                  # 単体テスト
 python scripts/verify_latin.py dist/latin/SumiMoji-Regular.otf
 python scripts/verify_latin_vf.py "dist/latin/SumiMoji[wght].otf"
-python scripts/verify.py dist/ShoyuCodeProJP-Regular.otf
+python scripts/verify.py dist/SumiMojiJP-Regular.otf
 ```
 
 グリフの合成漏れやメトリクスの崩れなど、シェイピングまわりの回帰を
@@ -80,7 +80,7 @@ GitHub Release を作り、5 分程度。所要時間を測るだけなら Run w
 シェーピング・アウトライン・メタデータ・ヒントを突き合わせます。
 
 NF（Nerd Fonts）変種の生成を試す場合（`fontforge` が PATH にあること。CI は
-FontForge の AppImage を展開して使う。`SHOYU_NERD_SETS=--powerline` の
+FontForge の AppImage を展開して使う。`SUMI_NERD_SETS=--powerline` の
 ように記号セットを絞ると 1 面数秒で終わり、パイプラインの確認に向く）:
 
 ```sh
