@@ -1,9 +1,17 @@
 """Unit tests that need no font files — pure logic + data validation."""
 
+import io
 import sys
 from pathlib import Path
 
 import pytest
+import uharfbuzz as hb
+from fontTools.fontBuilder import FontBuilder
+from fontTools.misc.roundTools import otRound
+from fontTools.pens.t2CharStringPen import T2CharStringPen
+from fontTools.pens.ttGlyphPen import TTGlyphPen
+from fontTools.ttLib import newTable
+from fontTools.ttLib.tables import otTables
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -23,9 +31,47 @@ import build  # noqa: E402
     ("liga", None),
     ("calt", None),
     ("kern", None),
+    ("ss10", "ss20"),   # ss01-ss10 all shift by +10
+    ("ss11", "ss11"),   # ss11+ is already in our own numbering: unchanged
+    ("ss17", "ss17"),
+    ("ssxx", None),     # not a digit suffix
+    ("case", None),
+    ("frac", None),
 ])
 def test_remap_scp_tag(tag, want):
     assert build._remap_scp_tag(tag) == want
+
+
+def test_group_names_all_remap_nontrivially():
+    """Invariant behind the explicit GROUP_NAMES skip in
+    import_scp_variants: every tag we author ourselves (GROUP_NAMES) is
+    exactly the shape _remap_scp_tag maps ssNN -> ss(NN+10) for (or, for
+    cv99, passes through unchanged) — none of them come back None. So if
+    an SCP font happened to carry a feature under one of our own tags
+    (ss01-ss09, cv99), _remap_scp_tag alone would NOT filter it out: it
+    would be remapped/kept just like any other SCP feature and collide
+    with the glyph variants Sumi Moji itself authors under that tag. That
+    is exactly why import_scp_variants must skip fr.FeatureTag in
+    GROUP_NAMES explicitly, before ever calling _remap_scp_tag."""
+    for tag in build.GROUP_NAMES:
+        assert build._remap_scp_tag(tag) is not None, tag
+
+
+# --- Latin donor face paths (LATIN_PROFILES) ------------------------------
+
+def test_latin_face_path_ship_regular_upright():
+    got = build.latin_face_path("dist/latin", "ship", "Regular", False)
+    assert got == Path("dist/latin") / "SumiMoji-Regular.otf"
+
+
+def test_latin_face_path_term_bold_italic():
+    got = build.latin_face_path("dist/latin", "term", "Bold", True)
+    assert got == Path("dist/latin") / "term" / "SumiMojiTerm-BoldItalic.otf"
+
+
+def test_latin_face_path_unknown_profile_raises():
+    with pytest.raises(KeyError):
+        build.latin_face_path("dist/latin", "bogus", "Regular", False)
 
 
 # --- CID allocation ------------------------------------------------------
@@ -116,7 +162,8 @@ def test_ligature_schema():
     assert ligs, "no ligatures loaded"
     for seq, spec in ligs.items():
         assert isinstance(seq, str) and seq, f"bad key {seq!r}"
-        assert set(spec) == {"cells", "glyphs", "group"}, seq
+        assert {"cells", "glyphs", "group"} <= set(spec) <= {
+            "cells", "glyphs", "group", "at"}, seq
         assert spec["glyphs"], f"{seq}: empty glyph list"
         assert all(isinstance(g, str) and g for g in spec["glyphs"]), seq
         assert spec["group"] in KNOWN_GROUPS, f"{seq}: group {spec['group']}"
@@ -124,18 +171,23 @@ def test_ligature_schema():
         # one cell per input character, and never fewer cells than parts
         assert spec["cells"] == len(seq), f"{seq}: cells != len(sequence)"
         assert len(spec["glyphs"]) <= spec["cells"], seq
+        if "at" in spec:   # explicit cell per part: in range, ascending
+            at = spec["at"]
+            assert len(at) == len(spec["glyphs"]), seq
+            assert all(0 <= c < spec["cells"] for c in at), seq
+            assert at == sorted(at) and len(set(at)) == len(at), seq
 
 
 def test_every_group_has_a_ui_name():
     groups = {spec["group"] for spec in build.load_ligatures().values()}
     assert groups <= set(build.GROUP_NAMES), "group without a UI name"
-    # cv99 is authored too, and no name goes unused
-    assert set(build.GROUP_NAMES) == groups | {"cv99"}
+    # cv99 and ss09 (width alternates) are authored too; no name goes unused
+    assert set(build.GROUP_NAMES) == groups | {"cv99", "ss09"}
 
 
 def test_ui_names_are_nonempty_ascii():
     for tag, name in build.GROUP_NAMES.items():
-        assert tag in KNOWN_GROUPS or tag.startswith("cv"), tag
+        assert tag in KNOWN_GROUPS or tag == "ss09" or tag.startswith("cv"), tag
         assert name and name.strip() == name, tag
         assert name.isascii(), tag
 
@@ -394,3 +446,442 @@ def test_mona_glyphset_only_erodes_when_floor_was_hit():
     assert build.mona_glyphset(m) is m.gs   # below threshold
     m.erode = 6.0
     assert isinstance(build.mona_glyphset(m), build._ErodedGlyphSet)
+
+
+# --- tiny TTF fixtures for the tests below --------------------------------
+
+def _tt_font(glyph_order, cmap, widths, ascent=800, descent=-200):
+    """A minimal, empty-outline FontBuilder TTF — enough for GSUB/OS2/post
+    plumbing tests. `widths`: {glyph name: advance}, lsb always 0."""
+    fb = FontBuilder(1000, isTTF=True)
+    fb.setupGlyphOrder(list(glyph_order))
+    fb.setupCharacterMap(cmap)
+    fb.setupGlyf({g: TTGlyphPen(None).glyph() for g in glyph_order})
+    fb.setupHorizontalMetrics({g: (widths.get(g, 0), 0) for g in glyph_order})
+    fb.setupHorizontalHeader(ascent=ascent, descent=descent)
+    fb.setupNameTable({"familyName": "Test", "styleName": "Regular"})
+    fb.setupOS2()
+    fb.setupPost()
+    return fb.font
+
+
+# --- _guard_subtables: the DirectWrite-safe context guards ---------------
+
+def test_guard_subtables_structure():
+    """Structural check on the chain-context guards + triggers.
+
+    fontTools' ChainContextSubstBuilder picks whichever of Format 1/2/3
+    compiles smallest; every guard/trigger built here uses a SINGLE glyph
+    at each position (never a class), so Format 1 — one subtable, glyph-
+    indexed rule lists keyed by first glyph — always compiles smaller than
+    the naively-imagined "one Format 3 subtable per rule" and is what this
+    actually returns. That is in fact a STRONGER version of the property
+    the docstring cares about: a Format 1 rule's input can only ever match
+    one exact glyph per position, so an input match trivially covers the
+    whole ligature — precisely what DirectWrite needs.
+    """
+    glyph_order = [".notdef", "hyphen", "greater", "less", "equal",
+                   "lig_hg", "lig_hhg", "lig_lh"]
+    font = _tt_font(
+        glyph_order,
+        {ord("-"): "hyphen", ord(">"): "greater",
+         ord("<"): "less", ord("="): "equal"},
+        {g: 600 for g in glyph_order})
+
+    ligatures = {
+        ("hyphen", "greater"): "lig_hg",
+        ("hyphen", "hyphen", "greater"): "lig_hhg",
+        ("less", "hyphen"): "lig_lh",
+    }
+
+    subtables = build._guard_subtables(font, None, ligatures, 0)
+    assert len(subtables) == 1
+    st = subtables[0]
+    assert st.Format == 1
+
+    triggers = []
+    for gi, ruleset in enumerate(st.ChainSubRuleSet):
+        if ruleset is None:
+            continue
+        first = st.Coverage.glyphs[gi]
+        seen_trigger = False
+        for rule in ruleset.ChainSubRule:
+            seq = (first,) + tuple(rule.Input)
+            if rule.SubstLookupRecord:
+                seen_trigger = True
+                triggers.append((seq, rule.SubstLookupRecord))
+            else:
+                # (a) every guard for this first glyph precedes every
+                # trigger for it — a guard that fires after a trigger
+                # would never run (the trigger already matched first)
+                assert not seen_trigger, f"guard {seq} follows a trigger"
+
+    # (b) exactly one trigger per ligature, (c) each covers the WHOLE
+    # ligature (see the Format-1 note above — trivially true here, since
+    # `seq` above is built from exactly-one-glyph-per-position rules)
+    trigger_seqs = [seq for seq, _ in triggers]
+    assert len(trigger_seqs) == len(ligatures)
+    assert set(trigger_seqs) == set(ligatures)
+
+    # (d) triggers sharing a first glyph are tried longest input first
+    by_first = {}
+    for seq in trigger_seqs:
+        by_first.setdefault(seq[0], []).append(seq)
+    for group in by_first.values():
+        assert group == sorted(group, key=len, reverse=True)
+
+    # (e) each trigger calls lig_lookup (passed in as 0) at SequenceIndex 0
+    for seq, slrs in triggers:
+        assert len(slrs) == 1
+        assert slrs[0].SequenceIndex == 0
+        assert slrs[0].LookupListIndex == 0
+
+
+# --- add_gsub -> real HarfBuzz shaping ------------------------------------
+
+def _empty_gsub_table():
+    """A GSUB with one 'DFLT' script, no features, no lookups — what
+    add_gsub expects to find already in the font and build onto."""
+    table = otTables.GSUB()
+    table.Version = 0x00010000
+
+    default_langsys = otTables.DefaultLangSys()
+    default_langsys.LookupOrder = None
+    default_langsys.ReqFeatureIndex = 0xFFFF
+    default_langsys.FeatureIndex = []
+    default_langsys.FeatureCount = 0
+
+    script = otTables.Script()
+    script.DefaultLangSys = default_langsys
+    script.LangSysRecord = []
+
+    script_record = otTables.ScriptRecord()
+    script_record.ScriptTag = "DFLT"
+    script_record.Script = script
+
+    table.ScriptList = otTables.ScriptList()
+    table.ScriptList.ScriptRecord = [script_record]
+
+    table.FeatureList = otTables.FeatureList()
+    table.FeatureList.FeatureRecord = []
+    table.FeatureList.FeatureCount = 0
+
+    table.LookupList = otTables.LookupList()
+    table.LookupList.Lookup = []
+    table.LookupList.LookupCount = 0
+    return table
+
+
+def _shape(font_bytes, text, features):
+    face = hb.Face(hb.Blob(font_bytes))
+    hbfont = hb.Font(face)
+    buf = hb.Buffer()
+    buf.add_str(text)
+    buf.guess_segment_properties()
+    hb.shape(hbfont, buf, features)
+    return [info.codepoint for info in buf.glyph_infos]
+
+
+@pytest.fixture
+def gsub_font_bytes():
+    """A tiny font with calt/liga/ss01/ss02 ligatures wired through
+    add_gsub, saved to bytes for HarfBuzz to shape."""
+    glyph_order = [".notdef", "hyphen", "greater", "less", "equal",
+                   "lig_hg", "lig_hhg", "lig_lh", "lig_ge"]
+    font = _tt_font(
+        glyph_order,
+        {ord("-"): "hyphen", ord(">"): "greater",
+         ord("<"): "less", ord("="): "equal"},
+        {g: 600 for g in glyph_order})
+    font["GSUB"] = newTable("GSUB")
+    font["GSUB"].table = _empty_gsub_table()
+
+    # data/mona_ligs.json shape; "glyphs" (the Monaspace donor names) are
+    # never read by add_gsub — only "group" is — so they're dummies here.
+    ligatures = {
+        "->": {"cells": 2, "glyphs": ["hg"], "group": "ss02"},
+        "-->": {"cells": 3, "glyphs": ["hhg"], "group": "ss02"},
+        "<-": {"cells": 2, "glyphs": ["lh"], "group": "ss02"},
+        ">=": {"cells": 2, "glyphs": ["ge"], "group": "ss01"},
+    }
+    added = {"->": "lig_hg", "-->": "lig_hhg", "<-": "lig_lh", ">=": "lig_ge"}
+    build.add_gsub(font, added, {}, {}, ligatures, {})
+
+    buf = io.BytesIO()
+    font.save(buf)
+    return buf.getvalue()
+
+
+def test_add_gsub_shapes_every_ligature(gsub_font_bytes):
+    features = {"calt": True, "liga": True}
+    assert len(_shape(gsub_font_bytes, "->", features)) == 1
+    assert len(_shape(gsub_font_bytes, "-->", features)) == 1
+    assert len(_shape(gsub_font_bytes, "<-", features)) == 1
+    assert len(_shape(gsub_font_bytes, ">=", features)) == 1
+
+
+def test_add_gsub_guard_keeps_longer_run_plain(gsub_font_bytes):
+    # '->>' is longer than any known ligature ('->' plus a trailing '>')
+    # so the guard rules must keep all three glyphs unsubstituted
+    features = {"calt": True, "liga": True}
+    assert len(_shape(gsub_font_bytes, "->>", features)) == 3
+    # '<->' is not itself a ligature in this reduced set. The guard that
+    # normally protects '<->'-shaped input (so a real '<->' ligature can
+    # win) fires even though no '<->' ligature exists here to claim it —
+    # so '<-' does NOT fire either, and the whole run stays plain (verified
+    # against real HarfBuzz output, not assumed).
+    assert len(_shape(gsub_font_bytes, "<->", features)) == 3
+
+
+def test_add_gsub_calt_liga_off_leaves_ligatures_plain(gsub_font_bytes):
+    assert len(_shape(gsub_font_bytes, "->",
+                      {"calt": False, "liga": False})) == 2
+
+
+def test_add_gsub_stylistic_set_is_group_scoped(gsub_font_bytes):
+    # NOTE: HarfBuzz enables 'liga' by default even when it's absent from
+    # the features dict — only an explicit "liga": False turns it off. The
+    # guarded combined lookup (every group) is registered under 'liga' too,
+    # so without disabling it, ">=" (ss01) would still ligate through
+    # 'liga' regardless of ss02 below, silently defeating this test.
+    features = {"calt": False, "liga": False, "ss02": True}
+    assert len(_shape(gsub_font_bytes, "->", features)) == 1    # ss02: on
+    assert len(_shape(gsub_font_bytes, ">=", features)) == 2    # ss01: off
+
+
+# --- set_monospace_metadata -----------------------------------------------
+
+def test_set_monospace_metadata():
+    glyph_order = [".notdef", "space", "a", "b", "c"]
+    widths = {"space": 0, "a": 500, "b": 700, "c": 350}   # space is 0-width
+    font = _tt_font(glyph_order, {ord(" "): "space", ord("a"): "a",
+                                  ord("b"): "b", ord("c"): "c"}, widths)
+
+    build.set_monospace_metadata(font)
+
+    assert font["post"].isFixedPitch == 1
+    assert font["OS/2"].panose.bProportion == 9
+    # mean of the non-zero advances, rounded the way OS/2 v3+ (and
+    # recalcAvgCharWidth) define xAvgCharWidth — zero-width glyphs excluded
+    nonzero = [w for w in widths.values() if w > 0]
+    assert font["OS/2"].xAvgCharWidth == otRound(sum(nonzero) / len(nonzero))
+
+
+# --- add_stat ---------------------------------------------------------------
+
+@pytest.mark.parametrize("weight, italic, want_wght, want_ital", [
+    ("Regular", False, 400, 0),
+    ("Bold", True, 700, 1),
+    ("Light", False, 300, 0),
+])
+def test_add_stat_is_one_value_per_axis(weight, italic, want_wght, want_ital):
+    # a static face lists only its own location; the whole family's values
+    # in every file trip Windows' family model (fontbakery STAT_in_statics)
+    font = _tt_font([".notdef", "a"], {ord("a"): "a"}, {"a": 600})
+
+    build.add_stat(font, weight, italic)
+
+    assert "STAT" in font
+    stat = font["STAT"].table
+    assert [a.AxisTag for a in stat.DesignAxisRecord.Axis] == ["wght", "ital"]
+    axis_values = stat.AxisValueArray.AxisValue
+    wght_values = [v for v in axis_values if v.AxisIndex == 0]
+    ital_values = [v for v in axis_values if v.AxisIndex == 1]
+    assert [v.Value for v in wght_values] == [want_wght]
+    assert [v.Value for v in ital_values] == [want_ital]
+    # Regular links to Bold, upright to Italic, both elidable (Format 3)
+    if weight == "Regular":
+        assert wght_values[0].Flags & 0x2
+        assert wght_values[0].LinkedValue == build.WEIGHT_CLASS["Bold"]
+    else:
+        assert wght_values[0].Format == 1
+    if italic:
+        assert ital_values[0].Format == 1
+    else:
+        assert ital_values[0].Flags & 0x2
+        assert ital_values[0].LinkedValue == 1
+
+
+# --- classify_marks ---------------------------------------------------------
+
+class FakeGlyphClassDefTable:
+    def __init__(self):
+        self.GlyphClassDef = None
+
+
+def test_classify_marks_creates_classdef_for_grafted_marks():
+    gdef_table = FakeGlyphClassDefTable()
+    font = {"GDEF": FakeTable(gdef_table)}
+
+    build.classify_marks(font, {"mark1", "mark2"})
+
+    assert gdef_table.GlyphClassDef is not None
+    assert gdef_table.GlyphClassDef.classDefs == {"mark1": 3, "mark2": 3}
+
+
+def test_classify_marks_without_gdef_does_not_raise():
+    build.classify_marks({}, {"mark1"})   # no "GDEF" key at all
+
+
+def test_classify_marks_empty_marks_is_noop():
+    gdef_table = FakeGlyphClassDefTable()
+    font = {"GDEF": FakeTable(gdef_table)}
+
+    build.classify_marks(font, set())
+
+    assert gdef_table.GlyphClassDef is None
+
+
+# --- set_names ---------------------------------------------------------
+
+def _cff_font():
+    glyph_order = [".notdef", "A"]
+    charstrings = {}
+    for g in glyph_order:
+        pen = T2CharStringPen(0, None)
+        pen.moveTo((0, 0))
+        pen.lineTo((100, 0))
+        pen.lineTo((100, 100))
+        pen.closePath()
+        charstrings[g] = pen.getCharString()
+
+    fb = FontBuilder(1000, isTTF=False)
+    fb.setupGlyphOrder(glyph_order)
+    fb.setupCharacterMap({ord("A"): "A"})
+    fb.setupCFF("TestPS", {"FullName": "Test Full", "FamilyName": "Test Family"},
+               charstrings, {})
+    fb.setupHorizontalMetrics({".notdef": (0, 0), "A": (600, 0)})
+    fb.setupHorizontalHeader(ascent=800, descent=-200)
+    fb.setupNameTable({"familyName": "Test", "styleName": "Regular"})
+    fb.setupOS2()
+    fb.setupPost()
+    return fb.font
+
+
+def test_set_names():
+    font = _cff_font()
+    name = font["name"]
+    # simulate the inherited Source Han Sans / donor strings that must
+    # survive alongside ours
+    name.setName("© Adobe", 0, 3, 1, 0x409)
+    name.setName("Paul", 9, 3, 1, 0x409)
+
+    ps = build.set_names(font, "Term", "Bold", False,
+                         credits=[("Monaspace", "Copyright GitHub",
+                                  "Lettermatic")])
+
+    assert ps == "ShoyuCodeProJPTerm-Bold"
+    copyright_ = name.getDebugName(0)
+    assert build.PROJECT_COPYRIGHT in copyright_
+    assert "© Adobe" in copyright_
+    assert "Copyright GitHub" in copyright_
+    designer = name.getDebugName(9)
+    assert "Paul" in designer
+    assert "Lettermatic" in designer
+    assert name.getDebugName(8) == "hn-11"
+    assert name.getDebugName(11) == build.PROJECT_URL
+    assert name.getDebugName(3).endswith(";SHYU;ShoyuCodeProJPTerm-Bold")
+    assert name.getDebugName(6) == "ShoyuCodeProJPTerm-Bold"
+
+    os2 = font["OS/2"]
+    assert os2.achVendID == "SHYU"
+    assert os2.usWeightClass == 700
+    assert os2.fsSelection & 0x20    # bold
+    assert os2.fsSelection & 0x100   # WWS
+    assert not os2.fsSelection & 0x40   # regular clear
+    assert os2.version >= 4
+
+
+# --- donor_credits (Latin donor's own composed name IDs 0 / 9) -----------
+
+def test_donor_credits_parses_scp_and_monaspace_in_order():
+    font = _tt_font([".notdef", "A"], {ord("A"): "A"}, {"A": 600})
+    font["name"].setName(
+        "Sumi Moji: Copyright 2026 hn-11 (https://x). "
+        "Source Code Pro: © 2023 Adobe (http://www.adobe.com/), with "
+        "Reserved Font Name ‘Source’. "
+        "Monaspace: Copyright 2023 GitHub, Inc. "
+        "(https://github.com/githubnext/monaspace), with Reserved Font "
+        "Names 'Monaspace', 'Monaspace Argon'.",
+        0, 3, 1, 0x409)
+    font["name"].setName(
+        "Source Code Pro: Paul D. Hunt, Teo Tuominen; "
+        "Monaspace: Riley Cran and the Lettermatic Team",
+        9, 3, 1, 0x409)
+
+    credits = build.donor_credits(font)
+
+    assert [label for label, _, _ in credits] == ["Source Code Pro", "Monaspace"]
+    scp_label, scp_copyright, scp_designer = credits[0]
+    assert scp_copyright == (
+        "© 2023 Adobe (http://www.adobe.com/), with Reserved Font "
+        "Name ‘Source’.")
+    assert scp_designer == "Paul D. Hunt, Teo Tuominen"
+    mona_label, mona_copyright, mona_designer = credits[1]
+    assert mona_copyright.endswith("'Monaspace Argon'.")
+    assert mona_designer == "Riley Cran and the Lettermatic Team"
+
+
+def test_donor_credits_designers_none_when_name_id_9_absent():
+    font = _tt_font([".notdef", "A"], {ord("A"): "A"}, {"A": 600})
+    font["name"].setName(
+        "Sumi Moji: Copyright 2026 hn-11 (https://x). "
+        "Source Code Pro: © 2023 Adobe (http://www.adobe.com/), with "
+        "Reserved Font Name ‘Source’. "
+        "Monaspace: Copyright 2023 GitHub, Inc. "
+        "(https://github.com/githubnext/monaspace), with Reserved Font "
+        "Names 'Monaspace', 'Monaspace Argon'.",
+        0, 3, 1, 0x409)
+    # nameID 9 is never set on this font
+
+    credits = build.donor_credits(font)
+
+    assert [designer for _, _, designer in credits] == [None, None]
+
+
+# --- stretch_path (full-width arrows from Monaspace) ---------------------
+
+def _arrow_path(axis):
+    """Shaft 100 long x 20 thick plus a triangular head, along `axis`."""
+    import pathops
+    path = pathops.Path()
+    pen = path.getPen()
+    pts = [(0, -10), (100, -10), (100, -30), (140, 0), (100, 30), (100, 10),
+           (0, 10)]
+    if axis == 1:
+        pts = [(y, x) for x, y in pts]
+    pen.moveTo(pts[0])
+    for pt in pts[1:]:
+        pen.lineTo(pt)
+    pen.closePath()
+    return path
+
+
+@pytest.mark.parametrize("axis", [0, 1])
+def test_stretch_path_lengthens_only_the_shaft(axis):
+    src = _arrow_path(axis)
+    out = build.stretch_path(src, axis, 60)
+    b0, b1 = src.bounds, out.bounds
+    if axis == 0:
+        assert b1[2] - b1[0] == pytest.approx((b0[2] - b0[0]) + 60)
+        assert (b1[1], b1[3]) == pytest.approx((b0[1], b0[3]))
+    else:
+        assert b1[3] - b1[1] == pytest.approx((b0[3] - b0[1]) + 60)
+        assert (b1[0], b1[2]) == pytest.approx((b0[0], b0[2]))
+    # the gap is filled with the shaft's own cross-section (20 thick)
+    assert abs(out.area) == pytest.approx(abs(src.area) + 60 * 20)
+
+
+def test_stretch_path_noop_when_nothing_to_add():
+    src = _arrow_path(0)
+    assert build.stretch_path(src, 0, 0) is src
+
+
+@pytest.mark.parametrize("axis", [0, 1])
+def test_stretch_path_shortens_the_shaft(axis):
+    src = _arrow_path(axis)
+    out = build.stretch_path(src, axis, -40)
+    b0, b1 = src.bounds, out.bounds
+    length = (lambda b: b[2] - b[0]) if axis == 0 else (lambda b: b[3] - b[1])
+    assert length(b1) == pytest.approx(length(b0) - 40)
+    assert abs(out.area) == pytest.approx(abs(src.area) - 40 * 20)

@@ -24,6 +24,13 @@ from fontTools.ttLib import TTFont
 ROOT = Path(__file__).resolve().parent.parent
 DIST = ROOT / "dist"
 OUT = DIST / "nerd"
+# Sumi Moji is the Latin-only family; its faces live in dist/latin/ (not
+# dist/) and its patched output goes to dist/nerd/latin/. dist/latin/term/
+# holds the internal donor family "Sumi Moji Term" and must never be
+# patched — only globbing "SumiMoji-*.otf" (not "*.otf") in dist/latin/
+# picks up the public family and skips that subdirectory entirely.
+LATIN_DIR = DIST / "latin"
+LATIN_OUT = OUT / "latin"
 
 FLATTEN = """
 import sys, fontforge
@@ -130,7 +137,12 @@ def fix_names(patched: Path, src: Path) -> Path:
         # JP-font convention (HackGen/PlemolJP/UDEV): NF goes AFTER the
         # variant token — "Shoyu Code Pro JP Term NF", not "... NF Term".
         s = re.sub(r"(Shoyu Code Pro JP(?: 35| Term)?)", r"\1 NF", s, count=1)
-        return re.sub(r"(ShoyuCodeProJP(?:35|Term)?)", r"\1NF", s, count=1)
+        s = re.sub(r"(ShoyuCodeProJP(?:35|Term)?)", r"\1NF", s, count=1)
+        # Sumi Moji is a single Latin-only family (no 35/Term variants to
+        # preserve — Sumi Moji Term is the internal donor and is never
+        # patched), so this is a plain literal substitution.
+        s = re.sub(r"(Sumi Moji)", r"\1 NF", s, count=1)
+        return re.sub(r"(SumiMoji)", r"\1NF", s, count=1)
 
     font = TTFont(patched)
     src_font = TTFont(src)
@@ -142,7 +154,7 @@ def fix_names(patched: Path, src: Path) -> Path:
     font["name"].names = []
     for rec in src_font["name"].names:
         s = rec.toUnicode()
-        if "Shoyu" in s:
+        if "Shoyu" in s or "Sumi" in s:
             s = nf_name(s)
         font["name"].setName(s, rec.nameID, rec.platformID,
                              rec.platEncID, rec.langID)
@@ -161,10 +173,16 @@ def main():
     patcher_dir = Path(sys.argv[1])
     name_filter = sys.argv[2] if len(sys.argv) > 2 else ""
     OUT.mkdir(exist_ok=True)
+    LATIN_OUT.mkdir(exist_ok=True)
+    # dist/*.otf (non-recursive, so dist/latin/ is untouched here) plus the
+    # public Sumi Moji faces specifically — never "*.otf" in dist/latin/,
+    # which would also sweep up the dist/latin/term/ donor family.
+    sources = [(p, OUT) for p in sorted(DIST.glob("*.otf"))]
+    sources += [(p, LATIN_OUT) for p in sorted(LATIN_DIR.glob("SumiMoji-*.otf"))]
     with tempfile.TemporaryDirectory() as tmp:
         flatten_script = Path(tmp) / "flatten.py"
         flatten_script.write_text(FLATTEN)
-        for src in sorted(DIST.glob("*.otf")):
+        for src, out_dir in sources:
             if name_filter and name_filter not in src.name:
                 continue
             print(f"patching: {src.name}")
@@ -179,7 +197,7 @@ def main():
                 raise
             r = subprocess.run(
                 ["fontforge", "-script", str(patcher_dir / "font-patcher"),
-                 "--complete", "--quiet", "--outputdir", str(OUT), str(flat)],
+                 "--complete", "--quiet", "--outputdir", str(out_dir), str(flat)],
                 check=False, capture_output=True, text=True, env=ff_env())
             if r.returncode != 0:
                 print(r.stdout)

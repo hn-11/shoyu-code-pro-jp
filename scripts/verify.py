@@ -22,8 +22,10 @@ CASES = [
     ("a == b", 5), ("a => b", 5), ("x |> f", 5), ("t :: u", 5),
     ("m >>= g", 5), ("s // c", 5),
     # context guards: an operator run longer than any ligature stays plain
-    ("x <|> y", 7), ("a &&= b", 7), ("a ~~> b", 7), ("a ->> b", 7),
-    ("a ==> b", 7),
+    ("x <|> y", 7), ("a ->> b", 7), ("a ==> b", 7),
+    # ... while runs that ARE ligatures (added in 3.3) collapse
+    ("a &&= b", 5), ("a ~~> b", 5), ("a <!-- b", 5), ("a && b", 5),
+    ("a ++ b", 5), ("a =~ b", 5),
     ("日本語 != x", 7),
 ]
 
@@ -255,9 +257,10 @@ def main():
     # standalone operators redrawn from Monaspace must match the ligatures
     # cut from the same instance: every contour of the lone glyph has a
     # counterpart in the ligature at the same y extent (ligatures span
-    # more cells, so only y is comparable). '==' '<<' '>>' '||' repeat the
-    # glyph outright; '~' has no such ligature ('~>' is a fused wave-arrow)
-    # and is not checked.
+    # more cells, so only y is comparable). '==' '<<' '>>' '||' '..' '!!'
+    # ';;' repeat the glyph outright; '~' ('~>' is a fused wave-arrow),
+    # ':' ('::' is the raised colon.case) and '&' (no '&&' ligature) have
+    # no such ligature and are not checked.
     from build import (
         FACES,
         MONA_STANDALONE,
@@ -276,17 +279,60 @@ def main():
         infos, _ = shape_infos(text, {"calt": True, "liga": True})
         return glyph_order[infos[2].codepoint]
 
-    pairs = {"=": "a == b", "<": "a << b", ">": "a >> b", "|": "a || b"}
+    pairs = {"=": "a == b", "<": "a << b", ">": "a >> b", "|": "a || b",
+             ".": "a .. b", "!": "a !! b", ";": "a ;; b"}
     for ch in MONA_STANDALONE:
         if ch not in pairs:
             continue
         rows_ch, rows_lig = y_rows(cmap[ord(ch)]), y_rows(lig_glyph(pairs[ch]))
         ok = bool(rows_ch) and all(
-            any(abs(a - c) <= 1 and abs(b - d) <= 1 for c, d in rows_lig)
+            any(abs(a - c) <= 2 and abs(b - d) <= 2 for c, d in rows_lig)
             for a, b in rows_ch)
         print(f"{'ok  ' if ok else 'FAIL'} {ch!r} rows {rows_ch} "
               f"found in {pairs[ch].split()[1]!r} {rows_lig}")
         failed |= not ok
+
+    # width alternates of the ligature-paired symbols (← → ≠ … etc.):
+    # 2:3 / 35 default to full width with the arrows redrawn from
+    # Monaspace (same head as '->'), and hwid / ss09 give the one-cell
+    # form; Term defaults to one cell and fwid gives the full-width form.
+    from build import ARROWS_H, MONA_AMBIGUOUS
+    fam_tokens = [t for t in fam.split(" ") if t != "NF"]
+
+    def advance_of(text, feats):
+        _, positions = shape_infos(text, feats)
+        return positions[0].x_advance
+
+    full_adv = expected_metrics(tf)[1]
+    is_term = "Term" in fam_tokens
+    for ch in MONA_AMBIGUOUS:
+        if is_term:
+            got_default, got_alt = advance_of(ch, {}), advance_of(ch, {"fwid": True})
+            ok = got_default == a_adv and got_alt == full_adv
+            print(f"{'ok  ' if ok else 'FAIL'} {ch!r} default {got_default} "
+                  f"(want {a_adv}), fwid {got_alt} (want {full_adv})")
+        else:
+            got_default = advance_of(ch, {})
+            got_h, got_s = advance_of(ch, {"hwid": True}), advance_of(ch, {"ss09": True})
+            ok = got_default == full_adv and got_h == a_adv and got_s == a_adv
+            print(f"{'ok  ' if ok else 'FAIL'} {ch!r} default {got_default} "
+                  f"(want {full_adv}), hwid {got_h} / ss09 {got_s} (want {a_adv})")
+        failed |= not ok
+    if not is_term:
+        # the full-width horizontal arrows are cut from the ligature they
+        # pair with (ARROW_SOURCE): same vertical extent, within 2u
+        from build import ARROW_SOURCE
+
+        def extent(rows):
+            return min(a for a, _ in rows), max(b for _, b in rows)
+        for ch in ARROWS_H:
+            seq = ARROW_SOURCE[ch][0]
+            lig_ymin, lig_ymax = extent(y_rows(lig_glyph(f"a {seq} b")))
+            ymin, ymax = extent(y_rows(cmap[ord(ch)]))
+            ok = abs(ymin - lig_ymin) <= 2 and abs(ymax - lig_ymax) <= 2
+            print(f"{'ok  ' if ok else 'FAIL'} {ch!r} y extent {ymin}..{ymax} "
+                  f"vs {seq!r} {lig_ymin}..{lig_ymax}")
+            failed |= not ok
 
     # stroke weight vs the SHCJ reference: the '=' bar our Latin layer was
     # weight-matched to should still measure the same after grafting,
@@ -294,7 +340,6 @@ def main():
     # weight at all — the "35" family deliberately keeps Source Code
     # Pro's native weight instead (see VARIANTS' comp flag in build.py).
     shcj_ttc = os.environ.get("SHCJ_TTC")
-    fam_tokens = [t for t in fam.split(" ") if t != "NF"]
     if shcj_ttc is None:
         print("skip  '=' bar vs SHCJ reference (SHCJ_TTC unset)")
     elif "35" in fam_tokens:
@@ -363,11 +408,10 @@ def main():
                       f"{seq!r} glyph {gname!r}")
                 failed |= not ok
 
-    # width metadata follows SHCJ's declarations (dual-width, so NOT pure
-    # monospace: SHCJ 2.012R declares isFixedPitch=0, PANOSE proportion=0,
-    # xAvgCharWidth=977 at the 667 cell) — the contract is continuity, and
-    # xAvgCharWidth is rescaled with the half-width cell by rescale().
-    SHCJ_XAVG = 977  # declared value in SHCJ 2.012R
+    # width metadata: declared monospaced (set_monospace_metadata — what
+    # Windows Terminal's picker and GDI's FIXED_PITCH filter read; SHCJ's
+    # own 0/0 hid it there), xAvgCharWidth per OS/2 v3+ (mean of every
+    # non-zero advance), x/cap height measured on the face's own glyphs.
     if " NF" in fam:
         # font-patcher rewrites PANOSE to monospaced and recalculates
         # xAvgCharWidth on the flattened font; those are its own to set
@@ -376,20 +420,32 @@ def main():
     else:
         fixed = tf["post"].isFixedPitch
     if fixed is not None:
-        ok = fixed == 0
-        print(f"{'ok  ' if ok else 'FAIL'} post.isFixedPitch == 0 (SHCJ declaration), got {fixed}")
+        ok = fixed == 1
+        print(f"{'ok  ' if ok else 'FAIL'} post.isFixedPitch == 1, got {fixed}")
         failed |= not ok
 
         panose_prop = tf["OS/2"].panose.bProportion
-        ok = panose_prop == 0
-        print(f"{'ok  ' if ok else 'FAIL'} OS/2 PANOSE proportion == 0 (SHCJ declaration), got {panose_prop}")
+        ok = panose_prop == 9
+        print(f"{'ok  ' if ok else 'FAIL'} OS/2 PANOSE proportion == 9 (monospaced), got {panose_prop}")
         failed |= not ok
 
+        from fontTools.misc.roundTools import otRound
+        widths = [adv for adv, _ in tf["hmtx"].metrics.values() if adv > 0]
         avg_w = tf["OS/2"].xAvgCharWidth
-        want_avg = round(SHCJ_XAVG * a_adv / 667)
+        want_avg = otRound(sum(widths) / len(widths))
         ok = avg_w == want_avg
-        print(f"{'ok  ' if ok else 'FAIL'} OS/2.xAvgCharWidth scales with cell ({avg_w} vs {want_avg})")
+        print(f"{'ok  ' if ok else 'FAIL'} OS/2.xAvgCharWidth is the mean non-zero advance ({avg_w} vs {want_avg})")
         failed |= not ok
+
+        from fontTools.pens.boundsPen import BoundsPen
+        gs = tf.getGlyphSet()
+        for attr, ch in (("sxHeight", "x"), ("sCapHeight", "H")):
+            pen = BoundsPen(gs)
+            gs[cmap[ord(ch)]].draw(pen)
+            got, want = getattr(tf["OS/2"], attr), round(pen.bounds[3])
+            ok = got == want
+            print(f"{'ok  ' if ok else 'FAIL'} OS/2.{attr} == top of {ch!r} ({got} vs {want})")
+            failed |= not ok
 
     # line-metrics sanity: hhea and OS/2 vertical metrics must be nonzero
     # and internally consistent

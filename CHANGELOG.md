@@ -1,5 +1,176 @@
 # Changelog
 
+## v3.3.0
+
+- `scripts/build_latin_vf.py` を追加: Sumi Moji を CFF2 可変フォントとして
+  組む（`dist/latin/SumiMoji[wght].otf` / `SumiMoji-Italic[wght].otf`）。
+  マスターは SCP VF 自身のマスター位置（wght 200 / 400 / 900、CFF2 の
+  VarStore から実測——決め打ちしない）にそのまま置き、各マスターで
+  Monaspace を太さ一致でインスタンス化するが、erosion（Monaspace の
+  wght 下限対策）は非線形なブーリアン演算でマスター間の補間に使えない
+  ため無効化し（`VFSource.matched(erode=False)`、下限で単にクランプ）、
+  重なり除去（`pathops.simplify`、`draw_clean(simplify=False)`）も
+  マスター間の点対応を崩すため行わない——重なりは SCP 自身の VF と同じ
+  扱いで残す。ヒント付け・サブルーチン化もしない。fvar の6つの名前付き
+  インスタンス（Light/Normal/Regular/Medium/Bold/Heavy）と STAT の値は
+  静的版の STAT と同じ usWeightClass の値（300/350/400/500/700/900、
+  既定 400 = Regular で OS/2 usWeightClass と一致——軸を指定せずに VF を
+  選んでも Regular が出る）。avar が各値を静的版と同じ「SHCJ の `=`
+  バー×600/667」に一致する SCP wght（実測: Upright で 317/374/406/546/
+  669/857、Italic で 317/378/399/538/662/841）へ写す。マスターを置く
+  設計座標は SCP のユーザー wght を SCP 自身の fvar 正規化 + avar で
+  線形化したもの（SCP の VF はユーザー wght に対して線形ではない）で、
+  SCP 自身の avar の折れ点も写像に含めるため、名前付きインスタンスの
+  間でも SCP と一致する。マスターは fontTools の instancer の整数丸めを
+  切ってインスタンス化する（`unrounded_cff2_instancing`）——charstring の
+  オペランドは相対座標なので丸めが経路に沿って累積し、丸めたマスターから
+  組むと `m` などがマスター間で最大 10u ずれていた（実測）。丸めなしなら
+  SCP のブレンドそのもの（CFF2 charstring の固定小数 16.16 精度）を補間
+  するので、`verify_latin_vf.py` は名前付きインスタンスの間の wght でも
+  SCP 自身のブレンドと 1u 以内で一致することを確認する。代償として
+  VF のファイルサイズは整数版の約 4.5 倍（Upright 約 1.6MB——
+  オペランドが 16.16 固定小数 5 バイトになるため）。マスターは SCP の 200 / 400 に
+  Regular と Heavy の位置（Regular が既定マスター、Heavy が軸の上限）と
+  Monaspace の下限位置（Monaspace wght 200 のバーが SCP のバーと一致する
+  SCP wght——これより細い側は Monaspace が下限でクランプされ一定、太い側
+  は SCP 追随）を加えた 5 つ。name テーブルは SCP VF 自身の慣習
+  （`SourceCodeVF-Upright.otf` / `-Italic.otf`）に倣い、nameID 6 に
+  `SumiMoji-Roman` / `SumiMoji-Italic`、nameID 25 に `SumiMoji`
+  （バリエーション PostScript 名接頭辞）、nameID 16/17 は省略（fvar +
+  STAT が既に家族を説明するため）。軸の既定値に置かれた名前付き
+  インスタンス（Regular / Italic）の postScriptNameID は fvar の仕様
+  どおり nameID 6 を指す（fontbakery
+  `opentype/varfont/valid_default_instance_nameids`）。MVAR/HVAR は除外（このレシピでは
+  送り幅もOS/2の縦メトリクスも太さで変化しないため、可変にする対象が
+  無い）。SCP wght がおよそ366を下回ると Monaspace 側の記号・合字は
+  自身の wght 200 の下限（静的版が erosion で削っている太さ）より
+  薄くできないため、VF の軽量側では記号だけが下限の太さで止まり、
+  erosion 済みの静的 Light よりわずかに太くなる——静的 Light は引き続き
+  erosion 版を配布する。`scripts/verify_latin_vf.py` を追加（fvar/STAT/
+  name の形状、6つの名前付きインスタンス全てでの合字シェイピング、
+  6 つの名前付きインスタンスそれぞれの `=` バーと `A` の外接矩形を対応する
+  静的面と比較、`SCP_VF_U` / `SCP_VF_I` がある環境では名前付き
+  インスタンスの間の wght でも SCP 自身のインスタンスと外形が一致する
+  ことを確認）。CI（`ci.yml`）は `build_latin.py` の Regular 検証の
+  直後に Upright VF のビルドと検証を追加（時間短縮のため Upright のみ）、
+  リリース（`release.yml`）は Upright・Italic 両方をビルド・検証し、
+  `SumiMoji.zip` にも自動的に含まれる（zip 手順は `dist/latin` 内の
+  `*.otf` を素朴に glob しているため）
+
+- name テーブルから nameID 7（商標: "Source is a trademark of Adobe"）と、
+  静的面では nameID 25（バリエーション PostScript 名接頭辞、SCP 由来の
+  `SourceCodeUpright` / `SourceCodeItalic` が残っていた）を落とす
+  （`build.OWNED_NAME_IDS`）——どちらも Source という名前のフォントの
+  ためのもので、Adobe の表示は nameID 0 のクレジットに入っている。
+  Sumi Moji（静的・VF とも）では SCP が GDEF のマーク分類を付けていない
+  結合文字 U+035F / U+0361 も class 3（Mark）にする
+  （`build.classify_unicode_marks`）
+- 欧文のみの新ファミリー Sumi Moji（仮称、PostScript 名 `SumiMoji-*`）を
+  追加し、`build.py` はこれを Source Han Sans に接ぎ木する側に変更
+  （VF に直接触らなくなった）。`scripts/build_latin.py` が VF から直接
+  組む: Source Han Code JP の `=` バーに合わせた Source Code Pro VF の
+  インスタンスを fontTools の CFF2ToCFF で静的 CID-keyed CFF に変換した
+  ものをベースに（SCP のアウトライン・アライメントゾーン・GSUB
+  （`cv01`〜`cv17` `zero` `salt`、SCP の stylistic set は `ss11`〜`ss17`
+  に移動）・GPOS のマーク位置決めはそのまま生存）、インスタンス化で
+  失われるヒントを SCP 自身のゾーンに対して otfautohint で付け直し、
+  Monaspace の合字61種・ASCII 記号32字・1セル矢印（SCP に無い `⇔` も
+  追加）を接ぎ木し、cffsubr でサブルーチン化する。プロファイルは2つ:
+  配布物 `dist/latin`（バー = SHCJ のバー × 600/667、35 と同じ太さ）と
+  内部専用 `dist/latin/term`（バー = SHCJ のバー を 600 のまま、Term
+  ファミリー用ドナー）。結合文字は SCP が出荷する形（スペーシング、
+  GPOS mark で位置決め）のまま。縦メトリクスは SCP 自身の hhea
+  （984/-273）、typo を hhea と同値にして `USE_TYPO_METRICS` を立て、
+  win はファミリー全面のバウンディングボックス（Regular ペアで
+  1060/454）。Regular は1,632グリフ/約140KB、Italic は1,335グリフ
+  （SCP Italic VF のグリフ数がそもそも少ない）。CI（`ci.yml`）は
+  `build_latin.py` を先に走らせてから Regular ペアをビルド・検証、
+  リリース（`release.yml`）も同じ順序で12面をビルドし2面を検証した
+  うえで `SumiMoji.zip`（LICENSE 同梱）をリリース資産に追加。JP 側の
+  出力は roundoff（±1〜2ユニット）を除き従来の VF 直接ビルドと同一に
+  なるよう意図しており、`scripts/golden.py` が2つの dist ディレクトリ
+  間で cmap・送り幅・シェーピング・アウトライン（許容誤差つき）・
+  メタデータ・ヒントを比較する。Nerd Fonts 変種・TTC はまだ無い
+- 合字を50種から61種に拡張。Monaspace が描いているが `data/mona_ligs.json`
+  が未収録だった11種を追加: 真の合字5つ `!~` `=~`（正規表現マッチ、ss01）、
+  `~~>`（ss02）、`<!--`（ss03、4セル）、`&&=`（ss08）と、`::`/`:=` と同じ
+  手法で合成する文脈的スペーシング代替6つ `&&` `++`（`&`/`+` の
+  init/fina 変異、ss08）、`..<` `.=`（ピリオドを上げた変異、ss06）、
+  `:>` `<:`（コロンを上げた変異、ss05）。結果として `&&=` と `~~>` は
+  合字化するようになった（Monaspace 本家と同じ挙動）。文脈ガードは
+  `<|>` `->>` `==>` を引き続き素の文字のまま保つ
+- JP / 35 の全角矢印7種（`←` `→` `↑` `↓` `⇐` `⇒` `⇔`）を Monaspace から
+  取り直し。合字グリフ（`->` `<-` `=>` `<=>`、`⇐` は `=>` の鏡像、
+  `↑` `↓` は `->` の 90° 回転）の軸を詰めるか伸ばすかして Source Han
+  Sans のインク長に合わせる（Italic は傾斜を抜いてから加工して後で
+  掛け直す）。全角の幅・インク量は SHCJ のまま、矢尻とストロークが
+  合字と同一になる。Monaspace 自身の `→` 文字は `->` より矢尻が小さい
+  ので使わない。`≠` `≤` `≥` `…` は軸がないため引き続き Source Han Sans
+  の全角グリフ
+- 合字と対になる11字（矢印7種 + `≠` `≤` `≥` `…`）に、全ファミリーで
+  全角・半角（Monaspace 1セル）両方の字形を用意し OpenType feature で
+  手動切り替え可能に: JP / 35 は既定が全角で `hwid` / 新設の `ss09`
+  （「Half-width arrows & operators」、この11字だけを動かす）が半角、
+  Term は既定が半角（従来どおり）で `fwid` が全角に戻す。フォントは
+  ターミナルの曖昧幅設定を検知できないための手動対応。HackGen Console /
+  PlemolJP Console / Moralerspace HW / UDEV Gothic JPDOC は別ファミリーで
+  この使い分けを提供しているが、本フォントは各ファミリー内の feature
+  として持たせている
+- 単独の ASCII 記号は32字全部（`!"#$%&'()*+,-./:;<=>?@[\]^_`{|}~`）を
+  Monaspace に統一（以前は `=` `<` `>` `|` `~` の5字のみ）。合字自体が
+  Monaspace 製のため、記号の骨格が単独字と合字とで食い違うと隣接時に
+  継ぎ目が見えていた（`#` と `#[`、`-` と `->` など）。多くは Monaspace の
+  cap 高・x-height が高いぶんの縦サイズ差（16〜150u、セル内に収まり
+  ターミナルサイズでは2ピクセル未満）。`-` は `=` より124u短いが
+  Monaspace 自身の字形どおり。SCP の cv14/cv15/cv16 を有効にすると
+  `-` `*` `$` は SCP の字形に戻る
+- 合字の calt/liga: 結合ルックアップの一致条件を、先頭1文字だけを見て
+  残りをネストした LigatureSubst に委ねる形から、各合字の入力列を全部
+  カバーするトリガールール（最長一致順）に変更。ネストしたルックアップが
+  一致範囲を超えて何文字消費してよいかは OpenType の未定義動作で、
+  HarfBuzz（kitty / WezTerm / Ghostty / VS Code のエディタ本体）は許容
+  していたが DirectWrite（Windows Terminal）は v3.2.0 で `->` を素の文字
+  のまま描画していた。Monaspace 本家の calt も入力を全部カバーする形。
+  なお VS Code の統合ターミナル（xterm.js のリガチャアドオン、
+  font-ligatures）は Fira Code 式の単純な置換ルールしか解釈せず、
+  このフォントの合字はどのバージョンでも表示されない — これは今回の
+  変更と無関係で従来通り
+- 等幅メタデータ: `post.isFixedPitch=1`、PANOSE bProportion=9
+  （HackGen / PlemolJP と同じ）、xAvgCharWidth を OS/2 v3+ の定義
+  （0でない送り幅全部の平均）で再計算 — SHCJ の値の複写をやめた。
+  Windows Terminal のフォント選択に「すべてのフォントを表示」なしで
+  出るようになる
+- OS/2 sxHeight / sCapHeight を各面の実際の `x` / `H` から実測。
+  SHS の値（543/733）は Term/35（SCP 原寸で 488/655）に対して誤りだった
+- ヒンティング: T2CharStringPen で描いた欧文・合字・（Term では）拡幅した
+  全角グリフはこのフォント最初のバージョンから CFF ヒントを持っていな
+  かった（SHCJ の欧文にはヒントがあった）。最終アウトラインで測った
+  アライメントゾーン（BlueValues/OtherBlues/StdHW/StdVW）付きの CID
+  FontDict を新設して割り当て、面を保存した後に AFDKO の otfautohint で
+  ヒントを付ける（`requirements.txt` に afdko 追加、
+  `SHOYU_SKIP_AUTOHINT=1` でローカルビルド時はスキップ可）。Source Han
+  Sans 由来のグリフは元のヒントのまま。ヒント付与後、cffsubr（AFDKO の
+  tx、`requirements.txt` に追加）で CFF をサブルーチン化: ビルドが生成
+  する charstring はすべてフラットで、Term は全角グリフ約1.7万個を
+  丸ごと再生成するため、ヒント付きだと Term の面が44%肥大（6.7MB）して
+  いた。サブルーチン化後は4.6MB — ヒントを保ったまま v3.2.0（4.66MB）より
+  小さい
+- GDEF: SCP から移植した結合文字（U+0300〜036F、送り0）を class 3
+  （Mark）に分類
+- 来歴: nameID 0 にプロジェクトの著作権表示に加え Source Han Sans /
+  Source Code Pro / Monaspace 各ドナーの表示をビルド時に取り込んで記載、
+  nameID 9 にドナーのデザイナーを列挙、nameID 8 / 11 が Adobe ではなく
+  プロジェクト（hn-11、リポジトリ URL）を指すように変更、
+  OS/2 achVendID を Adobe の `ADBO` から未登録の `SHYU` に、
+  nameID 3（unique ID）を `version;SHYU;PostScriptName` 形式に。
+  Source Han Sans の古い DSIG は削除
+- STAT テーブルを追加。各面は自分自身の wght / ital 値を1つずつだけ
+  持つ（Regular は elidable で Bold にリンク、upright は elidable で
+  Italic にリンク） — ファミリー全体の値を全面に列挙する形は Windows の
+  ファミリーモデルを混乱させる（fontbakery: STAT_in_statics）ため
+  避けた。OS/2 に WWS ビットを立て（version 4 に更新）、usWeightClass も
+  ウェイトごとに明示的に設定
+
 ## v3.2.0
 
 - 合字に文脈ガードを追加（Monaspace 本家の calt と同じ考え方）。演算子の並びが
