@@ -37,10 +37,12 @@ env:
 jobs:
   # a family's two weights, both styles, per job (nine jobs: more than
   # about ten queue behind each other): its four Latin donors, its four
-  # JP faces, and the Nerd Fonts patches — the JP faces' own, plus two of
-  # the Sumi Moji faces (base: upright, 35: italic) patched while the JP
-  # faces build. Two of the Term jobs (the lightest: four patches) also
-  # build one variable font each, for the package job to pick up
+  # JP faces, and the Nerd Fonts patches — the JP faces' own, plus a share
+  # of the twelve Sumi Moji ones, patched while the JP faces build: the
+  # base job the first weight's upright, the 35 job its italic, the Term
+  # job (the lightest: its faces need no icon fitting) both of the second
+  # weight's, for which it builds the ship donors too. Two of the Term
+  # jobs also build one variable font each, for the package job to pick up
   faces:
     if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[release-dry]')
     runs-on: ubuntu-latest
@@ -53,12 +55,13 @@ jobs:
         include:
           - family: base
             latin: ship
-            latin_nf: upright
+            latin_nf: upright-first
           - family: 35
             latin: ship
-            latin_nf: italic
+            latin_nf: italic-first
           - family: Term
             latin: term
+            latin_nf: both-second
           - family: Term
             weights: Light Normal
             variable: upright
@@ -77,20 +80,20 @@ jobs:
         env:
           LATIN_NF: ${{ matrix.latin_nf }}
         run: |
-          latin=
-          if [ -n "$LATIN_NF" ]; then
-            faces=$(for w in ${{ matrix.weights }}; do
-              echo "dist/latin/SumiMoji-$w$([ "$LATIN_NF" = italic ] && echo Italic).otf"
-            done)
-            python scripts/nerdpatch.py FontPatcher $faces > nerd-latin.log 2>&1 &
-            latin=$!
-          fi
+          set -- ${{ matrix.weights }}
+          case "$LATIN_NF" in
+            upright-first) faces="dist/latin/SumiMoji-$1.otf" ;;
+            italic-first) faces="dist/latin/SumiMoji-$1Italic.otf" ;;
+            both-second)
+              python scripts/build_latin.py "$2 ship"
+              faces="dist/latin/SumiMoji-$2.otf dist/latin/SumiMoji-$2Italic.otf" ;;
+          esac
+          python scripts/nerdpatch.py FontPatcher $faces > nerd-latin.log 2>&1 &
+          latin=$!
           python scripts/build.py "${{ matrix.weights }} ${{ matrix.family }}"
           python scripts/nerdpatch.py FontPatcher dist/*.otf
-          if [ -n "$latin" ]; then
-            wait $latin || { cat nerd-latin.log; exit 1; }
-            cat nerd-latin.log
-          fi
+          wait $latin || { cat nerd-latin.log; exit 1; }
+          cat nerd-latin.log
       - if: matrix.variable
         run: python scripts/build_latin_vf.py ${{ matrix.variable }}
       # the statics and NF faces; a variable font, when this job built one,
