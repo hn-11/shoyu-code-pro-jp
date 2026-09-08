@@ -594,8 +594,15 @@ def main():
     env = build.env_paths(dict.fromkeys(build_latin.VF_ENV))
     out_dir = build.ROOT / "dist" / "latin"
     styles = [only] if only else list(STYLES)
-    for style in styles:
-        print(build_style(style, env, str(out_dir)))
+    # the two styles are independent (and each monkeypatches module
+    # state, so separate processes): build them side by side
+    build.run_faces([(style, env, str(out_dir)) for style in styles], _build_style_job,
+                    label=lambda job: job[0], on_result=lambda job, msg: print(msg),
+                    pool_from=2)
+
+
+def _build_style_job(job):
+    return build_style(*job)
 
 
 if __name__ == "__main__":
