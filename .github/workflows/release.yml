@@ -13,6 +13,12 @@ name: Release
 on:
   push:
     tags: ["v*"]
+    # a branch push whose commit message carries [release-dry] is a dry
+    # run: the workflow as of that commit builds and packages, publishes
+    # nothing — timing a change to this file before it is on main (a push
+    # without the marker runs nothing; workflow_dispatch is not open to
+    # every token)
+    branches: ["**"]
   workflow_dispatch:
     inputs:
       tag:
@@ -25,7 +31,9 @@ on:
 permissions:
   contents: write
 env:
-  SHOYU_VERSION_TAG: ${{ inputs.tag || github.ref_name }}
+  SHOYU_VERSION_TAG: ${{ inputs.tag || (github.ref_type == 'tag' && github.ref_name) || 'v0.0.0-dry' }}
+  # the runs that publish: a v* tag, or a dispatch without dry-run
+  PUBLISH: ${{ github.event_name == 'push' && github.ref_type == 'tag' || github.event_name == 'workflow_dispatch' && !inputs.dry-run }}
 jobs:
   # a family's two weights, both styles, per job (nine jobs: more than
   # about ten queue behind each other): its four Latin donors, its four
@@ -33,6 +41,7 @@ jobs:
   # the Sumi Moji faces (base: upright, 35: italic) patched while the JP
   # faces build
   faces:
+    if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[release-dry]')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -130,7 +139,7 @@ jobs:
             flag && /^## / {flag=0}
             flag
           ' CHANGELOG.md > release_notes.md
-      - if: ${{ !inputs.dry-run }}
+      - if: env.PUBLISH == 'true'
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           # on dispatch the tag doesn't exist yet; gh-release creates it

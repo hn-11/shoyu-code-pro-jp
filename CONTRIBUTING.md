@@ -71,7 +71,9 @@ python scripts/verify.py dist/ShoyuCodeProJP-Regular.otf
 （記号セット 1 つのスモークテスト）を 1 ジョブ、並列に組んで 1 分程度。リリース
 `release.yml` はファミリー × ウェイト 2 つ組の 9 ジョブのあと `package`
 ジョブが可変フォントを組み、`harmonize_latin.py` → `makeotc.py` → zip →
-GitHub Release を作り、5 分程度）。複数の面をまとめて検証するときは
+GitHub Release を作り、5 分程度。所要時間を測るだけなら Run workflow の dry-run に
+チェックを入れるか、コミットメッセージに `[release-dry]` と書いたコミットを
+ブランチに push する。どちらもビルドと梱包まで走って Release は作らない）。複数の面をまとめて検証するときは
 `python scripts/verify_many.py dist/*.otf dist/latin/*.otf` が面ごとに
 プロセスを分けて走らせます。ビルド前後の出力を比べたいときは
 `python scripts/golden.py <前の dist> <今の dist>` が cmap・送り幅・
