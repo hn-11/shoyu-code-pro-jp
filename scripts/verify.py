@@ -214,13 +214,17 @@ def main():
     # glyph that takes a cell when selected
     tags = {fr.FeatureTag for fr in tf["GSUB"].table.FeatureList.FeatureRecord}
     if "cv11" in tags:
+        # 'x' + U+0306 has no precomposed form, so HarfBuzz cannot fold
+        # the pair into one glyph ('a' + U+0306 becomes U+0103 ă)
+        mark_gids = []
         for feats in ({}, {"cv11": True}):
-            infos, positions = shape_infos("a\u0306", feats)
+            infos, positions = shape_infos("x\u0306", feats)
             ok = len(infos) == 2 and positions[1].x_advance == 0
             check(ok, f"U+0306 with {feats or 'defaults'}: {len(infos)} glyphs, mark advance "
                       f"{positions[1].x_advance if len(positions) > 1 else '?'} (want 2, 0)")
-        ok = first_gid("a\u0306", {}, 1) != first_gid("a\u0306", {"cv11": True}, 1)
-        check(ok, "cv11 swaps the combining breve")
+            mark_gids.append(infos[1].codepoint if len(infos) > 1 else None)
+        check(None not in mark_gids and mark_gids[0] != mark_gids[1],
+              "cv11 swaps the combining breve")
 
     # 4-cell ligature: any spec whose "cells" == 4 must shape to a single
     # glyph whose advance is exactly 4x the half-width cell
