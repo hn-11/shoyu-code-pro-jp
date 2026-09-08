@@ -76,6 +76,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 import pathops
+from fontTools.misc.roundTools import otRound
 from fontTools.otlLib import builder as otl
 from fontTools.pens.boundsPen import BoundsPen
 from fontTools.pens.recordingPen import RecordingPen
@@ -560,7 +561,7 @@ def charstring_lsb(cs):
     except Exception as exc:
         print(f"  WARNING: calcBounds failed for appended glyph ({exc}); lsb=0")
         return 0
-    return round(bounds[0]) if bounds else 0
+    return otRound(bounds[0]) if bounds else 0
 
 
 def vmtx_donor(font, fullwidth=True):
@@ -1982,7 +1983,7 @@ def glyph_bounds(font):
 
 
 def sync_lsb(font):
-    """hmtx left side bearings from the outlines (round(xMin), like
+    """hmtx left side bearings from the outlines (otRound(xMin), like
     charstring_lsb; 0 for a blank glyph). A CFF font's lsb is nothing
     fontTools maintains: an instanced VF keeps the default master's
     hmtx while its outlines move, so build_latin.static_base's faces
@@ -1992,7 +1993,7 @@ def sync_lsb(font):
     metrics = font["hmtx"].metrics
     changed = 0
     for name, (adv, lsb) in list(metrics.items()):
-        want = round(bounds[name][0]) if name in bounds else 0
+        want = otRound(bounds[name][0]) if name in bounds else 0
         if want != lsb:
             metrics[name] = (adv, want)
             changed += 1

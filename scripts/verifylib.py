@@ -84,8 +84,11 @@ def glyph_has_hint(cs, local_subrs=None, global_subrs=None, seen=None):
 def hmtx_mismatches(font):
     """Glyphs whose hmtx disagrees with their CFF charstring: (name,
     charstring width, hmtx advance) where the advances differ, and
-    (name, round(xMin), hmtx lsb) where the bearings do (a blank glyph's
-    bearing is 0). Every glyph is drawn once."""
+    (name, xMin, hmtx lsb) where the bearing is a unit or more off the
+    outline's xMin (a blank glyph's bearing is 0). Less than a unit is
+    rounding: Source Han Sans sets a few bearings from the on-curve
+    points, a hair right of a curve's true extreme. Every glyph is drawn
+    once."""
     cff = font["CFF "].cff
     charstrings = cff[cff.fontNames[0]].CharStrings
     hmtx = font["hmtx"].metrics
@@ -97,8 +100,8 @@ def hmtx_mismatches(font):
         adv, lsb = hmtx[name]
         if cs.width != adv:
             widths.append((name, cs.width, adv))
-        want = round(pen.bounds[0]) if pen.bounds else 0
-        if want != lsb:
+        want = pen.bounds[0] if pen.bounds else 0
+        if abs(want - lsb) >= 1:
             bearings.append((name, want, lsb))
     return widths, bearings
 
