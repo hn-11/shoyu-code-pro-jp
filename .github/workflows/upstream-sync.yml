@@ -32,8 +32,11 @@ concurrency:
 env:
   # Job names from ci.yml that must be green on the PR head before it merges.
   REQUIRED_CHECKS: >-
-    ["lint-test", "faces (Regular Upright)", "faces (Regular Italic)",
-     "faces (Light Italic)", "variable + Nerd Font"]
+    ["lint-test",
+     "faces (Regular Upright base 35)", "faces (Regular Upright Term)",
+     "faces (Regular Italic base 35)", "faces (Regular Italic Term)",
+     "faces (Light Italic base 35)", "faces (Light Italic Term)",
+     "variable + Nerd Font"]
   GH_TOKEN: ${{ github.token }}
 
 jobs:

@@ -69,12 +69,12 @@
   プロセスを分ける。
   ワークフローはマトリクスに分割（同時に走るジョブは 10 前後が上限で、
   それを超えると待ちが出る）: CI は Regular Upright / Regular Italic /
-  Light Italic をそれぞれ 1 ジョブ（全ファミリーの面を並列に組む）、
-  可変フォントと Sumi Moji Regular への Nerd Fonts パッチ（記号セット
-  1 つ: `SHOYU_NERD_SETS`。`--complete` は面の大きさによらず 1 面 1 分
-  かかるため、全面・全セットはリリースで）を 1 ジョブ、の 5 ジョブで
-  1 分程度（`upstream-sync.yml` の `REQUIRED_CHECKS` はこのジョブ名
-  一覧）。リリースはファミリー × ウェイト 2 つ組の 9 ジョブがそれぞれ
+  Light Italic をドナー別（ship → 基本 + 35 の面、term → Term の面）に
+  1 ジョブずつの 6 ジョブ、可変フォントと Sumi Moji Regular への Nerd
+  Fonts パッチ（記号セット 1 つ: `SHOYU_NERD_SETS`。`--complete` は面の
+  大きさによらず 1 面 1 分かかるため、全面・全セットはリリースで）を
+  1 ジョブ、の 8 ジョブで 1 分程度（`upstream-sync.yml` の
+  `REQUIRED_CHECKS` はこのジョブ名一覧）。リリースはファミリー × ウェイト 2 つ組の 9 ジョブがそれぞれ
   Latin ドナー 4 面・JP 4 面・NF パッチ（Sumi Moji のパッチは JP 面の
   ビルドと並行）まで組んで `verify_many.py` で並列に検証し、`package`
   ジョブが可変フォント 2 本を組み、アーティファクトを集めて Sumi Moji

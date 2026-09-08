@@ -67,8 +67,8 @@ python scripts/verify.py dist/ShoyuCodeProJP-Regular.otf
 チェックします。変更を提出する前に、少なくとも `Regular` 面で通ることを
 確認してください。CI（`.github/workflows/ci.yml`）でも push / PR 時に
 同じ検証が走ります（Regular Upright / Regular Italic / Light Italic を
-1 ジョブずつ、可変フォントと Sumi Moji への Nerd Fonts パッチ（記号セット
-1 つのスモークテスト）を 1 ジョブ、並列に組んで 1 分程度。リリース
+ドナー別に 1 ジョブずつ、可変フォントと Sumi Moji への Nerd Fonts パッチ
+（記号セット 1 つのスモークテスト）を 1 ジョブ、並列に組んで 1 分程度。リリース
 `release.yml` はファミリー × ウェイト 2 つ組の 9 ジョブのあと `package`
 ジョブが可変フォントを組み、`harmonize_latin.py` → `makeotc.py` → zip →
 GitHub Release を作り、5 分程度）。複数の面をまとめて検証するときは
