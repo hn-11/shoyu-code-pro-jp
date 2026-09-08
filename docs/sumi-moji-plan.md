@@ -47,7 +47,7 @@ Sumi Moji JP の欧文層（Source Code Pro の文字 + Monaspace の記号・�
 
 1. `scripts/build.py` の `set_names`（family / PostScript 名のプレフィックス）と `PROJECT_URL` / `PROJECT_COPYRIGHT`
 2. `scripts/nerdpatch.py` の NF 命名正規表現
-3. `scripts/makeotc.py` の TTC ファイル名
+3. TTC のファイル名（のちに TTC 自体を廃止）
 4. `.github/workflows/release.yml` のリリース資産名と `SUMI_VERSION` 環境変数名
 5. `scripts/verify.py` の `FAMILY_METRICS` 判定（ファミリー名のトークン）
 6. README / CHANGELOG / LICENSE の名前と、リポジトリ名・`git remote`
@@ -147,7 +147,7 @@ build.py に残る処理: SHS の読み込み、SHCJ からの半角カナ等の
 複写、Sumi Moji からのグリフ・GSUB の取り込み（グリフ名を CID に付け替え、
 lookup と feature を SHS の GSUB にマージ）、10/9 拡大（JP）、`narrow_ambiguous`
 と `widen_fullwidth`（Term）、`stretch_arrows` と `add_width_alternates`、
-名前・STAT・メタデータ、NF パッチ、TTC。
+名前・STAT・メタデータ、NF パッチ。
 
 JP 側の出力は、書き換え前（VF を直接読んでいた頃）とグリフアウトライン・
 cmap・GSUB の shaping 結果が roundoff（±1〜2ユニット）を除いて一致する

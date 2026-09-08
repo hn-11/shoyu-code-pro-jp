@@ -280,7 +280,7 @@ def main():
         sys.exit(f"no face matches {only!r}")
     if only is None:
         # a full build must not leave faces from an older roster for
-        # harmonize_win_metrics / makeotc.py to pick up (same as build.py)
+        # harmonize_win_metrics / nerdpatch.py to pick up (same as build.py)
         for subdir, _, ps_family, _ in PROFILES.values():
             for stale in static_faces(out_dir / subdir, ps_family):
                 stale.unlink()

@@ -255,12 +255,10 @@ wght 200 の下限（＝静的版が erosion で削っている太さ）より�
 [Releases](../../releases) から用途に応じてアセットを選ぶ。いずれの zip にも
 OFL のライセンス全文（LICENSE）を同梱している。
 
-- **`SumiMojiJP.zip`**: 面ごとに分かれた個別の OTF。必要な面だけ
-  入れたい人向け。
-- **`SumiMojiJP.ttc` / `SumiMojiJP35.ttc` / `SumiMojiJPTerm.ttc`**:
-  各ファミリー12面（6ウェイト×2スタイル）を1ファイルにまとめた TTC。
-  1ファイルで全面をインストールできる（サイズは OTF 合計と3%しか
-  違わないので、選ぶ利点はもっぱらインストールの手間が減ること）。
+- **`SumiMojiJP.zip`**: 3 ファミリー（Sumi Moji JP / Term / 35）×
+  6 ウェイト × 2 スタイルの 36 面、面ごとの OTF。必要なファミリー・面
+  だけ入れる（TTC は配らない: リリースの単位はインストールする
+  ファイルの単位）。
 - **`SumiMojiJP-NerdFont.zip`**: Nerd Fonts のアイコングリフを追加した
   NF 変種（ファミリー名は末尾に `NF` が付く、例 `Sumi Moji JP NF`）。
   ターミナルのプロンプト装飾（アイコン表示）に使う場合はこちら。
@@ -316,7 +314,6 @@ python scripts/verify_latin_vf.py "dist/latin/SumiMoji[wght].otf"     # 可変�
 python scripts/verify.py dist/SumiMojiJP-Regular.otf   # JP の回帰テスト
 python scripts/golden.py <前の dist> dist                  # 2つのビルド出力の比較
 python scripts/nerdpatch.py <FontPatcher dir>              # NF 変種
-python scripts/makeotc.py                                  # .ttc 化
 ```
 
 `SHCJ_TTC` は [Source Han Code JP の GitHub Releases](https://github.com/adobe-fonts/source-han-code-jp/releases)

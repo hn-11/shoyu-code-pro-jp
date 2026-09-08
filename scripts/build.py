@@ -2578,7 +2578,7 @@ def main():
 
     if only is None:
         # a full build must not leave faces from an older roster (e.g. the
-        # dropped ExtraLight/Light) for makeotc.py to bundle alongside these
+        # dropped ExtraLight/Light) for the release zip to pick up
         stale = sorted(out_dir.glob("SumiMojiJP*.otf"))
         for f in stale:
             f.unlink()

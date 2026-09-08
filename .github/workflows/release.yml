@@ -3,16 +3,15 @@
 # variable fonts), verify, Nerd-patch everything, zip, GitHub release.
 # Sumi Moji itself ships as the two variable fonts (its statics are the
 # JP faces' donors, the Nerd Fonts patch's input and the variable fonts'
-# check, not an asset); the JP families ship as statics, zipped and as
-# one collection each.
+# check, not an asset); the JP families ship as statics, zipped. No
+# collections: the release unit is the file a user installs.
 #
 # A family's two weights per job — its Latin donors, its four JP faces,
 # their Nerd Fonts patches and a share of the Sumi Moji ones (patched
 # while the JP faces build), verified side by side and uploaded as an
 # artifact; the package job builds the two variable fonts, assembles
 # dist/ from the artifacts, harmonizes the Latin families' win metrics (a
-# per-job build never sees a family whole), bundles the collections and
-# publishes.
+# per-job build never sees a family whole), zips and publishes.
 name: Release
 on:
   push:
@@ -117,7 +116,7 @@ jobs:
             dist/nerd/latin/*.otf
           if-no-files-found: error
           retention-days: 7
-  # the faces and the variable fonts from the artifacts, then the bundles
+  # the faces and the variable fonts from the artifacts, then the zips
   # and the release
   package:
     runs-on: ubuntu-latest
@@ -139,7 +138,6 @@ jobs:
       - run: >-
           python scripts/verify_many.py
           dist/latin/SumiMoji-Regular.otf dist/nerd/latin/SumiMojiNF-BoldItalic.otf
-      - run: python scripts/makeotc.py
       - run: |
           cp LICENSE dist/LICENSE
           cp LICENSE dist/nerd/LICENSE
@@ -151,7 +149,7 @@ jobs:
           (cd latin && zip -q ../../SumiMoji-NerdFont.zip *.otf LICENSE)
       # every asset, on a dry run too (a missing one is a failure here, not
       # a warning from the release step)
-      - run: ls -l dist/*.zip dist/*.ttc
+      - run: ls -l dist/*.zip
       - name: Extract changelog section for this tag
         run: |
           awk -v tag="## ${SUMI_VERSION_TAG}" '
@@ -173,6 +171,3 @@ jobs:
             dist/SumiMoji.zip
             dist/SumiMojiJP-NerdFont.zip
             dist/SumiMoji-NerdFont.zip
-            dist/SumiMojiJP.ttc
-            dist/SumiMojiJP35.ttc
-            dist/SumiMojiJPTerm.ttc

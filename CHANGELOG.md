@@ -5,12 +5,15 @@
 - ファミリー名を Shoyu Code Pro JP から **Sumi Moji JP** に改名
   （PostScript 名 `SumiMojiJP*`、NF は `Sumi Moji JP NF` など、
   ベンダー ID `SUMI`、環境変数 `SHOYU_*` → `SUMI_*`、リリース資産
-  `SumiMojiJP.zip` / `SumiMojiJP-NerdFont.zip` / `SumiMojiJP*.ttc`）。
+  `SumiMojiJP.zip` / `SumiMojiJP-NerdFont.zip`）。
   欧文のみの Sumi Moji は仮称を外して正式名に。旧名の面とはファミリー名
   が違うので共存する（置き換えるなら旧版をアンインストール）
-- `SumiMoji.zip` は可変フォント 2 面だけになり、`SumiMoji.ttc` は廃止。
-  静的 12 面は JP 面のドナー・NF パッチの入力・可変フォントの検証用に
-  組むが配布しない（`SumiMoji-NerdFont.zip` は静的面へのパッチのまま）
+- `SumiMoji.zip` は可変フォント 2 面だけに。静的 12 面は JP 面のドナー・
+  NF パッチの入力・可変フォントの検証用に組むが配布しない
+  （`SumiMoji-NerdFont.zip` は静的面へのパッチのまま）
+- TTC を全部廃止（`SumiMojiJP*.ttc` / `SumiMoji.ttc`、`makeotc.py` ごと）。
+  リリースの単位を利用の単位（インストールする OTF）に揃える。中身は
+  zip の 12 面と同じで、サイズも 3% しか違わなかった
 - セルフレビューで見つけた不具合の修正:
   - JP 各面の合字グリフ（61 種 + cv99 の 2 種）の CFF charstring 幅が
     hmtx の送り幅と 510u ずれていた（記号用 FD の nominalWidthX で符号化
@@ -22,10 +25,10 @@
     送り幅が 500 のままだった（`HALFWIDTH_FORMS` が U+FFDC で止まって
     いた）。East Asian Width "H" の 2 範囲を対象にし、`verify.py` が
     U+FFE9 を検査する
-  - `makeotc.py` / `nerdpatch.py` の `SumiMoji-*.otf` 探索が VF の
-    `SumiMoji-Italic[wght].otf` も拾い、リリースの TTC 化が 13 面で止まり
-    Nerd Fonts パッチが CFF2 の VF を受け取る状態だった。静的面だけを
-    列挙する `verifylib.static_faces` に置き換え
+  - `nerdpatch.py`（と当時の `makeotc.py`）の `SumiMoji-*.otf` 探索が VF の
+    `SumiMoji-Italic[wght].otf` も拾い、Nerd Fonts パッチが CFF2 の VF を
+    受け取る状態だった。静的面だけを列挙する `verifylib.static_faces` に
+    置き換え
   - Sumi Moji VF: `head` の外接矩形と `hhea` の広がり（xMaxExtent・両側の
     最小サイドベアリング）が既定マスター（Regular）だけの値だったのを、
     各マスターのアウトラインから測った和にした（保存時の再計算は既定
@@ -62,7 +65,7 @@
   charstring を全部コンパイルし直していたのをやめ、`update_bbox` が
   1 回の走査で head / CFF FontBBox / hhea / vhea を揃えて（値は fontTools
   の再計算と同一）、以後の保存（面の保存、otfautohint、cffsubr、
-  `makeotc.py`、`nerdpatch.py`）は再計算なし。走査で解いた charstring の
+  `nerdpatch.py`）は再計算なし。走査で解いた charstring の
   バイトコードは戻すので、触っていないグリフは読んだままの形で書き出す。
   otfautohint は子プロセスではなく同一プロセスで呼ぶ（その保存も再計算
   なし）。`=` バーの二分探索は VF をインスタンス化せず
@@ -71,11 +74,10 @@
   1 wght 前後ずれ、静的 Sumi Moji のアウトラインが 1〜2u 動く）。
   ローカル 4 コアで、JP Regular 6 面 55 秒（2 分 → ）、Sumi Moji Regular
   6 面 15 秒（64 秒 → ）、VF Upright 21 秒（3 分 → ）、`verify_latin_vf.py`
-  61 秒（112 秒 → ）、TTC 6 面 3 秒（42 秒 → ）。
+  61 秒（112 秒 → ）。
   `verify_latin_vf.py` は VF をインスタンス化せず（40 回していた）、
   `getGlyphSet(location=)` のアウトラインと HarfBuzz の variations で
-  各位置を検証する（61 秒 → 2 秒）。`makeotc.py` はファミリーごとに
-  プロセスを分ける。
+  各位置を検証する（61 秒 → 2 秒）。
   ワークフローはマトリクスに分割（同時に走るジョブは 10 前後が上限で、
   それを超えると待ちが出る）: CI は Regular Upright / Regular Italic /
   Light Italic をドナー別（ship → 基本 + 35 の面、term → Term の面）に
@@ -88,7 +90,7 @@
   ビルドと並行）まで組んで `verify_many.py` で並列に検証し、`package`
   ジョブが可変フォント 2 本を組み、アーティファクトを集めて Sumi Moji
   （静的・NF）の usWinAscent/Descent をファミリー全体で揃え
-  （`harmonize_latin.py`）、VF を静的面と突き合わせ、TTC・zip・リリースを
+  （`harmonize_latin.py`）、VF を静的面と突き合わせ、zip・リリースを
   作る。FontForge は apt ではなく展開済みの AppImage をキャッシュして
   使う（12〜15 秒 → 1 秒）。面フィルタは語の組み合わせになり、
   「Light Upright」「Regular Upright Term」「Light Normal base」のように
