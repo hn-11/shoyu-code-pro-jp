@@ -3,8 +3,10 @@
 # variable fonts), verify, Nerd-patch everything, zip, GitHub release.
 # Sumi Moji itself ships as the two variable fonts (its statics are the
 # JP faces' donors, the Nerd Fonts patch's input and the variable fonts'
-# check, not an asset); the JP families ship as statics, zipped. No
-# collections: the release unit is the file a user installs.
+# check, not an asset); the JP families ship as statics, one zip per
+# family (and per family for their Nerd Fonts patches: a download is the
+# family a user installs, a third of the whole). No collections: the
+# release unit is the file a user installs.
 #
 # A family's two weights per job — its Latin donors, its four JP faces,
 # their Nerd Fonts patches and a share of the Sumi Moji ones (patched
@@ -143,10 +145,15 @@ jobs:
           cp LICENSE dist/nerd/LICENSE
           cp LICENSE dist/latin/LICENSE
           cp LICENSE dist/nerd/latin/LICENSE
-          cd dist && zip -q SumiMojiJP.zip *.otf LICENSE
+          # one zip per family: "SumiMojiJP-*" is the base family alone
+          # (35 and Term carry their own prefix)
+          cd dist
+          for fam in SumiMojiJP SumiMojiJP35 SumiMojiJPTerm; do
+            zip -q "$fam.zip" "$fam"-*.otf LICENSE
+            (cd nerd && zip -q "../$fam-NerdFont.zip" "$fam"NF-*.otf LICENSE)
+          done
           (cd latin && zip -q ../SumiMoji.zip 'SumiMoji[wght].otf' 'SumiMoji-Italic[wght].otf' LICENSE)
-          cd nerd && zip -q ../SumiMojiJP-NerdFont.zip *.otf LICENSE
-          (cd latin && zip -q ../../SumiMoji-NerdFont.zip *.otf LICENSE)
+          (cd nerd/latin && zip -q ../../SumiMoji-NerdFont.zip *.otf LICENSE)
       # every asset, on a dry run too (a missing one is a failure here, not
       # a warning from the release step)
       - run: ls -l dist/*.zip
@@ -168,6 +175,10 @@ jobs:
           body_path: release_notes.md
           files: |
             dist/SumiMojiJP.zip
-            dist/SumiMoji.zip
+            dist/SumiMojiJP35.zip
+            dist/SumiMojiJPTerm.zip
             dist/SumiMojiJP-NerdFont.zip
+            dist/SumiMojiJP35-NerdFont.zip
+            dist/SumiMojiJPTerm-NerdFont.zip
+            dist/SumiMoji.zip
             dist/SumiMoji-NerdFont.zip

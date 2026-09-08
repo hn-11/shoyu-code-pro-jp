@@ -248,7 +248,12 @@ def fix_names(patched: Path, src: Path) -> Path:
     (fit_nerd_glyphs), names and metadata from the source face
     (restore_metadata — font-patcher can't parse SHCJ's subfamily scheme
     (N/R/M/B/H + Italic) and collapses every face to "Regular", colliding
-    on disk and at install time), saved under its PostScript name."""
+    on disk and at install time), subroutinized again (FontForge's round
+    trip writes the CFF with far fewer subroutines than the source's,
+    and the icons come flat: a JP face with the complete set is 7.8 MB,
+    6.9 MB once tx folds the repetition back, ten seconds), saved under
+    its PostScript name."""
+    import cffsubr
     font = TTFont(patched)
     src_font = TTFont(src)
 
@@ -258,6 +263,7 @@ def fix_names(patched: Path, src: Path) -> Path:
     ps = restore_metadata(font, src_font)
     out = patched.parent / f"{ps}.otf"
     font.recalcBBoxes = False
+    cffsubr.subroutinize(font)
     font.save(out)
     if out != patched and patched.exists():
         patched.unlink()
