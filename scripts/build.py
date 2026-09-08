@@ -718,8 +718,10 @@ def graft_halfwidth(base, scp, ref):
             made[key] = name
             if is_mark:
                 marks.add(name)
-            # variant wiring keys off the SCP glyph; a source glyph cmap'd
-            # to both a mark and a spacing codepoint keeps its spacing entry
+            # variant wiring keys off the SCP glyph, one rendering per
+            # glyph: for a source glyph cmap'd to both a mark and a spacing
+            # codepoint (none today) the spacing one is wired — variants are
+            # chosen on letters and symbols, the accent keeps its default
             if src[0] == "scp" and (not is_mark or src[1] not in default_map):
                 default_map[src[1]] = name
         new_map[cp] = made[key]
@@ -802,7 +804,7 @@ def import_scp_variants(base, scp, default_map, marks):
     td, _, fd_index, private, vdon = append_context(base)
     scp_gs = scp.getGlyphSet()
 
-    imported = {}   # scp variant glyph -> our glyph name
+    imported = {}   # (scp variant glyph, is_mark) -> our glyph name
     tag_maps = {}
     tag_names = {}
     for fr in gsub.FeatureList.FeatureRecord:

@@ -155,11 +155,11 @@ def main():
     # the union of the whole glyph set at both axis ends and the default
     # (unrounded instancing: the instancer's per-operand rounding drifts
     # an outline by up to 1u along a path, see build_latin_vf.py)
-    union = None
+    union = rsb = None
     for w in (axis.minValue, axis.defaultValue, axis.maxValue):
         with build_latin_vf.unrounded_cff2_instancing():
             inst = instantiateVariableFont(tf, {"wght": w}, inplace=False)
-        gs = inst.getGlyphSet()
+        gs, metrics = inst.getGlyphSet(), inst["hmtx"].metrics
         for g in inst.getGlyphOrder():
             pen = BoundsPen(gs)
             gs[g].draw(pen)
@@ -167,9 +167,12 @@ def main():
                 continue
             union = pen.bounds if union is None else tuple(
                 f(a, b) for f, a, b in zip((min, min, max, max), union, pen.bounds))
+            right = metrics[g][0] - pen.bounds[2]
+            rsb = right if rsb is None else min(rsb, right)
     # the box is the integer union over the MASTERS; an instance can sit a
     # hair past it (16.16 deltas, the merge's 0.01 rounding tolerance —
-    # 0.002u measured), so allow that much and no more
+    # 0.002u measured); 0.05u leaves headroom for that and still catches
+    # a floor/ceil taken the wrong way (a whole unit)
     eps = 0.05
     head = tf["head"]
     box = (head.xMin, head.yMin, head.xMax, head.yMax)
@@ -183,17 +186,6 @@ def main():
           f"hhea.xMaxExtent {hhea.xMaxExtent} >= the widest instance outline {outline[2]}")
     check(hhea.minLeftSideBearing - eps <= outline[0],
           f"hhea.minLeftSideBearing {hhea.minLeftSideBearing} <= leftmost outline {outline[0]}")
-    rsb = None
-    for w in (axis.minValue, axis.maxValue):
-        with build_latin_vf.unrounded_cff2_instancing():
-            inst = instantiateVariableFont(tf, {"wght": w}, inplace=False)
-        gs, metrics = inst.getGlyphSet(), inst["hmtx"].metrics
-        for g in inst.getGlyphOrder():
-            pen = BoundsPen(gs)
-            gs[g].draw(pen)
-            if pen.bounds is not None:
-                right = metrics[g][0] - pen.bounds[2]
-                rsb = right if rsb is None else min(rsb, right)
     check(rsb is not None and hhea.minRightSideBearing - eps <= rsb,
           f"hhea.minRightSideBearing {hhea.minRightSideBearing} <= smallest right side "
           f"bearing {None if rsb is None else round(rsb, 3)}")

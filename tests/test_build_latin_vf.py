@@ -243,23 +243,56 @@ def test_classify_unicode_marks_noop_without_gdef():
 
 # --- master_extents / master_scp_wghts seed guard ----------------------------
 
-def test_master_extents_measures_the_outlines():
-    from fontTools.pens.ttGlyphPen import TTGlyphPen
-    pen = TTGlyphPen(None)
-    pen.moveTo((-20, -10))
-    pen.lineTo((580, -10))
-    pen.lineTo((580, 700))
-    pen.lineTo((-20, 700))
-    pen.closePath()
-    font = make_font([".notdef", "A"], {0x41: "A"}, {"A": 600}, glyphs={"A": pen.glyph()})
-    font["hmtx"].metrics["A"] = (600, -20)
-    # box, then min lsb (outline xMin) and min rsb (advance - outline xMax)
-    assert vf.master_extents(font) == (-20, -10, 580, 700, -20, 20)
+class _Outline:
+    def __init__(self, points):
+        self.points = points
+
+    def draw(self, pen):
+        pen.moveTo(self.points[0])
+        for pt in self.points[1:]:
+            pen.lineTo(pt)
+        pen.closePath()
+
+
+class _StubFont:
+    """Just what master_extents reads: a glyph set, hmtx and the order —
+    with fractional outlines and hmtx side bearings that lie."""
+
+    def __init__(self, glyphs, metrics):
+        self._glyphs, self._metrics = glyphs, metrics
+
+    def getGlyphOrder(self):
+        return list(self._glyphs)
+
+    def getGlyphSet(self):
+        return self._glyphs
+
+    def __getitem__(self, tag):
+        assert tag == "hmtx"
+        return type("hmtx", (), {"metrics": self._metrics})()
+
+
+def test_master_extents_measures_the_outlines_not_hmtx():
+    font = _StubFont(
+        {"A": _Outline([(-20.5, -10.2), (580.4, -10.2), (580.4, 700.6), (-20.5, 700.6)]),
+         "b": _Outline([(30, 0), (500, 0), (500, 650), (30, 650)]),
+         "space": _Outline([])},
+        {"A": (600, 999), "b": (600, 999), "space": (600, 0)})
+    font._glyphs["space"].draw = lambda pen: None   # no outline
+    # floor the minima, ceil the maxima; lsb from A's xMin, rsb from A's
+    # xMax against its advance (600 - 580.4 = 19.6 -> 19); hmtx's 999 ignored
+    assert vf.master_extents(font) == (-21, -11, 581, 701, -21, 19)
 
 
 def test_master_extents_none_without_outlines():
     font = make_font([".notdef", "A"], {0x41: "A"}, {"A": 600})
     assert vf.master_extents(font) is None
+
+
+def test_master_scp_wghts_rejects_a_seed_on_the_axis_minimum():
+    to_scp = {400: 200.0, 900: 900.0}.get
+    with pytest.raises(RuntimeError, match="distinct and ordered"):
+        vf.master_scp_wghts([200, 400, 900], to_scp, 200, 400, 900)
 
 
 def test_master_scp_wghts_rejects_unordered_seeds():

@@ -379,8 +379,8 @@ def master_extents(font):
     bearing) measured on a master's outlines — hhea.recalc would take
     the side bearings from hmtx, which an instanced master does not keep
     current, so both come from the drawn bounds here (and xMaxExtent,
-    lsb + width, is therefore the outline xMax). None for a font with no
-    outlines at all."""
+    lsb + (xMax - xMin), is therefore the outline xMax). None for a font
+    with no outlines at all."""
     gs = font.getGlyphSet()
     hmtx = font["hmtx"].metrics
     box = None
@@ -565,6 +565,10 @@ def build_style(style, env, out_dir):
     # and so does TTFont.save's own recalcBBoxes — switched off, or it
     # would overwrite this)
     ext = [master_extents(b) for b in bases.values()]
+    if None in ext:
+        raise RuntimeError(f"{style}: master at SCP wght "
+                           f"{[w for w, b in bases.items() if master_extents(b) is None]} "
+                           "draws no outline")
     head, hhea = vf["head"], vf["hhea"]
     head.xMin, head.yMin = min(e[0] for e in ext), min(e[1] for e in ext)
     head.xMax, head.yMax = max(e[2] for e in ext), max(e[3] for e in ext)
