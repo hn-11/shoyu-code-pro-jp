@@ -220,13 +220,12 @@ def main():
                 check(abs(bar_i - bar_r) <= 1,
                       f"[{style}] instanced '=' bar {bar_i:.1f} vs static "
                       f"{static_name} {bar_r:.1f} (delta {bar_i - bar_r:+.1f}, want <=1u)")
-            # 3u: the static face carries fontTools' instancer rounding
-            # drift (relative charstring operands rounded one by one,
-            # see build_latin_vf.unrounded_cff2_instancing); the VF's
-            # blend here does not, so they can differ by that drift
+            # 1u: the static face is the VF's blend rounded point by
+            # point (build_latin.round_outlines) — half a unit, plus a
+            # curve extreme moving with its rounded control points
             bi, br = bounds(gs, cmap, "A"), bounds(ref.getGlyphSet(), ref.getBestCmap(), "A")
-            check(close(bi, br, 3), f"[{style}] instanced 'A' bounds {bi} vs static "
-                                    f"{static_name} 'A' bounds {br} (want within 3u)")
+            check(close(bi, br, 1), f"[{style}] instanced 'A' bounds {bi} vs static "
+                                    f"{static_name} 'A' bounds {br} (want within 1u)")
         else:
             print(f"  (skip bar/bounds compare: {static_path} not found — "
                   f"run build_latin.py first)")

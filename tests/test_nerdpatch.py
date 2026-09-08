@@ -162,3 +162,26 @@ def test_sources_for_paths_names_and_everything(tmp_path, monkeypatch):
     assert [(p.name, out.name) for p, out in explicit] == [
         ("SumiMoji-Light.otf", "latin"), ("ShoyuCodeProJP-Light.otf", "nerd")]
     assert nerdpatch.sources_for(["nothing-like-this"]) == []
+
+
+def test_patched_bounds_takes_identity_glyphs_from_the_source():
+    import copy
+    src = _cff_font({"a": (667, (50, 0, 600, 500))}, {ord("a"): "a"})
+    # the source names its glyphs cidNNNNN; the flattened patch Identity.N
+    src.setGlyphOrder([".notdef", "cid00007"])
+    src["CFF "].cff.topDictIndex[0].charset = [".notdef", "cid00007"]
+    src["CFF "].cff.topDictIndex[0].CharStrings.charStrings = {".notdef": 0, "cid00007": 1}
+    src["hmtx"].metrics = {".notdef": (667, 0), "cid00007": (667, 50)}
+    patched = _cff_font({"Identity.7": (667, (50, 0, 600, 500)),
+                         "icon": (667, (0, -400, 600, 1100))},
+                        {ord("a"): "Identity.7", 0xE000: "icon"})
+    full = build.glyph_bounds(copy.deepcopy(patched))
+
+    got = nerdpatch.patched_bounds(patched, src)
+
+    assert got == full
+    cs = patched["CFF "].cff.topDictIndex[0].CharStrings
+    assert cs["Identity.7"].bytecode is not None     # never drawn, saved as loaded
+    # an Identity glyph the source lacks: everything measured from the patch
+    patched2 = _cff_font({"Identity.9": (667, (50, 0, 600, 500))}, {ord("a"): "Identity.9"})
+    assert nerdpatch.patched_bounds(patched2, src) == build.glyph_bounds(copy.deepcopy(patched2))

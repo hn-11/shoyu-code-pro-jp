@@ -90,12 +90,28 @@
   fontTools が保守しない。インスタンス化でアウトラインだけ動く）。
   `static_base` がアウトラインから測り直す（`build.sync_lsb`）。
   `verify.py` / `verify_latin.py` が全グリフの lsb と xMin の一致も検査する
+- Sumi Moji 静的面のアウトラインを SCP VF の「正確な補間」に揃えた。
+  fontTools のインスタンサは charstring の相対オペランドを 1 つずつ丸める
+  ため、経路に沿って誤差が溜まり、小数 wght のインスタンスは HarfBuzz が
+  VF を描く位置から 3u（'A'）〜数 u ずれていた。静的面は丸めなしで
+  インスタンス化してから各点を絶対座標で丸め直す（`round_outlines`）ので、
+  VF の描画と 0.5u 以内で一致する（`verify_latin_vf.py` の静的面比較は
+  3u → 1u）。JP 各面はこの Latin 面を取り込むので、欧文グリフが旧ビルド
+  比で最大 3〜4u 動く（和文グリフは同一）
 - Nerd Fonts 変種: FontForge の往復で消えていた元の面のメタデータを
   `nerdpatch.py` が戻す — STAT テーブル（FontForge は書き出さない）、
   post.isFixedPitch / PANOSE の等幅宣言、usWeightClass・fsSelection・
   ベンダー ID・typo / win メトリクス（Sumi Moji は外接矩形全体を覆う方針
   なのでアイコンの分まで広げる。JP 各面は Source Han Code JP の値のまま）。
-  `verify_latin.py` は平坦化された NF 面の FDArray 検査を飛ばす
+  `verify_latin.py` は平坦化された NF 面の FDArray 検査を飛ばす。
+  外接矩形と hhea / vhea は、元の面から持ち越されたグリフ（FontForge が
+  `Identity.N` と名付ける元の `cidN`）は元の面の charstring で測り、
+  font-patcher が足した・置き換えたグリフだけ平坦化後の charstring を
+  描く（`patched_bounds`。平坦な charstring を全部描くと JP 1 面 15 秒、
+  ジョブ内の負荷で 75 秒かかっていた）。
+  release.yml は `[release-dry]` と書いたコミットのブランチ push でも
+  走り（ビルドと梱包まで、公開なし）、ワークフロー変更の所要時間を main
+  に入れる前に測れる。可変フォント 2 本は Term のジョブが組む
 - リファクタリング: 7 箇所に複製されていたグリフ追加の前置き
   （`append_context`）、方針の違う 4 箇所の cmap 書き込み（`set_cmap`）、
   `build.py` / `build_latin.py` の `main()` と面の後処理

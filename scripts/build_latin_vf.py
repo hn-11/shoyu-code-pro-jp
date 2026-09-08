@@ -69,9 +69,7 @@ Env (all required):
 Env (optional): SHOYU_VERSION
 """
 
-import contextlib
 import copy
-import functools
 import math
 import sys
 from pathlib import Path
@@ -82,11 +80,9 @@ from fontTools.designspaceLib import (
     InstanceDescriptor,
     SourceDescriptor,
 )
-from fontTools.misc.roundTools import noRound
 from fontTools.pens.boundsPen import BoundsPen
 from fontTools.ttLib import TTFont
 from fontTools.varLib import build as varlib_build
-from fontTools.varLib import instancer
 from fontTools.varLib.instancer import instantiateVariableFont
 from fontTools.varLib.models import normalizeValue, piecewiseLinearMap
 
@@ -253,26 +249,7 @@ def mona_floor_wght(scp, mona_source, slant):
     return scp.matched_wght(mona_source.floor_bar(slant))
 
 
-@contextlib.contextmanager
-def unrounded_cff2_instancing():
-    """fontTools' instancer rounds every instanced CFF2 charstring operand
-    to an integer. Charstring operands are RELATIVE (rmoveto/rlineto/
-    rrcurveto deltas), so those roundings accumulate along a path: an
-    instance of 'm' can drift several units from SCP's own blend — and
-    two instances drift differently, so a VF built from rounded masters
-    reproduces SCP only AT its masters (10u off on 'm' between them,
-    measured). With rounding off the masters keep SCP's exact blend
-    (fixed 16.16 operands, a CFF2 charstring's native precision), and
-    the VF interpolates it exactly. The static faces (build_latin.py)
-    keep the default rounding: they are hinted and subroutinized as
-    integer outlines, and their own drift is the same one every
-    fontTools-instanced static carries."""
-    orig = instancer.instantiateCFF2
-    instancer.instantiateCFF2 = functools.partial(orig, round=noRound)
-    try:
-        yield
-    finally:
-        instancer.instantiateCFF2 = orig
+unrounded_cff2_instancing = build.unrounded_cff2_instancing   # the masters' instancing
 
 
 def scp_base_at(vf, wght):

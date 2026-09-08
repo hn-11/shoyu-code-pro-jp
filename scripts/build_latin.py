@@ -42,6 +42,7 @@ import sys
 from pathlib import Path
 
 from fontTools.cffLib.CFF2ToCFF import convertCFF2ToCFF
+from fontTools.pens.t2CharStringPen import T2CharStringPen
 from fontTools.ttLib import TTFont
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -75,6 +76,28 @@ def static_base(scp):
     base = TTFont(buf)
     build.sync_lsb(base)
     return base
+
+
+def round_outlines(font):
+    """Every charstring redrawn through a T2CharStringPen: the points
+    rounded where they are (absolute coordinates), the advance kept,
+    hints dropped (the instancer had dropped them already; otfautohint
+    puts them back). A CFF font's operands are relative, so rounding
+    them one by one — what fontTools' instancer does — drifts an outline
+    several units along a path; rounding the absolute points keeps each
+    within half a unit of the VF's blend, which is what HarfBuzz renders
+    the VF as."""
+    cff = font["CFF "].cff
+    td = cff.topDictIndex[0]
+    gs = font.getGlyphSet()
+    hmtx = font["hmtx"].metrics
+    for name in font.getGlyphOrder():
+        private = td.FDArray[td.FDSelect[font.getGlyphID(name)]].Private
+        pen = T2CharStringPen(build.pen_width(private, hmtx[name][0]), gs)
+        gs[name].draw(pen)
+        td.CharStrings.charStringsIndex[td.CharStrings.charStrings[name]] = \
+            pen.getCharString(private=private)
+    build.sync_lsb(font)
 
 
 def fix_zone_order(font):
@@ -176,7 +199,11 @@ def build_face(job):
     target = build.shcj_bar_target(env["SHCJ_TTC"], ref_name, italic, factor)
     scp_src = build._vf_source(env["SCP_VF_I" if italic else "SCP_VF_U"], 1.0,
                                {"wght": 0})
-    scp = scp_src.matched(target)
+    # SCP's exact blend at the matched wght; round_outlines rounds it
+    # point by point below (the instancer's own operand rounding drifts
+    # an outline several units along a path — build.unrounded_cff2_instancing)
+    with build.unrounded_cff2_instancing():
+        scp = scp_src.matched(target)
     ref_angle = (scp["post"].italicAngle or -12.0) if italic else None
     mona_src = build._vf_source(env["MONA_VF"], MONA_K,
                                 {"wght": 0, "wdth": 100, "slnt": 0})
@@ -184,6 +211,7 @@ def build_face(job):
     credits = credits_from(scp, mona)
 
     base = static_base(_copy_instance(scp))
+    round_outlines(base)
     fix_zone_order(base)
     dy = build.mona_baseline_shift(base, mona, MONA_K)
     alts = {}

@@ -160,6 +160,51 @@ OS2_FIELDS = ("panose", "fsSelection", "fsType", "achVendID", "usWeightClass",
 POST_FIELDS = ("isFixedPitch", "italicAngle", "underlinePosition", "underlineThickness")
 
 
+IDENTITY = re.compile(r"^Identity\.(\d+)$")
+
+
+def patched_bounds(font, src_font):
+    """build.glyph_bounds for the patched font, cheaply: FontForge's
+    flattening names the source's glyph cidNNNNN "Identity.NNNNN" and
+    keeps its outline, so those come from the source's own (subroutinized,
+    quick to draw) charstrings; everything else — font-patcher's icons,
+    fitted or not, and the glyphs it replaced, which carry its names —
+    is drawn from the patched font. font-patcher's flat charstrings take
+    15 s a JP face to draw in full, four times that under a job's load.
+    Any Identity glyph the source does not have, or has at another
+    advance, means the naming is not what this expects: everything is
+    drawn from the patched font then."""
+    src_metrics = src_font["hmtx"].metrics
+    metrics = font["hmtx"].metrics
+    mapping = {}
+    for name in font.getGlyphOrder():
+        m = IDENTITY.match(name)
+        if not m:
+            continue
+        src = f"cid{int(m.group(1)):05d}"
+        if src not in src_metrics or src_metrics[src][0] != metrics[name][0]:
+            print(f"  {name}: no {src} in the source at that advance; "
+                  "measuring every glyph")
+            return build.glyph_bounds(font)
+        mapping[name] = src
+    src_bounds = build.glyph_bounds(src_font)
+    bounds = {name: src_bounds[src] for name, src in mapping.items() if src in src_bounds}
+    gs = font.getGlyphSet()
+    charstrings = font["CFF "].cff.topDictIndex[0].CharStrings
+    for name in font.getGlyphOrder():
+        if name in mapping:
+            continue
+        cs = charstrings[name]
+        bytecode = cs.bytecode
+        pen = BoundsPen(gs)
+        gs[name].draw(pen)
+        if bytecode is not None:
+            cs.bytecode, cs.program = bytecode, None
+        if pen.bounds is not None:
+            bounds[name] = pen.bounds
+    return bounds
+
+
 def restore_metadata(font, src_font):
     """Give the patched font the source face's names (NF marker spliced
     in), its OS/2 and post declarations and its STAT (FontForge writes
@@ -188,7 +233,7 @@ def restore_metadata(font, src_font):
     # save-time recalc (three full draws of the face): the fitted icons
     # moved, and font-patcher replaces glyphs the face already had (SCP's
     # own Powerline symbols), so the source's box is no shortcut
-    build.update_bbox(font)
+    build.update_bbox(font, patched_bounds(font, src_font))
     # the win metrics follow the source's own policy: Sumi Moji's hold its
     # whole box (build_latin.fit_win_metrics), so they widen to whatever
     # the icons add; the JP faces carry Source Han Code JP's line metrics

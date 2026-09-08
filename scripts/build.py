@@ -62,6 +62,7 @@ Env (optional):
 import concurrent.futures
 import contextlib
 import copy
+import functools
 import json
 import logging
 import math
@@ -76,7 +77,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 import pathops
-from fontTools.misc.roundTools import otRound
+from fontTools.misc.roundTools import noRound, otRound
 from fontTools.otlLib import builder as otl
 from fontTools.pens.boundsPen import BoundsPen
 from fontTools.pens.recordingPen import RecordingPen
@@ -84,6 +85,7 @@ from fontTools.pens.t2CharStringPen import T2CharStringPen
 from fontTools.pens.transformPen import TransformPen
 from fontTools.ttLib import TTCollection, TTFont
 from fontTools.ttLib.tables import otTables
+from fontTools.varLib import instancer
 from fontTools.varLib.instancer import instantiateVariableFont
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -316,6 +318,26 @@ def bar_thickness(font, glyph_name):
     heights = [b[3] - b[1] for b in _contour_bounds(
         _record_contours(font, glyph_name))]
     return min(heights) if heights else 0
+
+
+@contextlib.contextmanager
+def unrounded_cff2_instancing():
+    """fontTools' instancer rounds every instanced CFF2 charstring operand
+    to an integer. Charstring operands are RELATIVE (rmoveto/rlineto/
+    rrcurveto deltas), so those roundings accumulate along a path: an
+    instance of 'A' at a fractional wght lands 3u left of where HarfBuzz
+    renders the VF there, 'm' up to 10u off, and two instances drift
+    differently. With rounding off the outlines keep the VF's exact blend
+    (fixed 16.16 operands, a CFF2 charstring's native precision): the
+    variable Sumi Moji's masters are built that way and interpolate SCP
+    exactly (build_latin_vf.py), and the static faces round the blend
+    afterwards, point by point (build_latin.round_outlines)."""
+    orig = instancer.instantiateCFF2
+    instancer.instantiateCFF2 = functools.partial(orig, round=noRound)
+    try:
+        yield
+    finally:
+        instancer.instantiateCFF2 = orig
 
 
 class VFSource:
@@ -2002,7 +2024,7 @@ def sync_lsb(font):
     return changed
 
 
-def update_bbox(font):
+def update_bbox(font, bounds=None):
     """Recompute the font's extents from its outlines, in one pass:
     the CFF FontBBox, head's box and the hhea / vhea extents
     (advanceWidthMax, minLeftSideBearing, minRightSideBearing, xMaxExtent
@@ -2013,8 +2035,11 @@ def update_bbox(font):
     TTFont.recalcBBoxes off (fontTools would otherwise draw every glyph
     three more times per save — 7 s of a JP face's 0.3 s save — and
     recompile them all), so this is the one place the extents are set.
-    Returns the box, or None for a font with no ink."""
-    bounds = glyph_bounds(font)
+    Returns the box, or None for a font with no ink. `bounds` — a
+    glyph_bounds() result for this font — skips the pass when the caller
+    already has one."""
+    if bounds is None:
+        bounds = glyph_bounds(font)
     if not bounds:
         return None
     xmin = min(b[0] for b in bounds.values())
