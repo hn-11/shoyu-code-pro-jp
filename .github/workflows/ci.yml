@@ -27,9 +27,10 @@ jobs:
       - run: pip install -r requirements.txt ruff pytest
       - run: ruff check scripts/ tests/
       - run: python -m pytest tests/ -q
-  # one weight and style per job, every family: the two Latin donors
-  # (build_latin.py, side by side), the three JP faces on top (build.py,
-  # side by side), all five verified side by side
+  # one weight and style per job, every family, as two pipelines side by
+  # side — the ship donor then the base and 35 faces, the term donor then
+  # the Term face (build_latin.py, then build.py) — and all five faces
+  # verified side by side
   faces:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -43,8 +44,15 @@ jobs:
       - uses: ./.github/actions/setup-build
       # the Latin layer (Sumi Moji, provisional name) is assembled first
       # from the VFs; build.py grafts it into Source Han Sans
-      - run: python scripts/build_latin.py "${{ matrix.face }}"
-      - run: python scripts/build.py "${{ matrix.face }}"
+      - name: Build the donors and the faces
+        run: |
+          (python scripts/build_latin.py "${{ matrix.face }} ship"
+           && python scripts/build.py "${{ matrix.face }} base 35") > ship.log 2>&1 &
+          ship=$!
+          python scripts/build_latin.py "${{ matrix.face }} term"
+          python scripts/build.py "${{ matrix.face }} Term"
+          wait $ship || { cat ship.log; exit 1; }
+          cat ship.log
       - run: python scripts/verify_many.py 'dist/latin/term/*.otf' 'dist/latin/*.otf' 'dist/*.otf'
   # the variable Sumi Moji (upright only here, Italic is covered in
   # release.yml; verify_latin_vf.py's static-face comparison skips when
