@@ -527,14 +527,21 @@ def build_style(style, env, out_dir):
     build.add_stat(vf, [w for w, _, _ in build.FACES], italic)
     name_default_instance_by_font(vf)
     build.prune_orphan_names(vf)
-    # head: the union over the masters (update_bbox measures a CFF2 glyph
-    # set at the default instance only, and so does TTFont.save's own
-    # recalcBBoxes — switched off, or it would overwrite this)
-    head = vf["head"]
+    # head and hhea extents: the union over the masters (update_bbox and
+    # hhea.recalc measure a CFF2 glyph set at the default instance only,
+    # and so does TTFont.save's own recalcBBoxes — switched off, or it
+    # would overwrite this)
+    for b in bases.values():
+        b["hhea"].recalc(b)
+    head, hhea = vf["head"], vf["hhea"]
     head.xMin = min(b["head"].xMin for b in bases.values())
     head.yMin = min(b["head"].yMin for b in bases.values())
     head.xMax = max(b["head"].xMax for b in bases.values())
     head.yMax = max(b["head"].yMax for b in bases.values())
+    hhea.advanceWidthMax = max(b["hhea"].advanceWidthMax for b in bases.values())
+    hhea.minLeftSideBearing = min(b["hhea"].minLeftSideBearing for b in bases.values())
+    hhea.minRightSideBearing = min(b["hhea"].minRightSideBearing for b in bases.values())
+    hhea.xMaxExtent = max(b["hhea"].xMaxExtent for b in bases.values())
     vf.recalcBBoxes = False
 
     out_path = Path(out_dir) / out_name
