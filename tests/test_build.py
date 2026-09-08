@@ -960,3 +960,51 @@ def test_run_faces_result_handler_errors_are_not_face_failures():
         raise RuntimeError("handler bug")
     with pytest.raises(RuntimeError, match="handler bug"):
         build.run_faces(["x"], _face_worker, label=lambda j: j, on_result=boom)
+
+
+# --- referenced_name_ids / prune_orphan_names -------------------------------
+
+def _font_with_named_tables():
+    """A mini font whose STAT, fvar and a GSUB FeatureParams all point at
+    name records, plus three records nothing points at."""
+    font = _tt_font([".notdef", "a"], {0x61: "a"}, {"a": 600})
+    name = font["name"]
+    build.add_stat(font, ["Regular", "Bold"], italic=False)   # STAT names
+    fb = FontBuilder(font=font)
+    fb.setupFvar([("wght", 300, 400, 900, "Weight")],
+                 [{"location": {"wght": 400}, "stylename": "Regular",
+                   "postscriptfontname": "Test-Regular"}])
+    font["GSUB"] = newTable("GSUB")
+    font["GSUB"].table = _empty_gsub_table()
+    fp = otTables.FeatureParamsStylisticSet()
+    fp.Version, fp.UINameID = 0, 300
+    name.setName("Alt forms", 300, 3, 1, 0x409)
+    build._add_feature(font["GSUB"].table, "ss01", [])
+    font["GSUB"].table.FeatureList.FeatureRecord[0].Feature.FeatureParams = fp
+    for nid, text in ((301, "Upright"), (302, "Weight"), (303, "leftover")):
+        name.setName(text, nid, 3, 1, 0x409)
+    return font
+
+
+def test_referenced_name_ids_covers_stat_fvar_and_feature_params():
+    font = _font_with_named_tables()
+    used = build.referenced_name_ids(font)
+    stat = font["STAT"].table
+    for av in stat.AxisValueArray.AxisValue:
+        assert av.ValueNameID in used
+    assert all(ax.AxisNameID in used for ax in stat.DesignAxisRecord.Axis)
+    inst = font["fvar"].instances[0]
+    assert {inst.subfamilyNameID, inst.postscriptNameID} <= used
+    assert 300 in used
+    assert not {301, 302, 303} & used
+
+
+def test_prune_orphan_names_drops_only_the_unreferenced_high_ids():
+    font = _font_with_named_tables()
+    before = {r.nameID for r in font["name"].names}
+    assert build.prune_orphan_names(font) == [301, 302, 303]
+    after = {r.nameID for r in font["name"].names}
+    assert before - after == {301, 302, 303}
+    assert font["name"].getDebugName(300) == "Alt forms"   # still referenced
+    assert font["name"].getDebugName(1) == "Test"          # < 256 untouched
+    assert build.prune_orphan_names(font) == []            # idempotent

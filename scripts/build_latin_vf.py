@@ -322,7 +322,6 @@ def harmonize_feature_names(font):
     string travels with the new ID."""
     gsub = font["GSUB"].table
     name = font["name"]
-    replaced = set()
     for i, fr in enumerate(gsub.FeatureList.FeatureRecord):
         params = fr.Feature.FeatureParams
         if params is None:
@@ -335,16 +334,10 @@ def harmonize_feature_names(font):
             canon = 900 + i
             name.setName(text, canon, 3, 1, 0x409)
             setattr(params, attr, canon)
-            if nid >= 256:
-                replaced.add(nid)
-    # the records the old IDs pointed at now hang from nothing (unless a
-    # canonical ID happens to coincide): drop them, or 70-odd strings of
-    # SCP's feature names ride along unreferenced
-    still_used = {getattr(fr.Feature.FeatureParams, attr, None)
-                  for fr in gsub.FeatureList.FeatureRecord if fr.Feature.FeatureParams
-                  for attr in ("UINameID", "FeatUILabelNameID")}
-    for nid in replaced - still_used:
-        name.removeNames(nameID=nid)
+    # the records the old IDs pointed at now hang from nothing — 70-odd
+    # strings of SCP's feature names; build.prune_orphan_names drops them
+    # (with SCP's own STAT/fvar leftovers) once the merged VF has its
+    # final tables
 
 
 def finalize_vf_names(vf, italic, version, credits, italic_angle):
@@ -533,14 +526,16 @@ def build_style(style, env, out_dir):
     # file's ital value — Source Code Pro's own two-file STAT convention
     build.add_stat(vf, [w for w, _, _ in build.FACES], italic)
     name_default_instance_by_font(vf)
-    # head: update_bbox measures the DEFAULT instance (a CFF2 glyph set
-    # draws at the default); the VF's box is the union over the masters
-    build.update_bbox(vf)
+    build.prune_orphan_names(vf)
+    # head: the union over the masters (update_bbox measures a CFF2 glyph
+    # set at the default instance only, and so does TTFont.save's own
+    # recalcBBoxes — switched off, or it would overwrite this)
     head = vf["head"]
     head.xMin = min(b["head"].xMin for b in bases.values())
     head.yMin = min(b["head"].yMin for b in bases.values())
     head.xMax = max(b["head"].xMax for b in bases.values())
     head.yMax = max(b["head"].yMax for b in bases.values())
+    vf.recalcBBoxes = False
 
     out_path = Path(out_dir) / out_name
     out_path.parent.mkdir(parents=True, exist_ok=True)

@@ -1993,6 +1993,52 @@ def add_latin_fd(font):
     return index
 
 
+def referenced_name_ids(font):
+    """Every name ID a table of `font` points at: GSUB/GPOS FeatureParams
+    (feature UI names, tooltips, sample text, the named-parameter run),
+    STAT (axis and value names, the elided fallback) and fvar (axis and
+    instance names). IDs below 256 are the standard slots and are never
+    pruned, so they are not listed."""
+    used = set()
+    for tag in ("GSUB", "GPOS"):
+        if tag not in font or font[tag].table.FeatureList is None:
+            continue
+        for fr in font[tag].table.FeatureList.FeatureRecord:
+            params = fr.Feature.FeatureParams
+            if params is None:
+                continue
+            for attr in ("UINameID", "FeatUILabelNameID",
+                         "FeatUITooltipTextNameID", "SampleTextNameID"):
+                used.add(getattr(params, attr, 0))
+            first = getattr(params, "FirstParamUILabelNameID", 0)
+            used.update(range(first, first + getattr(params, "NumNamedParameters", 0)))
+    if "STAT" in font:
+        stat = font["STAT"].table
+        used.update(ax.AxisNameID for ax in stat.DesignAxisRecord.Axis)
+        if stat.AxisValueArray:
+            used.update(av.ValueNameID for av in stat.AxisValueArray.AxisValue)
+        used.add(getattr(stat, "ElidedFallbackNameID", 0))
+    if "fvar" in font:
+        used.update(a.axisNameID for a in font["fvar"].axes)
+        for inst in font["fvar"].instances:
+            used.update((inst.subfamilyNameID, inst.postscriptNameID))
+    return {nid for nid in used if nid}
+
+
+def prune_orphan_names(font):
+    """Drop every name record at ID 256 and up that no table refers to
+    (referenced_name_ids). The Latin faces inherit Source Code Pro's own
+    STAT / fvar strings ('Upright', 'Weight', ...) after the instancer
+    drops those tables, and the VF's FeatureParams renumbering leaves the
+    old records behind. Returns the IDs removed."""
+    used = referenced_name_ids(font)
+    orphans = sorted({r.nameID for r in font["name"].names
+                      if r.nameID >= 256 and r.nameID not in used})
+    for nid in orphans:
+        font["name"].removeNames(nameID=nid)
+    return orphans
+
+
 def add_stat(font, weights, italic):
     """STAT: the wght values for `weights` (one weight name for a static
     face — its own value only: a static font listing the whole family's
@@ -2182,6 +2228,7 @@ def build_face(job):
                    ref_angle if ref_angle is not None else -12.0,
                    version=env.get("SHOYU_VERSION"), credits=credits)
     add_stat(base, weight, italic)
+    prune_orphan_names(base)
     update_bbox(base)
     out = Path(out_dir) / f"{ps}.otf"
     write_face(base, out, getattr(base, "_redrawn", set()))

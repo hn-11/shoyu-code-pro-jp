@@ -205,6 +205,7 @@ def build_face(job):
                          family_base=family, ps_base=ps_family, base_credit=None)
     build.classify_unicode_marks(base)
     build.add_stat(base, weight, italic)
+    build.prune_orphan_names(base)
     build.update_bbox(base)
     fit_win_metrics(base)
     out_path = Path(out_dir) / subdir
