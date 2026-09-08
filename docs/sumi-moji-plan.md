@@ -1,6 +1,6 @@
 # Sumi Moji — 欧文中間フォント計画
 
-状態: 段階 1（1a・1b とも）・段階 2（VF 化）とも実装済み（v3.3.0）。
+状態: 段階 1（1a・1b とも）・段階 2（VF 化）とも実装済み（v4.0.0）。
 `scripts/build_latin.py` が Source Code Pro VF + Monaspace VF から直接
 Sumi Moji（`dist/latin`、Term 用の内部プロファイルは `dist/latin/term`）
 を組み、`scripts/build.py` はそれを Source Han Sans に接ぎ木する側に
@@ -11,7 +11,7 @@ Regular）で、マスターは SCP VF 自身のマスター位置（wght 200 / 
 の VarStore から実測）に Regular と Heavy の位置、Monaspace の下限位置を
 加えた 5 つ。`SumiMoji.zip` は VF 2 面（静的 12 面は JP 面のドナー・
 NF パッチの入力・VF の検証に使い、配布しない）。名前は **Sumi Moji**
-（墨文字）で確定し、和文入りは **Sumi Moji JP**（v3.3.0 までの
+（墨文字）で確定し、和文入りは **Sumi Moji JP**（v3.2.0 までの
 Shoyu Code Pro JP を改名。2 節の一覧はリポジトリ名を除き実施済み）。
 衝突調査済み（フォント・技術領域で同名なし、
 商標は未確認、`sumimoji.com` / `.net` は取得済みで `.dev` / `.jp` は
@@ -165,7 +165,7 @@ cmap・GSUB の shaping 結果が roundoff（±1〜2ユニット）を除いて�
 段階 1b の実装により、35 の完成品 OTF を経由する経路そのものは
 置き換わっている。
 
-### 段階 1b: build_latin.py が VF から直接組み、build.py が消費する（実装済み、v3.3.0）
+### 段階 1b: build_latin.py が VF から直接組み、build.py が消費する（実装済み、v4.0.0）
 
 1. ✅ `build_latin.py` の入力を 35 の完成品 OTF から SCP VF + Monaspace VF
    直接に変えた: SCP VF のインスタンスを CFF2ToCFF で静的 CID-keyed CFF
@@ -182,7 +182,7 @@ cmap・GSUB の shaping 結果が roundoff（±1〜2ユニット）を除いて�
 見積り: 数日。描画結果は変わらない（実績: roundoff ±1〜2ユニットの差を
 除き一致）。
 
-### 段階 2: VF（実装済み、v3.3.0、`scripts/build_latin_vf.py`）
+### 段階 2: VF（実装済み、v4.0.0、`scripts/build_latin_vf.py`）
 
 1. ✅ デザインスペース: SCP VF 自身のマスター位置——**wght 200 / 400**
    （事前の見積りは「約 458」だったが、CFF2 の VarStore 領域のピークを

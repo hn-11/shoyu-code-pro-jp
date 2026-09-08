@@ -2,6 +2,9 @@
 
 ## v4.0.0
 
+最後に公開したのは v3.2.0 で、v3.3.0 として書いた下の変更もこのリリースで
+初めて出る。
+
 - ファミリー名を Shoyu Code Pro JP から **Sumi Moji JP** に改名
   （PostScript 名 `SumiMojiJP*`、NF は `Sumi Moji JP NF` など、
   ベンダー ID `SUMI`、環境変数 `SHOYU_*` → `SUMI_*`、リリース資産
@@ -151,7 +154,7 @@
   に更新。README / CHANGELOG の「Sumi Moji に TTC・NF は無い」を訂正
   （リリースは `SumiMoji.ttc` / `SumiMoji-NerdFont.zip` を添付済み）
 
-## v3.3.0
+### v3.3.0 として準備していた変更（未公開、v4.0.0 に含む）
 
 - `scripts/build_latin_vf.py` を追加: Sumi Moji を CFF2 可変フォントとして
   組む（`dist/latin/SumiMoji[wght].otf` / `SumiMoji-Italic[wght].otf`）。

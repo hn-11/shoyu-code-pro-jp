@@ -281,7 +281,7 @@ OFL のライセンス全文（LICENSE）を同梱している。
 ```
 
 ファミリー名を `Sumi Moji JP` にリネームしてあるので、
-オリジナルと共存できる。v3.3.0 までの `Shoyu Code Pro JP`（同じ
+オリジナルと共存できる。v3.2.0 までの `Shoyu Code Pro JP`（同じ
 フォントの旧名）とも別ファミリーとして共存するので、置き換えるなら
 旧版をアンインストールする。
 
@@ -369,4 +369,4 @@ v3.2.0 の 4.66MB より小さい）。
 ## ライセンス
 
 フォント本体は上流と同じ [SIL OFL 1.1](https://github.com/adobe-fonts/source-han-code-jp/blob/master/LICENSE.txt)。
-OFL の Reserved Font Name 規定に基づき、ファミリー名は `Source` も `Monaspace` も含まない `Sumi Moji JP` / `Sumi Moji` に変更済み（v3.3.0 までは `Shoyu Code Pro JP`）。
+OFL の Reserved Font Name 規定に基づき、ファミリー名は `Source` も `Monaspace` も含まない `Sumi Moji JP` / `Sumi Moji` に変更済み（v3.2.0 までは `Shoyu Code Pro JP`）。
