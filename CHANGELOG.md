@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v5.0.0
 
 - **基準を英語圏のターミナルフォントに置き換えた**（v5.0.0）。v4.0.0 までは
   Source Han Code JP（SHCJ）が基準だった: 2:3 の比率、SHCJ の行間

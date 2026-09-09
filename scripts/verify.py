@@ -101,12 +101,14 @@ def main():
     # every codepoint Sumi Moji has is one cell in both families — the
     # ligature-paired arrows and operators, Greek, box drawing, SCP-only
     # Latin (ł ğ ₽), '−' — and Source Han Sans's own full-width symbols
-    # (① ※) stay two cells. Italic: SCP Italic has no Greek, so α keeps
-    # Source Han Sans's full-width glyph there
+    # (① ※) stay two cells. Italic: SCP Italic has no Greek, so Source
+    # Han Sans's proportional glyphs stay and fit_to_grid centres them —
+    # ς (482) in the cell, α (625) in a full width
     policy = {"\u2192": exp_half, "\u2026": exp_half, "\u2500": exp_half,
               "\u2212": exp_half, "\u2460": exp_full, "\u203b": exp_full,
-              "\u0142": exp_half, "\u011f": exp_half, "\u20bd": exp_half}
-    policy["\u03b1"] = policy["\u03c2"] = exp_full if italic else exp_half
+              "\u0142": exp_half, "\u011f": exp_half, "\u20bd": exp_half,
+              "\u03c2": exp_half}
+    policy["\u03b1"] = exp_full if italic else exp_half
     # half-width kana and the half-width symbols (￩ U+FFE9): Source Han
     # Sans's 500 centred in the cell (fit_to_grid)
     policy["\uff71"] = policy["\uffe9"] = exp_half
