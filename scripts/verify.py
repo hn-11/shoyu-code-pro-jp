@@ -420,13 +420,7 @@ def main():
     # Windows Terminal's picker and GDI's FIXED_PITCH filter read; SHCJ's
     # own 0/0 hid it there), xAvgCharWidth per OS/2 v3+ (mean of every
     # non-zero advance), x/cap height measured on the face's own glyphs.
-    if " Nerd Font" in fam:
-        # font-patcher rewrites PANOSE to monospaced and recalculates
-        # xAvgCharWidth on the flattened font; those are its own to set
-        print("ok   width metadata checks skipped (Nerd Fonts variant)")
-        fixed = None
-    else:
-        fixed = tf["post"].isFixedPitch
+    fixed = tf["post"].isFixedPitch
     if fixed is not None:
         ok = fixed == 1
         check(ok, f"post.isFixedPitch == 1, got {fixed}")

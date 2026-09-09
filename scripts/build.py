@@ -626,7 +626,8 @@ def append_glyph(font, td, name, cs, fd_index, width, lsb=None, vdonor=None):
     order.append(name)
     if td.charset is not order:  # same list object for CFF fonts
         td.charset.append(name)
-    td.FDSelect.gidArray.append(fd_index)
+    if fd_index is not None:     # CID-keyed; a plain CFF has no FDSelect
+        td.FDSelect.gidArray.append(fd_index)
     i = len(td.CharStrings.charStringsIndex.items)
     td.CharStrings.charStringsIndex.append(cs)
     td.CharStrings.charStrings[name] = i

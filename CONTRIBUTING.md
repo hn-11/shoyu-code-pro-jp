@@ -21,6 +21,7 @@ Monaspace VF から欧文レイヤー Sumi Mojiを `dist/latin` に組み、
 | `SCP_VF_I` | 同上 | `SourceCodeVF-Italic.otf` へのパス | 同上 |
 | `MONA_VF` | 同上 | Monaspace の可変フォント（例: `Monaspace Neon Var.ttf`） | [Monaspace Releases](https://github.com/githubnext/monaspace/releases) |
 | `SHS_DIR` | `build.py` | `SourceHanSansJP-<Weight>.otf` が入ったディレクトリ | [Source Han Sans Releases](https://github.com/adobe-fonts/source-han-sans/releases) |
+| `NF_SYMBOLS` | `nerdpatch.py` | `SymbolsNerdFontMono-Regular.ttf` へのパス | [Nerd Fonts Releases](https://github.com/ryanoasis/nerd-fonts/releases) の `NerdFontsSymbolsOnly.zip` |
 | `LATIN_DIR` | `build.py`（任意、既定 `dist/latin`） | `build_latin.py` の出力先 | — |
 | `SUMI_VERSION` | 3つとも（任意） | リリース版番号（例 `5.0.0`）。未設定なら上流のリビジョンを name に残す | — |
 | `SUMI_SKIP_AUTOHINT` | `build.py` / `build_latin.py`（任意） | `1` でヒント付けをスキップ（試しビルドの時短用） | — |
@@ -65,9 +66,10 @@ python scripts/verify.py dist/SumiMojiJP-Regular.otf
 チェックします。変更を提出する前に、少なくとも `Regular` 面で通ることを
 確認してください。CI（`.github/workflows/ci.yml`）でも push / PR 時に
 同じ検証が走ります（Regular Upright / Regular Italic / Light Italic を
-ドナー別に 1 ジョブずつ、可変フォントと Sumi Moji への Nerd Fonts パッチ
-（記号セット 1 つのスモークテスト）を 1 ジョブ、並列に組んで 1 分程度。リリース
-`release.yml` はファミリー × ウェイト 2 つ組の 9 ジョブのあと `package`
+ファミリー別に 1 ジョブずつ（Regular Upright の 2 ジョブは JP 面への Nerd
+Fonts の接ぎ木も検証）、可変フォントと Sumi Moji への接ぎ木を 1 ジョブ、
+並列に組んで 1 分程度。リリース
+`release.yml` はファミリー × ウェイト群の 6 ジョブのあと `package`
 ジョブが可変フォントを組み、`harmonize_latin.py` → zip →
 GitHub Release を作り、5 分程度。所要時間を測るだけなら Run workflow の dry-run に
 チェックを入れるか、コミットメッセージに `[release-dry]` と書いたコミットを
@@ -77,12 +79,12 @@ GitHub Release を作り、5 分程度。所要時間を測るだけなら Run w
 `python scripts/golden.py <前の dist> <今の dist>` が cmap・送り幅・
 シェーピング・アウトライン・メタデータ・ヒントを突き合わせます。
 
-NF（Nerd Fonts）変種の生成を試す場合（`fontforge` が PATH にあること。CI は
-FontForge の AppImage を展開して使う。`SUMI_NERD_SETS=--powerline` の
-ように記号セットを絞ると 1 面数秒で終わり、パイプラインの確認に向く）:
+NF（Nerd Fonts）変種の生成を試す場合（`NF_SYMBOLS` に Symbols Nerd Font
+Mono を渡す。fontTools で接ぎ木するので FontForge も font-patcher も要らず、
+1 面 10 秒程度）:
 
 ```sh
-python scripts/nerdpatch.py <FontPatcher dir> [名前の一部]
+NF_SYMBOLS=... python scripts/nerdpatch.py [面のパス | 名前の一部]
 ```
 
 ## 合字を追加・変更する（`data/mona_ligs.json`）

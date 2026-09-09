@@ -1,6 +1,7 @@
 # Tag push (v*) -> full assembly from live upstreams (5 weights x 2 styles
 # x 2 families = 20 faces plus the 10 Sumi Moji statics and the two
-# variable fonts), verify, Nerd-patch everything, zip, GitHub release.
+# variable fonts), verify, graft the Nerd Fonts symbols into everything,
+# zip, GitHub release.
 # Sumi Moji itself ships as the two variable fonts (its statics are the
 # JP faces' donors, the Nerd Fonts patch's input and the variable fonts'
 # check, not an asset); the JP families ship as statics, one zip per
@@ -41,8 +42,8 @@ env:
   PUBLISH: ${{ github.event_name == 'push' && github.ref_type == 'tag' || github.event_name == 'workflow_dispatch' && !inputs.dry-run }}
 jobs:
   # a family's weights, both styles, per job (six jobs): its Latin donors,
-  # its JP faces, and the Nerd Fonts patches — the JP faces' own, plus a
-  # share of the ten Sumi Moji ones, patched while the JP faces build:
+  # its JP faces, and the Nerd Fonts grafts — the JP faces' own, plus a
+  # share of the ten Sumi Moji ones, grafted while the JP faces build:
   # the base job the job's uprights, the Term job its italics. The two
   # Bold jobs (two faces each, the lightest) also build one variable
   # font each, for the package job to pick up
@@ -70,15 +71,13 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: ./.github/actions/setup-build
-        with:
-          fontforge: "true"
       - run: echo "SUMI_VERSION=${SUMI_VERSION_TAG#v}" >> "$GITHUB_ENV"
       - run: python scripts/build_latin.py "${{ matrix.weights }}"
-      - name: Build the JP faces and patch everything
+      - name: Build the JP faces and graft the symbols into everything
         env:
           LATIN_NF: ${{ matrix.latin_nf }}
         run: |
-          # this job's share of the Sumi Moji patches: its weights' uprights
+          # this job's share of the Sumi Moji grafts: its weights' uprights
           # (base) or italics (Term)
           faces=""
           for w in ${{ matrix.weights }}; do
@@ -87,10 +86,10 @@ jobs:
               Italic) faces="$faces dist/latin/SumiMoji-${w}Italic.otf" ;;
             esac
           done
-          python scripts/nerdpatch.py FontPatcher $faces > nerd-latin.log 2>&1 &
+          python scripts/nerdpatch.py $faces > nerd-latin.log 2>&1 &
           latin=$!
           python scripts/build.py "${{ matrix.weights }} ${{ matrix.family }}"
-          python scripts/nerdpatch.py FontPatcher dist/*.otf
+          python scripts/nerdpatch.py dist/*.otf
           wait $latin || { cat nerd-latin.log; exit 1; }
           cat nerd-latin.log
       - if: matrix.variable
@@ -138,15 +137,18 @@ jobs:
           cp LICENSE dist/nerd/LICENSE
           cp LICENSE dist/latin/LICENSE
           cp LICENSE dist/nerd/latin/LICENSE
+          # the Nerd Fonts symbols' own license rides with the faces that carry them
+          cp "$NF_LICENSE" dist/nerd/LICENSE-NerdFonts
+          cp "$NF_LICENSE" dist/nerd/latin/LICENSE-NerdFonts
           # one zip per family: "SumiMojiJP-*" is the base family alone
           # (Term carries its own prefix)
           cd dist
           for fam in SumiMojiJP SumiMojiJPTerm; do
             zip -q "$fam.zip" "$fam"-*.otf LICENSE
-            (cd nerd && zip -q "../$fam-NerdFont.zip" "$fam"NFM-*.otf LICENSE)
+            (cd nerd && zip -q "../$fam-NerdFont.zip" "$fam"NFM-*.otf LICENSE LICENSE-NerdFonts)
           done
           (cd latin && zip -q ../SumiMoji.zip 'SumiMoji[wght].otf' 'SumiMoji-Italic[wght].otf' LICENSE)
-          (cd nerd/latin && zip -q ../../SumiMoji-NerdFont.zip *.otf LICENSE)
+          (cd nerd/latin && zip -q ../../SumiMoji-NerdFont.zip *.otf LICENSE LICENSE-NerdFonts)
       # every asset, on a dry run too (a missing one is a failure here, not
       # a warning from the release step)
       - run: ls -l dist/*.zip

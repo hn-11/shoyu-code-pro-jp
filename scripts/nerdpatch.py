@@ -1,355 +1,203 @@
 #!/usr/bin/env python3
-"""Nerd Fonts patch pipeline for all dist/*.otf.
+"""Nerd Fonts variants: the Symbols Nerd Font Mono glyphs grafted into
+every face with fontTools — no FontForge, no font-patcher.
 
-For each font: flatten the CID-keyed CFF with FontForge (font-patcher can't
-address glyphs by Unicode in CID fonts), run font-patcher --complete, then
-restore the "Term" family distinction that the patcher's renaming drops.
+Symbols Nerd Font Mono (NerdFontsSymbolsOnly.zip in every Nerd Fonts
+release) is Nerd Fonts' own release of just the icons: font-patcher's
+complete glyph set with its per-group sizing, applied to an empty font,
+Mono flavour — every icon in one 2048-unit cell of a 2048 em. Grafting
+it gives exactly the symbols a `--complete --mono` patch would, without
+the FontForge round trip that flattened the CID keying, dropped the
+STAT and rewrote the metadata (all of which nerdpatch.py used to put
+back), and in ten seconds a face instead of a minute and a half.
 
-Usage: python scripts/nerdpatch.py <path-to-FontPatcher-dir> [FONT ...]
-  FONT: a face to patch (a path under dist/ or dist/latin/), or a
-  substring of the file names to take; none patches every face in
-  dist/ and dist/latin/.
-Requires: fontforge on PATH.
-Env (optional): SUMI_NERD_SETS — font-patcher's symbol-set options in
-place of "--complete" (e.g. "--powerline": CI's smoke test of this
-pipeline patches one set; a release always patches everything).
+Sizing: every icon is scaled uniformly by our cell over the symbols'
+em (600 / 2048), so it fits one cell and the groups keep the relative
+sizes Nerd Fonts gave them, and the symbols' line box (-410..1638) is
+centred on ours (-273..984). The Powerline range (U+E0A0-E0D7: the
+separators that tile the line edge to edge) is stretched instead — the
+cell wide, the full line tall — as font-patcher does.
+
+Names: "<Family> Nerd Font Mono", PostScript "<PSFamily>NFM-", Nerd
+Fonts' own convention for a font whose icons are one cell wide (nf_name).
+Everything else — STAT, OS/2, post, the hints, the GSUB — is the source
+face's, untouched; the icons carry no hints (font-patcher's did not
+either).
+
+Usage:
+  python scripts/nerdpatch.py [FACE.otf ... | NAME-SUBSTRING ...]
+    no argument: every JP face in dist/ and every static Sumi Moji face
+    in dist/latin/ (never the variable fonts). Output: dist/nerd/ for the
+    JP faces, dist/nerd/latin/ for Sumi Moji.
+Env (required): NF_SYMBOLS = path to SymbolsNerdFontMono-Regular.ttf
 """
 
-import concurrent.futures
-import copy
-import os
 import re
-import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
 
-import build  # scripts/ is on sys.path (script dir, or test's own insert)
-from build_latin import fit_win_metrics
-from fontTools.pens.boundsPen import BoundsPen
 from fontTools.pens.t2CharStringPen import T2CharStringPen
 from fontTools.pens.transformPen import TransformPen
 from fontTools.ttLib import TTFont
-from verifylib import static_faces
+from fontTools.ttLib.tables._c_m_a_p import CmapSubtable
 
-ROOT = Path(__file__).resolve().parent.parent
-DIST = ROOT / "dist"
-OUT = DIST / "nerd"
-# Sumi Moji is the Latin-only family; its faces live in dist/latin/ (not
-# dist/) and its patched output goes to dist/nerd/latin/. dist/latin/term/
-# holds the internal donor family "Sumi Moji Term" and must never be
-# patched — only globbing "SumiMoji-*.otf" (not "*.otf") in dist/latin/
-# picks up the public family and skips that subdirectory entirely.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import build  # noqa: E402
+from build_latin import fit_win_metrics  # noqa: E402
+from verifylib import static_faces  # noqa: E402
+
+DIST = build.ROOT / "dist"
 LATIN_DIR = DIST / "latin"
+OUT = DIST / "nerd"
 LATIN_OUT = OUT / "latin"
 
-FLATTEN = """
-import sys, fontforge
-f = fontforge.open(sys.argv[1])
-if f.is_cid:
-    f.cidFlatten()
-f.generate(sys.argv[2])
-"""
-
-
-def ff_env():
-    """FontForge embeds its own Python; strip setup-python's env vars that
-    otherwise poison it on CI (mismatched stdlib -> ModuleNotFoundError)."""
-    env = dict(os.environ)
-    for k in ("PYTHONPATH", "PYTHONHOME", "LD_LIBRARY_PATH", "pythonLocation"):
-        env.pop(k, None)
-    return env
-
-
-# Nerd Fonts icon ranges (PUA + supplementary PUA-A slice NF actually
-# uses): font-patcher draws every glyph in these for a 1000-unit cell
-# regardless of the target family's half-width cell.
-NERD_RANGES = ((0xE000, 0xF8FF), (0xF0000, 0xFFFFD))
-
-
-def _glyph_private(td, gid):
-    """CID-keyed CFF (FDArray/FDSelect) or plain CFF (one Private dict) —
-    font-patcher's output is a flattened, non-CID CFF, but handle both so
-    this also works untouched on a CID source."""
-    if hasattr(td, "FDArray"):
-        return td.FDArray[td.FDSelect[gid]].Private
-    return td.Private
-
-
-def fit_nerd_glyphs(font, cell):
-    """font-patcher --complete sizes every Nerd Font icon (PUA + the
-    supplementary planes NF uses) for a 1000-unit cell, no matter the
-    target family's half-width cell — 1000 is not our 600, and would
-    break the monospace grid (Nerd Fonts' own "Mono" variant is the
-    same idea: every icon in one cell).
-
-    Rescale each affected glyph isotropically by cell/advance, like
-    a rescale, but about the glyph's vertical center (build.py's
-    glyph_vcenter) instead of the origin, so the icon stays put vertically
-    while its footprint shrinks to fit the cell horizontally too. A glyph
-    may be reachable from several codepoints (icons get aliased); rewrite
-    each glyph once.
-    """
-    cmap = font.getBestCmap()
-    cff = font["CFF "].cff
-    td = cff.topDictIndex.items[0]
-    gs = font.getGlyphSet()
-    hmtx = font["hmtx"]
-
-    names = set()
-    for lo, hi in NERD_RANGES:
-        for cp in range(lo, hi + 1):
-            name = cmap.get(cp)
-            if name is not None:
-                names.add(name)
-
-    done = 0
-    from_advances = set()
-    for name in names:
-        adv, _ = hmtx.metrics[name]
-        if adv == 0 or adv == cell:
-            continue
-        k = cell / adv
-        bounds_pen = BoundsPen(gs)
-        gs[name].draw(bounds_pen)
-        if bounds_pen.bounds is None:
-            dy = 0  # blank glyph (no ink) — nothing to center
-        else:
-            vcenter = (bounds_pen.bounds[1] + bounds_pen.bounds[3]) / 2
-            dy = vcenter - k * vcenter
-        gid = font.getGlyphID(name)
-        private = _glyph_private(td, gid)
-        pen = T2CharStringPen(build.pen_width(private, cell), gs)
-        gs[name].draw(TransformPen(pen, (k, 0, 0, k, 0, dy)))
-        cs = pen.getCharString(private=private)
-        td.CharStrings.charStringsIndex[td.CharStrings.charStrings[name]] = cs
-        hmtx.metrics[name] = (cell, build.charstring_lsb(cs))
-        from_advances.add(adv)
-        done += 1
-    if done:
-        src_advance = (from_advances.pop() if len(from_advances) == 1
-                       else sorted(from_advances))
-        print(f"  fitted {done} Nerd Font glyph(s) from advance {src_advance} to {cell}")
-    else:
-        print(f"  fitted 0 Nerd Font glyphs (already at cell {cell})")
-    return done
+# the Powerline symbols and Powerline Extra: separators and their
+# fills, which must reach the line's top and bottom to tile
+POWERLINE = range(0xE0A0, 0xE0D8)
 
 
 def nf_name(s):
-    """The Nerd Fonts name of one of our names, Nerd Fonts' own
-    convention: "<Family> Nerd Font Mono" / "<PSFamily>NFM" — the Mono
-    variant is the one whose icons are fitted to a single cell
-    (fit_nerd_glyphs), which is what every face here is. The marker
-    follows the whole family name, variant token included ("Sumi Moji JP
-    Term Nerd Font Mono", like "JetBrainsMono Nerd Font Mono")."""
+    """The Nerd Fonts name of one of our names: the marker spliced in
+    after the family, variant token included ("Sumi Moji JP Term Nerd
+    Font Mono", "SumiMojiJPTermNFM-Bold")."""
     s = re.sub(r"(Sumi Moji(?: JP(?: Term)?)?)", r"\1 Nerd Font Mono", s, count=1)
     return re.sub(r"(SumiMoji(?:JP(?:Term)?)?)", r"\1NFM", s, count=1)
 
 
-# what FontForge's round trip (the flattening, font-patcher's generate)
-# resets to its own defaults, put back from the source face: the
-# monospace declaration (set_monospace_metadata), weight/width classes,
-# fsSelection / fsType / vendor and the typo and win metrics
-OS2_FIELDS = ("panose", "fsSelection", "fsType", "achVendID", "usWeightClass",
-              "usWidthClass", "sTypoAscender", "sTypoDescender", "sTypoLineGap",
-              "usWinAscent", "usWinDescent")
-POST_FIELDS = ("isFixedPitch", "italicAngle", "underlinePosition", "underlineThickness")
+def icon_transforms(font, symbols):
+    """(uniform, powerline) affine transforms from the symbols' em onto
+    this face's cell and line box: see the module docstring."""
+    upm = symbols["head"].unitsPerEm
+    s_asc, s_desc = symbols["hhea"].ascent, symbols["hhea"].descent
+    asc, desc = font["hhea"].ascent, font["hhea"].descent
+    k = build.CELL / upm
+    dy = (asc + desc) / 2 - k * (s_asc + s_desc) / 2
+    ky = (asc - desc) / (s_asc - s_desc)
+    return (k, 0, 0, k, 0, dy), (k, 0, 0, ky, 0, desc - ky * s_desc)
 
 
-IDENTITY = re.compile(r"^Identity\.(\d+)$")
-
-
-def patched_bounds(font, src_font):
-    """build.glyph_bounds for the patched font, cheaply: FontForge's
-    flattening names the source's glyph cidNNNNN "Identity.NNNNN" and
-    keeps its outline, so those come from the source's own (subroutinized,
-    quick to draw) charstrings; everything else — font-patcher's icons,
-    fitted or not, and the glyphs it replaced, which carry its names —
-    is drawn from the patched font. font-patcher's flat charstrings take
-    15 s a JP face to draw in full, four times that under a job's load.
-    Any Identity glyph the source does not have, or has at another
-    advance, means the naming is not what this expects: everything is
-    drawn from the patched font then."""
-    src_metrics = src_font["hmtx"].metrics
-    metrics = font["hmtx"].metrics
-    mapping = {}
-    for name in font.getGlyphOrder():
-        m = IDENTITY.match(name)
-        if not m:
+def graft_symbols(font, symbols):
+    """Append every symbol codepoint the face lacks as a one-cell glyph
+    drawn from the symbols font (quadratic outlines become cubic on the
+    way, exactly). Returns the number of icons grafted."""
+    scm, sgs = symbols.getBestCmap(), symbols.getGlyphSet()
+    uniform, powerline = icon_transforms(font, symbols)
+    td, cmap, fd_index, private, vdon = append_context(font)
+    # the supplementary-plane icons need a format 12 subtable; a face
+    # from Source Code Pro alone has only BMP ones
+    if not any(t.format == 12 for t in font["cmap"].tables if t.isUnicode()):
+        bmp = next(t for t in font["cmap"].tables if t.isUnicode())
+        t12 = CmapSubtable.newSubtable(12)
+        t12.platformID, t12.platEncID, t12.language = 3, 10, 0
+        t12.cmap = dict(bmp.cmap)
+        font["cmap"].tables.append(t12)
+    new = {}
+    for cp in sorted(scm):
+        if cp in cmap:
             continue
-        src = f"cid{int(m.group(1)):05d}"
-        if src not in src_metrics or src_metrics[src][0] != metrics[name][0]:
-            print(f"  {name}: no {src} in the source at that advance; "
-                  "measuring every glyph")
-            return build.glyph_bounds(font)
-        mapping[name] = src
-    src_bounds = build.glyph_bounds(src_font)
-    bounds = {name: src_bounds[src] for name, src in mapping.items() if src in src_bounds}
-    gs = font.getGlyphSet()
-    charstrings = font["CFF "].cff.topDictIndex[0].CharStrings
-    for name in font.getGlyphOrder():
-        if name in mapping:
-            continue
-        cs = charstrings[name]
-        bytecode = cs.bytecode
-        pen = BoundsPen(gs)
-        gs[name].draw(pen)
-        if bytecode is not None:
-            cs.bytecode, cs.program = bytecode, None
-        if pen.bounds is not None:
-            bounds[name] = pen.bounds
-    return bounds
+        pen = T2CharStringPen(build.pen_width(private, build.CELL), sgs)
+        sgs[scm[cp]].draw(TransformPen(pen, powerline if cp in POWERLINE else uniform))
+        name = build.alloc_glyph_name(font)
+        build.append_glyph(font, td, name, pen.getCharString(private=private),
+                           fd_index, build.CELL, None, vdon)
+        new[cp] = name
+    build.set_cmap(font, new, add_new=True)
+    return len(new)
 
 
-def restore_metadata(font, src_font):
-    """Give the patched font the source face's names (NF marker spliced
-    in), its OS/2 and post declarations and its STAT (FontForge writes
-    none), then extents from the outlines and win metrics widened to hold
-    the icons. Returns the PostScript name."""
-    font["name"].names = []
-    for rec in src_font["name"].names:
+def append_context(font):
+    """build.append_context, for a face that may have no vmtx (Sumi
+    Moji) or no FDArray: the vmtx donor is only looked up when there is
+    a vmtx, and a plain CFF appends without an FD."""
+    cff = font["CFF "].cff
+    td = cff[cff.fontNames[0]]
+    cmap = font.getBestCmap()
+    if hasattr(td, "FDArray"):   # CID-keyed: every face of ours
+        fd_index = td.FDSelect[font.getGlyphID(cmap[ord("A")])]
+        private = td.FDArray[fd_index].Private
+    else:                        # a plain CFF (the tests' fixtures)
+        fd_index, private = None, td.Private
+    vdon = build.vmtx_donor(font, fullwidth=False) if "vmtx" in font else None
+    return td, cmap, fd_index, private, vdon
+
+
+def rename(font):
+    """Every name record naming the family takes the Nerd Fonts name;
+    returns the new PostScript name."""
+    name = font["name"]
+    for rec in name.names:
         s = rec.toUnicode()
         if "Sumi" in s:
-            s = nf_name(s)
-        font["name"].setName(s, rec.nameID, rec.platformID,
-                             rec.platEncID, rec.langID)
-    ps = nf_name(src_font["name"].getDebugName(6))
-    font["name"].setName(ps, 6, 3, 1, 0x409)
-    if "CFF " in font:
-        font["CFF "].cff.fontNames[0] = ps
-    os2, src_os2 = font["OS/2"], src_font["OS/2"]
-    for field in OS2_FIELDS:
-        setattr(os2, field, copy.deepcopy(getattr(src_os2, field)))
-    os2.version = max(os2.version, src_os2.version)
-    for field in POST_FIELDS:
-        setattr(font["post"], field, getattr(src_font["post"], field))
-    if "STAT" in src_font:
-        font["STAT"] = src_font["STAT"]   # its name IDs are the ones copied above
-    # extents from the outlines (build.update_bbox), not fontTools'
-    # save-time recalc (three full draws of the face): the fitted icons
-    # moved, and font-patcher replaces glyphs the face already had (SCP's
-    # own Powerline symbols), so the source's box is no shortcut
-    build.update_bbox(font, patched_bounds(font, src_font))
-    # the win metrics follow the source's own policy: Sumi Moji's hold its
-    # whole box (build_latin.fit_win_metrics), so they widen to whatever
-    # the icons add; the JP faces keep Source Han Sans's win metrics
-    # (build.copy_line_metrics), which do not cover SHS's outliers, and
-    # keep them as they are
-    src_head = src_font["head"]
-    if (src_os2.usWinAscent >= src_head.yMax
-            and src_os2.usWinDescent >= -src_head.yMin):
-        fit_win_metrics(font)
+            name.setName(nf_name(s), rec.nameID, rec.platformID, rec.platEncID, rec.langID)
+    ps = name.getDebugName(6)
+    font["CFF "].cff.fontNames[0] = ps
     return ps
 
 
-def fix_names(patched: Path, src: Path) -> Path:
-    """Finish one font-patcher output: icons fitted to the cell
-    (fit_nerd_glyphs), names and metadata from the source face
-    (restore_metadata — font-patcher does not keep our subfamily scheme
-    and collapses every face to "Regular", colliding on disk and at
-    install time), subroutinized again (FontForge's round
-    trip writes the CFF with far fewer subroutines than the source's,
-    and the icons come flat: a JP face with the complete set is 7.8 MB,
-    6.9 MB once tx folds the repetition back, ten seconds), saved under
-    its PostScript name."""
-    import cffsubr
-    font = TTFont(patched)
-    src_font = TTFont(src)
-
-    src_cmap = src_font.getBestCmap()
-    cell = src_font["hmtx"].metrics[src_cmap[ord("a")]][0]
-    fit_nerd_glyphs(font, cell)
-    ps = restore_metadata(font, src_font)
-    out = patched.parent / f"{ps}.otf"
+def patch_face(src, out_dir, symbols_path):
+    """One face: graft, rename, extents, save (subroutinized; the icons
+    unhinted). Returns the output path."""
+    t0 = time.monotonic()
+    font = TTFont(src)
     font.recalcBBoxes = False
-    cffsubr.subroutinize(font)
-    font.save(out)
-    if out != patched and patched.exists():
-        patched.unlink()
+    symbols = _symbols(symbols_path)
+    n = graft_symbols(font, symbols)
+    font["OS/2"].recalcAvgCharWidth(font)
+    ps = rename(font)
+    os2, head = font["OS/2"], font["head"]
+    covered = (os2.usWinAscent >= head.yMax and os2.usWinDescent >= -head.yMin)
+    build.update_bbox(font)
+    if covered:
+        # the source's win metrics covered its box (Sumi Moji's policy):
+        # keep covering it with the icons in. The JP faces keep Source
+        # Han Sans's values, which never covered its outliers
+        fit_win_metrics(font)
+    out = Path(out_dir) / f"{ps}.otf"
+    build.write_face(font, out, [])
+    print(f"  {Path(src).name}: {n} icons grafted, {time.monotonic() - t0:.0f} s -> {out.name}")
     return out
+
+
+_SYMBOLS = {}
+
+
+def _symbols(path):
+    if path not in _SYMBOLS:
+        _SYMBOLS[path] = TTFont(path)
+    return _SYMBOLS[path]
 
 
 def sources_for(args):
     """[(face, output dir)] for the command line: explicit paths (a JP
     face in dist/ goes to dist/nerd/, a Sumi Moji face in dist/latin/ to
     dist/nerd/latin/), a name substring, or — with no argument — every
-    face in dist/ (non-recursive, so dist/latin/ is untouched there) plus
-    the public Sumi Moji static faces specifically: never "*.otf" in
-    dist/latin/, which would also sweep up the dist/latin/term/ donor
-    family, and not the variable fonts (a VF is not patched)."""
+    face in dist/ (non-recursive) plus the static Sumi Moji faces
+    specifically: never the variable fonts (a VF is not patched)."""
     paths = [Path(a) for a in args if Path(a).is_file()]
     if paths:
-        return [(p.resolve(), LATIN_OUT if p.resolve().parent == LATIN_DIR else OUT)
+        return [(p.resolve(), LATIN_OUT if p.resolve().parent == LATIN_DIR.resolve() else OUT)
                 for p in paths]
     sources = [(p, OUT) for p in sorted(DIST.glob("*.otf"))]
-    sources += [(p, LATIN_OUT) for p in static_faces(LATIN_DIR, "SumiMoji")]
+    sources += [(p, LATIN_OUT) for p in static_faces(LATIN_DIR, build.LATIN_FAMILY[1])]
     return [(p, out) for p, out in sources if not args or any(a in p.name for a in args)]
 
 
+def _job(job):
+    src, out_dir, symbols_path = job
+    return patch_face(src, out_dir, symbols_path)
+
+
 def main():
-    # absolute: FontForge's AppImage runs its scripts from its own
-    # directory, so a relative FontPatcher path would not resolve there
-    patcher_dir = Path(sys.argv[1]).resolve()
+    env = build.env_paths({"NF_SYMBOLS": None})
     OUT.mkdir(exist_ok=True)
     LATIN_OUT.mkdir(exist_ok=True)
-    sources = sources_for(sys.argv[2:])
+    sources = sources_for(sys.argv[1:])
     if not sources:
-        sys.exit(f"nothing to patch for {sys.argv[2:]!r}")
-    with tempfile.TemporaryDirectory() as tmp:
-        flatten_script = Path(tmp) / "flatten.py"
-        flatten_script.write_text(FLATTEN)
-        # FontForge is single-threaded and each face is two subprocess
-        # runs: patch the faces side by side, one per core
-        with concurrent.futures.ThreadPoolExecutor(os.cpu_count() or 2) as pool:
-            futures = {pool.submit(patch_face, src, out_dir, Path(tmp),
-                                   flatten_script, patcher_dir): src
-                       for src, out_dir in sources}
-            for fut in concurrent.futures.as_completed(futures):
-                for final in fut.result():   # a failure raises here
-                    print(f"  -> {final.name}")
-
-
-def patch_face(src, out_dir, tmp, flatten_script, patcher_dir):
-    """Flatten one face with FontForge, run font-patcher on it, and give
-    every produced file its final names (fix_names). Returns the final
-    paths; raises on a FontForge or font-patcher failure."""
-    print(f"patching: {src.name}")
-    flat = tmp / src.name
-    t0 = time.monotonic()
-    try:
-        subprocess.run(
-            ["fontforge", "-script", str(flatten_script), str(src), str(flat)],
-            check=True, capture_output=True, text=True, env=ff_env())
-    except subprocess.CalledProcessError as e:
-        print(e.stdout)
-        print(e.stderr)
-        raise
-    sets = os.environ.get("SUMI_NERD_SETS", "--complete").split()
-    t_flat = time.monotonic()
-    r = subprocess.run(
-        ["fontforge", "-script", str(patcher_dir / "font-patcher"),
-         *sets, "--quiet", "--outputdir", str(out_dir), str(flat)],
-        check=False, capture_output=True, text=True, env=ff_env())
-    if r.returncode != 0:
-        print(r.stdout)
-        print(r.stderr)
-        raise SystemExit(f"font-patcher failed on {src.name}")
-    produced = [ln.split("'")[1] for ln in r.stdout.splitlines()
-                if "===>" in ln and "'" in ln]
-    if not produced:
-        print(r.stdout)
-        raise SystemExit(
-            f"no faces parsed from font-patcher output for {src.name} "
-            "(check font-patcher's \"===> '...'\" output format for changes)")
-    t_patch = time.monotonic()
-    finals = []
-    for prod in produced:
-        path = Path(prod) if Path(prod).is_absolute() else ROOT / prod
-        finals.append(fix_names(path, src))
-    print(f"  {src.name}: flatten {t_flat - t0:.0f} s, font-patcher {' '.join(sets)} "
-          f"{t_patch - t_flat:.0f} s, names {time.monotonic() - t_patch:.0f} s")
-    return finals
+        sys.exit(f"nothing to patch for {sys.argv[1:]!r}")
+    jobs = [(src, out_dir, env["NF_SYMBOLS"]) for src, out_dir in sources]
+    build.run_faces(jobs, _job, label=lambda job: Path(job[0]).name,
+                    on_result=lambda job, out: None)
 
 
 if __name__ == "__main__":
