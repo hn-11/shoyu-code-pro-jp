@@ -187,7 +187,6 @@ GROUP_NAMES = {
     "ss06": "Dots",
     "ss07": "Comments",
     "ss08": "Repetition, logic & misc",
-    "ss09": "Half-width arrows & operators",
     "cv99": "Alternate ligature designs",
 }
 
@@ -1212,9 +1211,9 @@ def shift_charstring(cs, dx, width, private):
 def widen_fullwidth(font, cell):
     """Term variant: widen every full-width glyph's advance to two cells
     (2 x cell; an n-full-width glyph such as ⸻ to 2n cells) and center
-    the unchanged outline. The Latin layer is untouched by this pass; the
-    terminal grid becomes exact (CJK = two cells, symmetric padding
-    instead of a right-side gap).
+    the unchanged outline. The Latin layer (every glyph appended by this
+    build) is untouched by this pass; the terminal grid becomes exact
+    (CJK = two cells, symmetric padding instead of a right-side gap).
 
     The outlines are moved inside their charstrings (shift_charstring),
     so Source Han Sans's own hints survive on the 17,000 glyphs this
@@ -1227,14 +1226,19 @@ def widen_fullwidth(font, cell):
     hmtx = font["hmtx"]
     redrawn = {}
     shifted = 0
+    appended = getattr(font, "_appended", set())
     for name in font.getGlyphOrder():
         adv, lsb = hmtx.metrics[name]
-        if adv <= 0 or adv % FULLWIDTH:
+        # a glyph this build appended is the Latin layer's, on the cell
+        # grid already: a 5-cell ligature's 3000 is also 3 full widths
+        if adv <= 0 or adv % FULLWIDTH or name in appended:
             continue
         full = (adv // FULLWIDTH) * 2 * cell
         shift = (full - adv) // 2
-        gid = font.getGlyphID(name)
-        private = td.FDArray[td.FDSelect[gid]].Private
+        if hasattr(td, "FDArray"):   # CID-keyed (the JP faces)
+            private = td.FDArray[td.FDSelect[font.getGlyphID(name)]].Private
+        else:
+            private = td.Private
         if shift_charstring(td.CharStrings[name], shift, full, private):
             shifted += 1
         else:

@@ -76,7 +76,7 @@ def main():
     tags = {fr.FeatureTag for fr in tf["GSUB"].table.FeatureList.FeatureRecord}
     for tag in ("calt", "liga", "ss01", "ss08", "cv99", "zero", "cv01", "ss11"):
         check(tag in tags, f"GSUB has {tag}")
-    for tag in ("vert", "hwid", "fwid", "ss09", "jp78", "pwid"):
+    for tag in ("vert", "hwid", "fwid", "jp78", "pwid"):
         check(tag not in tags, f"GSUB has no {tag}")
     for tbl in ("vhea", "vmtx", "VORG", "DSIG"):
         check(tbl not in tf, f"no {tbl} table")

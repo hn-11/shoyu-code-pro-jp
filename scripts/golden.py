@@ -52,7 +52,6 @@ FEATURE_SETS = [
     ("ss02 only", {"calt": False, "liga": False, "ss02": True}),
     ("hwid", {"hwid": True}),
     ("fwid", {"fwid": True}),
-    ("ss09", {"ss09": True}),
     ("zero", {"zero": True}),
     ("cv01", {"cv01": True}),
 ]

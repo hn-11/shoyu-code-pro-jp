@@ -16,7 +16,9 @@ em (600 / 2048), so it fits one cell and the groups keep the relative
 sizes Nerd Fonts gave them, and the symbols' line box (-410..1638) is
 centred on ours (-273..984). The Powerline range (U+E0A0-E0D7: the
 separators that tile the line edge to edge) is stretched instead — the
-cell wide, the full line tall — as font-patcher does.
+cell wide, the full line tall — as font-patcher does, and the seven
+Powerline glyphs Source Code Pro draws itself (taller than the line)
+are replaced by the symbols' as well, as font-patcher did.
 
 Names: "<Family> Nerd Font Mono", PostScript "<PSFamily>NFM-", Nerd
 Fonts' own convention for a font whose icons are one cell wide (nf_name).
@@ -80,7 +82,8 @@ def icon_transforms(font, symbols):
 def graft_symbols(font, symbols):
     """Append every symbol codepoint the face lacks as a one-cell glyph
     drawn from the symbols font (quadratic outlines become cubic on the
-    way, exactly). Returns the number of icons grafted."""
+    way, exactly), and redraw the Powerline glyphs the face already has
+    from the symbols too. Returns the number of icons grafted."""
     scm, sgs = symbols.getBestCmap(), symbols.getGlyphSet()
     uniform, powerline = icon_transforms(font, symbols)
     td, cmap, fd_index, private, vdon = append_context(font)
@@ -92,9 +95,25 @@ def graft_symbols(font, symbols):
         t12.platformID, t12.platEncID, t12.language = 3, 10, 0
         t12.cmap = dict(bmp.cmap)
         font["cmap"].tables.append(t12)
-    new = {}
+    new, replaced = {}, 0
     for cp in sorted(scm):
+        if cp in cmap and cp not in POWERLINE:
+            continue
+        # Source Code Pro draws its own Powerline separators (U+E0A0-E0A2,
+        # E0B0-E0B3) taller than its line box (-280..1040/1060 against
+        # -273..984) and E0B1/E0B2 wider than the cell; the Symbols set
+        # takes their place, as font-patcher's did, so every separator
+        # in a prompt tiles the same line box
         if cp in cmap:
+            name = cmap[cp]
+            glyph_private = glyph_context(font, td, name)
+            pen = T2CharStringPen(build.pen_width(glyph_private, build.CELL), sgs)
+            sgs[scm[cp]].draw(TransformPen(pen, powerline))
+            cs = pen.getCharString(private=glyph_private)
+            td.CharStrings[name] = cs
+            font["hmtx"].metrics[name] = (build.CELL, build.charstring_lsb(cs))
+            build.note_redrawn(font, [name])
+            replaced += 1
             continue
         pen = T2CharStringPen(build.pen_width(private, build.CELL), sgs)
         sgs[scm[cp]].draw(TransformPen(pen, powerline if cp in POWERLINE else uniform))
@@ -103,7 +122,15 @@ def graft_symbols(font, symbols):
                            fd_index, build.CELL, None, vdon)
         new[cp] = name
     build.set_cmap(font, new, add_new=True)
-    return len(new)
+    return len(new) + replaced
+
+
+def glyph_context(font, td, name):
+    """The Private dict a charstring for the existing glyph `name` is
+    written against (its own FD's for a CID-keyed face)."""
+    if hasattr(td, "FDArray"):
+        return td.FDArray[td.FDSelect[font.getGlyphID(name)]].Private
+    return td.Private
 
 
 def append_context(font):

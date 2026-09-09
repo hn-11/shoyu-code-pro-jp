@@ -44,18 +44,23 @@ def _rect(pen, x0, y0, x1, y1):
 
 def _face(family="Sumi Moji JP", ps="SumiMojiJP-Regular", win=(1160, 288)):
     """A plain CFF face like ours in the parts that matter: 'A' in a 600
-    cell, Source Code Pro's line box, a BMP-only cmap."""
+    cell, Source Code Pro's own Powerline separator at U+E0B0 (taller
+    than the line box, as Source Code Pro draws it), Source Code Pro's
+    line box, a BMP-only cmap."""
     charstrings = {}
     pen = T2CharStringPen(600, None)
     charstrings[".notdef"] = pen.getCharString()
     pen = T2CharStringPen(600, None)
     _rect(pen, 50, 0, 550, 655)
     charstrings["A"] = pen.getCharString()
+    pen = T2CharStringPen(600, None)
+    _rect(pen, 0, -280, 600, 1040)
+    charstrings["uniE0B0"] = pen.getCharString()
     fb = FontBuilder(1000, isTTF=False)
-    fb.setupGlyphOrder([".notdef", "A"])
-    fb.setupCharacterMap({ord("A"): "A"})
+    fb.setupGlyphOrder([".notdef", "A", "uniE0B0"])
+    fb.setupCharacterMap({ord("A"): "A", 0xE0B0: "uniE0B0"})
     fb.setupCFF(ps, {"FullName": ps}, charstrings, {})
-    fb.setupHorizontalMetrics({".notdef": (600, 0), "A": (600, 50)})
+    fb.setupHorizontalMetrics({".notdef": (600, 0), "A": (600, 50), "uniE0B0": (600, 0)})
     fb.setupHorizontalHeader(ascent=984, descent=-273)
     fb.setupNameTable({"familyName": family, "styleName": "Regular", "psName": ps,
                        "uniqueFontIdentifier": f"5.0.0;SUMI;{ps}"})
@@ -115,15 +120,19 @@ def test_icon_transforms_fit_the_cell_and_centre_the_line_box():
 
 def test_graft_symbols_appends_one_cell_icons_the_face_lacks():
     face = _face()
-    assert nerdpatch.graft_symbols(face, _symbols()) == 3       # not 'A'
+    assert _bounds(face, "uniE0B0") == (0, -280, 600, 1040)     # Source Code Pro's
+    assert nerdpatch.graft_symbols(face, _symbols()) == 3       # icon, far, E0B0; not 'A'
     cmap = face.getBestCmap()
     assert cmap[ord("A")] == "A"
     icon, pl, far = cmap[0xE000], cmap[0xE0B0], cmap[0xF0001]
+    assert pl == "uniE0B0"                                      # redrawn in place
     assert {face["hmtx"][g][0] for g in (icon, pl, far)} == {600}
     x0, y0, x1, y1 = _bounds(face, icon)
     assert (x0, x1) == (0, 600)
     assert y0 == pytest.approx(176, abs=1) and y1 == pytest.approx(776, abs=1)
     assert _bounds(face, pl) == (0, -273, 600, 984)             # stretched to the line
+    assert face["hmtx"][pl] == (600, 0)
+    assert "uniE0B0" in face._redrawn
     x0, y0, x1, y1 = _bounds(face, far)
     assert x1 - x0 == pytest.approx(300, abs=1)                # half the em, half the cell
     # the supplementary-plane icon needed a format 12 subtable

@@ -49,7 +49,7 @@ def test_group_names_all_remap_nontrivially():
     exactly the shape _remap_scp_tag maps ssNN -> ss(NN+10) for (or, for
     cv99, passes through unchanged) — none of them come back None. So if
     an SCP font happened to carry a feature under one of our own tags
-    (ss01-ss09, cv99), _remap_scp_tag alone would NOT filter it out: it
+    (ss01-ss08, cv99), _remap_scp_tag alone would NOT filter it out: it
     would be remapped/kept just like any other SCP feature and collide
     with the glyph variants Sumi Moji itself authors under that tag. That
     is exactly why import_scp_variants must skip fr.FeatureTag in
@@ -182,13 +182,13 @@ def test_ligature_schema():
 def test_every_group_has_a_ui_name():
     groups = {spec["group"] for spec in build.load_ligatures().values()}
     assert groups <= set(build.GROUP_NAMES), "group without a UI name"
-    # cv99 and ss09 (width alternates) are authored too; no name goes unused
-    assert set(build.GROUP_NAMES) == groups | {"cv99", "ss09"}
+    # cv99 (the alternate designs) is authored too; no name goes unused
+    assert set(build.GROUP_NAMES) == groups | {"cv99"}
 
 
 def test_ui_names_are_nonempty_ascii():
     for tag, name in build.GROUP_NAMES.items():
-        assert tag in KNOWN_GROUPS or tag == "ss09" or tag.startswith("cv"), tag
+        assert tag in KNOWN_GROUPS or tag.startswith("cv"), tag
         assert name and name.strip() == name, tag
         assert name.isascii(), tag
 
@@ -790,6 +790,24 @@ def test_fit_to_grid_centres_proportional_advances_on_the_grid():
         gs[g].draw(pen)
         assert pen.bounds[0] == want_lsb == hmtx[g][1]     # centred, lsb kept in step
     assert font._redrawn == {"kana", "jamo", "dash"}
+
+
+def test_widen_fullwidth_spares_the_glyphs_this_build_appended():
+    """Term: a full width goes to two cells, three full widths to six,
+    but a 5-cell ligature — 3000 too, appended by this build — stays on
+    the cell grid; a cell and a mark are never touched."""
+    font = _cff_font_with_widths({"full": 1000, "dash": 3000, "lig5": 3000,
+                                  "cell": 600, "mark": 0})
+    font._appended = {"lig5"}
+    build.widen_fullwidth(font, 600)
+    hmtx = font["hmtx"].metrics
+    assert {g: hmtx[g][0] for g in ("full", "dash", "lig5", "cell", "mark")} == \
+        {"full": 1200, "dash": 3600, "lig5": 3000, "cell": 600, "mark": 0}
+    gs = font.getGlyphSet()
+    for g, want_lsb in (("full", 100), ("dash", 300), ("lig5", 0)):
+        pen = BoundsPen(gs)
+        gs[g].draw(pen)
+        assert pen.bounds[0] == want_lsb == hmtx[g][1]
 
 
 def test_fit_to_grid_takes_explicit_glyph_names():
