@@ -1111,15 +1111,38 @@ def stretch_arrows(font, added, fullwidth, slant=0.0, chars=ARROWS_H + ARROWS_V)
     return swapped
 
 
+def grid_step(adv, ink, cell):
+    """The grid advance for a proportional glyph: the cell, or a whole
+    number of full widths — whichever its own advance is nearest, since
+    that is what the donor says the character's width class is. Source
+    Han Sans's Greek sits at 602-795 and its Ю at 1005-1064: narrow
+    letters a little over the cell and a full width a little over one,
+    so rounding up would cost each of them a whole terminal column, and
+    would make the same letter one cell in one weight and two in the
+    next (its advance grows with the weight).
+
+    The ink may overhang the step by up to a third of a cell — an italic
+    always overhangs — but no further: a three-em dash (⸻, 2452 wide)
+    takes three full widths rather than spilling out of two."""
+    if adv <= cell:
+        return cell
+    low = FULLWIDTH * (adv // FULLWIDTH) or cell
+    high = FULLWIDTH if low == cell else low + FULLWIDTH
+    step = low if adv - low <= high - adv else high
+    while ink > step + cell // 3:
+        step = FULLWIDTH if step == cell else step + FULLWIDTH
+    return step
+
+
 def fit_to_grid(font, cell, glyph_names=None):
     """Centre Source Han Sans's proportional leftovers on the grid: every
     cmap'd glyph whose advance is neither 0 nor a whole number of cells
     nor of full widths — the half-width kana and symbols at 500 (half of
     the 1000 em, on neither grid), Hangul jamo at 920, ﬀ ﬃ ﬄ, the
-    enclosed 🄯 — goes to one cell when it fits (advance <= cell), else
-    to the next whole number of full widths (⸻ 2459 -> 3000); the outline
-    is centred in the new advance. Runs before widen_fullwidth, which
-    then takes the full-width ones along.
+    enclosed 🄯, and in the italic faces the Greek and Cyrillic Source
+    Code Pro Italic has none of — goes to the nearest grid step
+    (grid_step); the outline is centred in the new advance. Runs before
+    widen_fullwidth, which then takes the full-width ones along.
 
     `glyph_names` (when given) replaces the cmap scan with an explicit
     iterable of glyph names — used to also centre hwid's own 500-advance
@@ -1140,7 +1163,10 @@ def fit_to_grid(font, cell, glyph_names=None):
         adv, lsb = hmtx.metrics[name]
         if adv <= 0 or adv % cell == 0 or adv % FULLWIDTH == 0:
             continue
-        new = cell if adv <= cell else -(-adv // FULLWIDTH) * FULLWIDTH
+        bounds = BoundsPen(gs)
+        gs[name].draw(bounds)
+        new = grid_step(adv, (bounds.bounds[2] - bounds.bounds[0]) if bounds.bounds else 0,
+                        cell)
         shift = (new - adv) // 2
         private = glyph_private(font, td, name)
         pen = T2CharStringPen(pen_width(private, new), gs)
@@ -1741,19 +1767,33 @@ def drop_features(font, tags):
 
 def feature_map(font, tag):
     """{glyph: substitute} over every Single / Alternate subst reachable
-    under `tag` — Source Han Sans's own hwid / fwid forms."""
-    if "GSUB" not in font:
-        return {}
-    gsub = font["GSUB"].table
+    under `tag` — Source Han Sans's own hwid / fwid forms. The first
+    substitute wins where a glyph has more than one (feature_targets
+    keeps them all)."""
     out = {}
+    for src, dst in _feature_pairs(font, tag):
+        out.setdefault(src, dst)
+    return out
+
+
+def feature_targets(font, tag):
+    """Every glyph `tag` can substitute IN, first or not: what has to be
+    fitted to the grid, since any of them can reach the page."""
+    return {dst for _src, dst in _feature_pairs(font, tag)}
+
+
+def _feature_pairs(font, tag):
+    """(glyph, substitute) over every Single / Alternate subst under
+    `tag`, in lookup order."""
+    if "GSUB" not in font:
+        return
+    gsub = font["GSUB"].table
     for fr in gsub.FeatureList.FeatureRecord:
         if fr.FeatureTag != tag:
             continue
         for li in fr.Feature.LookupListIndex:
             kind, subs = _unwrap(gsub.LookupList.Lookup[li])
-            for src, dst in _subst_pairs(kind, subs, tag):
-                out.setdefault(src, dst)
-    return out
+            yield from _subst_pairs(kind, subs, tag)
 
 
 def hwid_targets(font):
@@ -1761,7 +1801,7 @@ def hwid_targets(font):
     alternates, drawn at its native 500-unit half cell (half of the 1000
     em), not our 600-unit one. Used to center them onto the terminal grid
     (see fit_to_grid())."""
-    return set(feature_map(font, "hwid").values())
+    return feature_targets(font, "hwid")
 
 
 def add_gsub(font, added, alts, ligatures, variant_maps=None,

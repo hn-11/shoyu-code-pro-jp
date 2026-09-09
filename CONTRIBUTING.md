@@ -133,7 +133,7 @@ NF_SYMBOLS=... python scripts/nerdpatch.py [面のパス | 名前の一部]
 
 上流の固定タグは `.github/actions/fetch-upstreams/action.yml` の
 「Pin upstream releases」ステップ（`SHS_TAG` / `SCP_TAG` / `SCP_VF_ZIP` /
-`MONA_TAG`）に一元化されており、`ci.yml` / `release.yml` は
+`MONA_TAG` / `NF_TAG`）に一元化されており、`ci.yml` / `release.yml` は
 このアクションを共有しています。
 
 通常は手で更新する必要はありません。`upstream-sync.yml`（毎週月曜 実行、

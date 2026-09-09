@@ -92,9 +92,13 @@ jobs:
           python scripts/nerdpatch.py $faces > nerd-latin.log 2>&1 &
           latin=$!
           python scripts/build.py "${{ matrix.weights }} ${{ matrix.family }}"
-          python scripts/nerdpatch.py dist/*.otf
+          # the foreground graft's failure must not take the step down
+          # before the background one is waited on: its log lives only here
+          jp=0
+          python scripts/nerdpatch.py dist/*.otf || jp=$?
           wait $latin || { cat nerd-latin.log; exit 1; }
           cat nerd-latin.log
+          [ "$jp" = 0 ] || exit "$jp"
       - if: matrix.variable
         run: python scripts/build_latin_vf.py ${{ matrix.variable }}
       # the statics and NF faces; a variable font, when this job built one,

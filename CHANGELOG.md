@@ -53,7 +53,12 @@
     戻す: 矢印は合字から切り出した全角版、その他は Source Han Sans の
     全角グリフか同フォントの `fwid` 形（`A` → `Ａ`）。`hwid` / `ss09` の
     幅切り替えは廃止。Source Han Sans の比例幅の残り（半角カナ 500、
-    Hangul 字母 920、ﬀ、⸻）はセルか全角の倍数に中央配置（`fit_to_grid`）
+    Hangul 字母 920、ﬀ、⸻）は、送り幅がいちばん近いグリッド（セルか全角の
+    倍数）に中央配置（`fit_to_grid` / `grid_step`）。切り上げではないので、
+    Source Han Sans のギリシャ（602〜795）や `Ю`（1005〜1064）が 1 桁余計に
+    取ることはなく、ウェイトによって幅が変わることもない。斜体は Source
+    Code Pro Italic にギリシャ・キリルが無いぶんこの規則が効き、直立と同じ
+    1 セルになる
   - **Nerd Fonts 版の命名は本家の流儀**: アイコンを 1 セルに収めるので
     ファミリー名 `Sumi Moji JP Nerd Font Mono`、PostScript 名
     `SumiMojiJPNFM-*`（`JetBrainsMono Nerd Font Mono` と同じ）

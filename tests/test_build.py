@@ -773,19 +773,37 @@ def _cff_font_with_widths(widths):
     return fb.font
 
 
+@pytest.mark.parametrize("adv, ink, want", [
+    (500, 400, 600),      # half-width kana: under the cell
+    (250, 100, 600),      # a Hangul tone mark
+    (618, 548, 600),      # Source Han Sans's alpha: nearest the cell
+    (663, 612, 600),      # its Bold alpha, ink a little over the cell
+    (795, 687, 600),      # its Phi, still nearest the cell
+    (920, 700, 1000),     # a Hangul jamo: nearest one full width
+    (1005, 844, 1000),    # its Yu: a full width and a bit, not two
+    (1672, 1600, 2000),
+    (2452, 2400, 3000),   # a three-em dash: the ink needs the third
+    (700, 1400, 2000),    # ink far past the step: up it goes
+])
+def test_grid_step_takes_the_nearest_step_the_ink_fits(adv, ink, want):
+    assert build.grid_step(adv, ink, 600) == want
+
+
 def test_fit_to_grid_centres_proportional_advances_on_the_grid():
     """Half-width kana at 500 -> the cell; Hangul jamo at 920 -> one full
-    width; a three-em dash at 2459 -> three; a mark at 0, a cell, a full
-    width and a ligature (2 cells) are left alone."""
+    width; an advance of 2459 -> the nearest two (these fixtures are
+    100-unit squares, so no ink pushes it to three, as the real three-em
+    dash's does); a mark at 0, a cell, a full width and a ligature
+    (2 cells) are left alone."""
     font = _cff_font_with_widths({"kana": 500, "jamo": 920, "dash": 2459,
                                   "mark": 0, "cell": 600, "full": 1000, "lig": 1200})
     assert build.fit_to_grid(font, 600) == 3
     hmtx = font["hmtx"].metrics
     assert {g: hmtx[g][0] for g in ("kana", "jamo", "dash", "mark", "cell", "full", "lig")} == \
-        {"kana": 600, "jamo": 1000, "dash": 3000, "mark": 0, "cell": 600,
+        {"kana": 600, "jamo": 1000, "dash": 2000, "mark": 0, "cell": 600,
          "full": 1000, "lig": 1200}
     gs = font.getGlyphSet()
-    for g, want_lsb in (("kana", 50), ("jamo", 40), ("dash", 270)):
+    for g, want_lsb in (("kana", 50), ("jamo", 40), ("dash", -230)):
         pen = BoundsPen(gs)
         gs[g].draw(pen)
         assert pen.bounds[0] == want_lsb == hmtx[g][1]     # centred, lsb kept in step
@@ -944,7 +962,7 @@ def test_stretch_path_shortens_the_shaft(axis):
     assert abs(out.area) == pytest.approx(abs(src.area) - 40 * 20)
 
 
-# --- set_cmap / HALFWIDTH_FORMS / env_paths / run_faces --------------------
+# --- set_cmap / env_paths / run_faces --------------------
 
 def test_set_cmap_replaces_existing_and_adds_only_when_asked():
     font = _tt_font([".notdef", "a", "b", "c"], {0x61: "a", 0x10000: "b"},

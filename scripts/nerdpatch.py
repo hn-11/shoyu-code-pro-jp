@@ -311,18 +311,21 @@ def sources_for(args):
 
     An argument that names a file (a path, or anything ending .otf) and
     is not one is an error, not a silently dropped face: half a family
-    patched is worse than none."""
+    patched is worse than none. So is mixing the two forms, which would
+    otherwise drop one of them."""
     named = [a for a in args if a.endswith(".otf") or os.sep in a]
     missing = [a for a in named if not Path(a).is_file()]
     if missing:
         sys.exit(f"no such face: {' '.join(missing)}")
-    paths = [Path(a) for a in named]
-    if paths:
+    words = [a for a in args if a not in named]
+    if named and words:
+        sys.exit(f"pass faces or name parts, not both: {' '.join(args)}")
+    if named:
         return [(p.resolve(), LATIN_OUT if p.resolve().parent == LATIN_DIR.resolve() else OUT)
-                for p in paths]
+                for p in map(Path, named)]
     sources = [(p, OUT) for p in sorted(DIST.glob("*.otf"))]
     sources += [(p, LATIN_OUT) for p in static_faces(LATIN_DIR, build.LATIN_FAMILY[1])]
-    return [(p, out) for p, out in sources if not args or any(a in p.name for a in args)]
+    return [(p, out) for p, out in sources if not words or any(w in p.name for w in words)]
 
 
 def _job(job):
@@ -332,11 +335,20 @@ def _job(job):
 
 def main():
     env = build.env_paths({"NF_SYMBOLS": None})
-    OUT.mkdir(exist_ok=True)
-    LATIN_OUT.mkdir(exist_ok=True)
     sources = sources_for(sys.argv[1:])
     if not sources:
         sys.exit(f"nothing to patch for {sys.argv[1:]!r}")
+    for out_dir in (OUT, LATIN_OUT):
+        out_dir.mkdir(parents=True, exist_ok=True)
+    if not sys.argv[1:]:
+        # like build.py's: patching everything must not leave a face from
+        # an older roster (a v4 SumiMojiNF-*.otf, say) for the release
+        # zip to sweep up. A filtered run deletes nothing
+        stale = sorted(OUT.glob("*.otf")) + sorted(LATIN_OUT.glob("*.otf"))
+        for f in stale:
+            f.unlink()
+        if stale:
+            print(f"removed {len(stale)} stale patched face(s)")
     jobs = [(src, out_dir, env["NF_SYMBOLS"]) for src, out_dir in sources]
     build.run_faces(jobs, _job, label=lambda job: Path(job[0]).name,
                     on_result=lambda job, out: None)

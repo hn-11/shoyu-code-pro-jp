@@ -101,22 +101,20 @@ def main():
     # every codepoint Sumi Moji has is one cell in both families — the
     # ligature-paired arrows and operators, Greek, box drawing, SCP-only
     # Latin (ł ğ ₽), '−' — and Source Han Sans's own full-width symbols
-    # (① ※) stay two cells. Italic: SCP Italic has no Greek, so Source
-    # Han Sans's proportional glyphs stay and fit_to_grid centres them in
-    # the cell or a full width, whichever fits (α is 625 in Normal, under
-    # 600 in ExtraLight): on the grid either way
+    # (① ※) stay two cells. Italic: Source Code Pro Italic has no Greek,
+    # so Source Han Sans's proportional glyphs stay, and fit_to_grid puts
+    # them on the step their advance is nearest — the cell, at 587-663
+    # across the weights (grid_step)
     policy = {"\u2192": exp_half, "\u2026": exp_half, "\u2500": exp_half,
               "\u2212": exp_half, "\u2460": exp_full, "\u203b": exp_full,
               "\u0142": exp_half, "\u011f": exp_half, "\u20bd": exp_half}
-    on_grid = (exp_half, exp_full)
-    policy["\u03b1"] = policy["\u03c2"] = on_grid if italic else exp_half
+    policy["\u03b1"] = policy["\u03c2"] = exp_half
     # half-width kana and the half-width symbols (￩ U+FFE9): Source Han
     # Sans's 500 centred in the cell (fit_to_grid)
     policy["\uff71"] = policy["\uffe9"] = exp_half
     for ch, want in policy.items():
         got = hmtx[cmap[ord(ch)]][0]
-        ok = got in want if isinstance(want, tuple) else got == want
-        assert ok, f"{FONT}: U+{ord(ch):04X} {ch!r} advance {got}, want {want}"
+        assert got == want, f"{FONT}: U+{ord(ch):04X} {ch!r} advance {got}, want {want}"
     print(f"ok   width policy ({len(policy)} probes)")
 
     # line metrics: Source Code Pro's, hhea and typo alike, USE_TYPO_METRICS
@@ -374,8 +372,23 @@ def main():
               f"{got:.1f}u (want {want:.1f}u)")
     if 0xFF1D in cmap:
         cjk = bar_thickness(tf, cmap[0xFF1D])
-        check(abs(cjk - got) <= 5,
-              f"'＝' bar (Source Han Sans) {cjk:.1f}u vs '=' {got:.1f}u: paired within 5u")
+        # build.FACES pairs Source Han Sans's '＝' with Source Code Pro's
+        # UPRIGHT '=' at this weight. An italic face's own '=' is Source
+        # Code Pro Italic's, some 4u lighter at the same wght, so measure
+        # against the upright bar where the VF is at hand — and give the
+        # face's own '=' that much more room where it is not
+        ref, against, budget = got, "'='", 5
+        upright = os.environ.get("SCP_VF_U")
+        if italic and weight in WEIGHT_CLASS and upright:
+            u = TTFont(upright)
+            ref = bar_thickness(u.getGlyphSet(location={"wght": WEIGHT_CLASS[weight]}),
+                                u.getBestCmap()[ord("=")])
+            against = "Source Code Pro upright '='"
+        elif italic:
+            budget = 9
+        check(abs(cjk - ref) <= budget,
+              f"'＝' bar (Source Han Sans) {cjk:.1f}u vs {against} {ref:.1f}u: "
+              f"paired within {budget}u")
 
     # imported outlines must be overlap-free (VF instancing leaves seams)
     import pathops
@@ -417,8 +430,8 @@ def main():
                           f"{seq!r} glyph {gname!r}")
 
     # width metadata: declared monospaced (set_monospace_metadata — what
-    # Windows Terminal's picker and GDI's FIXED_PITCH filter read; SHCJ's
-    # own 0/0 hid it there), xAvgCharWidth per OS/2 v3+ (mean of every
+    # Windows Terminal's picker and GDI's FIXED_PITCH filter read; Source
+    # Han Sans's own 0/0 hid it there), xAvgCharWidth per OS/2 v3+ (mean of every
     # non-zero advance), x/cap height measured on the face's own glyphs.
     fixed = tf["post"].isFixedPitch
     if fixed is not None:
