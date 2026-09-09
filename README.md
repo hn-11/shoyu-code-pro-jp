@@ -135,10 +135,20 @@ stylistic set も同じ挙動なので許容している。グループを跨い
 1 セルに収めるので、Nerd Fonts 本家の命名では **Mono** に当たり、
 ファミリー名は `Sumi Moji JP Nerd Font Mono` / `Sumi Moji JP Term Nerd
 Font Mono` / `Sumi Moji Nerd Font Mono`（PostScript 名 `SumiMojiJPNFM-*`
-など。`JetBrainsMono Nerd Font Mono` と同じ流儀）。CID-keyed CFF のままでは
-font-patcher がグリフを Unicode で引けないため、パッチ前に FontForge の
-`cidFlatten()` で平坦化し（アウトラインは無変換）、パッチ後に元の面の
-STAT・等幅宣言・メトリクスを戻して cffsubr でサブルーチン化し直す。
+など。`JetBrainsMono Nerd Font Mono` と同じ流儀）。
+
+アイコンは font-patcher で掛けるのではなく、Nerd Fonts が配っている記号
+だけのフォント `Symbols Nerd Font Mono`（各リリースの
+NerdFontsSymbolsOnly.zip。font-patcher の全記号集合と群ごとの寸法を空の
+フォントに適用したもの）から fontTools で接ぎ木する。`--complete --mono`
+でパッチしたのと同じ記号・同じ相対寸法になり、FontForge の往復（CID 構造
+の平坦化、STAT の消失、メタデータの復元）が要らず、1 面 10 秒程度。
+寸法はセル幅 / 記号フォントの em（600 / 2048）で一律に縮め、記号フォント
+の行ボックスをこちらの行ボックスの中央に置く。Powerline の範囲
+（U+E0A0〜E0D7、行の上下いっぱいに敷き詰める区切り）だけは幅をセル、
+高さを行の全高に引き伸ばす。アイコンはヒント無し（font-patcher の出力も
+同じ）。記号のライセンス（Nerd Fonts の MIT と各出典）は NF の zip に
+`LICENSE-NerdFonts` として同梱する。
 
 ## Sumi Moji（欧文のみ）
 
@@ -200,8 +210,8 @@ OFL のライセンス全文（LICENSE）を同梱している。
 - **`SumiMoji.zip`**: 和文を含まない欧文のみの Sumi Moji。可変フォント
   2面（`SumiMoji[wght].otf` / `SumiMoji-Italic[wght].otf`）。
 - **`SumiMoji-NerdFont.zip`**: Sumi Moji の Nerd Fonts 版（`Sumi Moji Nerd
-  Font Mono`）。font-patcher は可変フォントに掛けられないので、こちらは
-  5 ウェイト × 2 スタイルの静的 10 面。
+  Font Mono`）。可変フォントには接ぎ木しないので、こちらは 5 ウェイト ×
+  2 スタイルの静的 10 面。
 
 ダウンロードしてインストールし、
 
@@ -227,8 +237,9 @@ v3.2.0 までの `Shoyu Code Pro JP` とはファミリー名が違うので共�
 
 ## ビルド
 
-3つの上流（Source Han Sans JP / Source Code Pro VF / Monaspace VF）を
-取得して環境変数で場所を渡す。ビルドは2段階: まず `scripts/build_latin.py`
+3つの上流（Source Han Sans JP / Source Code Pro VF / Monaspace VF）と、
+Nerd Fonts 版のための `Symbols Nerd Font Mono` を取得して環境変数で場所を
+渡す。ビルドは2段階: まず `scripts/build_latin.py`
 が VF から Sumi Moji（`dist/latin`）を組み、その完成品を `scripts/build.py`
 が Source Han Sans に接ぎ木する。具体的なコマンドは
 `.github/workflows/ci.yml` の手順がそのまま実行可能なリファレンス。
@@ -245,7 +256,7 @@ python scripts/verify_latin.py dist/latin/SumiMoji-Regular.otf        # Sumi Moj
 python scripts/verify_latin_vf.py "dist/latin/SumiMoji[wght].otf"     # 可変版（SCP と突き合わせ）
 python scripts/verify.py dist/SumiMojiJP-Regular.otf   # JP の回帰テスト
 python scripts/golden.py <前の dist> dist                  # 2つのビルド出力の比較
-python scripts/nerdpatch.py <FontPatcher dir>              # Nerd Fonts 版
+NF_SYMBOLS=... python scripts/nerdpatch.py                 # Nerd Fonts 版
 ```
 
 `SCP_VF_U` / `SCP_VF_I` / `MONA_VF` は `build_latin.py` だけが使い、

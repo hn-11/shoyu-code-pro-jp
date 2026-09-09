@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+- Nerd Fonts 版は font-patcher と FontForge を使わず、Nerd Fonts が配る
+  記号フォント `Symbols Nerd Font Mono`（NerdFontsSymbolsOnly.zip）から
+  fontTools で接ぎ木する（`nerdpatch.py`、環境変数 `NF_SYMBOLS`）。
+  記号集合は font-patcher の `--complete --mono` と同一（記号フォント自体
+  がその出力）で、寸法はセル幅 / 記号フォントの em で一律、Powerline の
+  範囲だけ行の全高に引き伸ばす。CID 構造・STAT・OS/2・post・ヒントは元の
+  面のまま残るので、平坦化後の復元処理（`restore_metadata` /
+  `patched_bounds` / `fit_nerd_glyphs`）は消えた。1 面 10 秒（従来は
+  平坦化 8 秒 + font-patcher 78 秒 + 復元 23 秒）。従来の font-patcher の
+  出力はアイコンが 832u 幅（600 セルから食み出す）だったが、接ぎ木では
+  すべて 1 セルに収まる。NF の zip に Nerd Fonts の LICENSE を同梱。
+  上流の固定タグに `NF_TAG` が加わり、`bump_pins.py` が追随する。CI の
+  Regular Upright ジョブは JP 面への接ぎ木も検証する。verify.py は NF 面
+  でも幅メタデータを検査する（xAvgCharWidth は接ぎ木後に再計算）
+
 ## v5.0.0
 
 - **基準を英語圏のターミナルフォントに置き換えた**（v5.0.0）。v4.0.0 までは

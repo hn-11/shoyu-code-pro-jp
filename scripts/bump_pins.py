@@ -30,6 +30,7 @@ ACTION = Path(".github/actions/fetch-upstreams/action.yml")
 SHS_REPO = "adobe-fonts/source-han-sans"
 SCP_REPO = "adobe-fonts/source-code-pro"
 MONA_REPO = "githubnext/monaspace"
+NF_REPO = "ryanoasis/nerd-fonts"
 
 PIN_RE = re.compile(r'(?P<head>echo "(?P<key>[A-Z_]+)=)(?P<val>[^"]*)(?P<tail>")')
 
@@ -70,6 +71,8 @@ def download_urls(pins: dict[str, str]) -> list[str]:
         f"{pins['SCP_TAG']}/{pins['SCP_VF_ZIP']}",
         f"https://github.com/{MONA_REPO}/releases/download/"
         f"{mona}/monaspace-variable-{mona}.zip",
+        f"https://github.com/{NF_REPO}/releases/download/"
+        f"{pins['NF_TAG']}/NerdFontsSymbolsOnly.zip",
     ]
 
 
@@ -118,6 +121,7 @@ def main() -> int:
         "SHS_TAG": latest_tag(SHS_REPO),
         **scp_pins,
         "MONA_TAG": latest_tag(MONA_REPO),
+        "NF_TAG": latest_tag(NF_REPO),
     }
     missing = set(new) - set(current)
     if missing:

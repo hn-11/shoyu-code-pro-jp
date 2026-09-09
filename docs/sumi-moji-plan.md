@@ -38,7 +38,12 @@ SHCJ は上流から外れた。
   なり廃止。Source Han Sans の比例幅の残り（半角カナ 500、Hangul 字母
   920、ﬀ、⸻）はセルか全角の倍数に中央配置（`fit_to_grid`）。
 - **Nerd Fonts 版の命名は本家の流儀**: アイコンを 1 セルに収めるので
-  `<Family> Nerd Font Mono` / `<PSFamily>NFM`。
+  `<Family> Nerd Font Mono` / `<PSFamily>NFM`。v5.1 で font-patcher と
+  FontForge を捨て、本家の `Symbols Nerd Font Mono` から fontTools で
+  接ぎ木する（同じ記号集合・同じ相対寸法、1 面 10 秒、CID 構造もメタ
+  データもそのまま）。本家の立場は「フォールバック ＞ パッチ／合成」で、
+  合成でも記号集合と寸法を本家に合わせ、名前に Nerd Font を含め、出典の
+  ライセンスを添える——この 3 点を満たしている。
 - **SHCJ 依存の解消**: バーの目標値（Latin が固定なので不要）、半角カナ
   のドナー（Source Han Sans 自身の 500 幅を中央配置）、行間（SCP）、
   半角の集合（Sumi Moji の cmap）。`SHCJ_TTC` と `SHCJ_TAG` は消えた。
@@ -46,7 +51,9 @@ SHCJ は上流から外れた。
 英語フォント基準で判断した残りの課題（優先順）: README の見本画像、
 fontbakery を CI に、VS Code 統合ターミナル（xterm.js）の合字、Homebrew
 cask / Scoop、リポジトリ名と `PROJECT_URL` の改名。合字なし変種
-（JetBrains Mono NL / Cascadia Mono 相当）は需要が出てから。
+（JetBrains Mono NL / Cascadia Mono 相当）は需要が出てから。Nerd Fonts の
+記号を本体に同梱する案（Cascadia 流）は、本家が名前で識別できることを
+望んでいる以上、NF 付きの別ファミリーのままにする。
 
 ## 1. 目的
 
