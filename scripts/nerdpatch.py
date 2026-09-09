@@ -135,7 +135,8 @@ def graft_symbols(font, symbols):
     """Append every symbol codepoint the face lacks as a one-cell glyph
     drawn from the symbols font (quadratic outlines become cubic on the
     way, exactly), and redraw the Powerline glyphs the face already has
-    from the symbols too. Returns the number of icons grafted."""
+    from the symbols too. Returns (icons grafted, the names redrawn over
+    the face's own glyphs — the only ones that had hints to lose)."""
     scm, sgs = symbols.getBestCmap(), symbols.getGlyphSet()
     ctx = icon_context(font, symbols)
     td, cmap, fd_index, private, vdon = build.append_context(font)
@@ -147,7 +148,7 @@ def graft_symbols(font, symbols):
         t12.platformID, t12.platEncID, t12.language = 3, 10, 0
         t12.cmap = dict(bmp.cmap)
         font["cmap"].tables.append(t12)
-    new, replaced = {}, 0
+    new, replaced = {}, []
     for cp in sorted(scm):
         if cp in cmap and cp not in POWERLINE:
             continue
@@ -166,8 +167,7 @@ def graft_symbols(font, symbols):
             cs = pen.getCharString(private=own)
             td.CharStrings[name] = cs
             font["hmtx"].metrics[name] = (build.CELL, build.charstring_lsb(cs))
-            build.note_redrawn(font, [name])
-            replaced += 1
+            replaced.append(name)
             continue
         pen = T2CharStringPen(build.pen_width(private, build.CELL), sgs)
         sgs[scm[cp]].draw(TransformPen(pen, xform))
@@ -176,7 +176,7 @@ def graft_symbols(font, symbols):
                            fd_index, build.CELL, None, vdon)
         new[cp] = name
     build.set_cmap(font, new, add_new=True)
-    return len(new) + replaced
+    return len(new) + len(replaced), replaced
 
 
 # what the face has to say about its fourth donor once the icons are in:
@@ -268,12 +268,13 @@ def symbols_for_checks():
 
 def patch_face(src, out_dir, symbols_path):
     """One face: graft, rename, extents, save (subroutinized; the icons
-    unhinted). Returns the output path."""
+    unhinted, the glyphs redrawn over the face's own re-hinted). Returns
+    the output path."""
     t0 = time.monotonic()
     font = TTFont(src)
     font.recalcBBoxes = False
     symbols = _symbols(symbols_path)
-    n = graft_symbols(font, symbols)
+    n, rehint = graft_symbols(font, symbols)
     font["OS/2"].recalcAvgCharWidth(font)
     # 10,000 codepoints joined the cmap, most of them in the two private
     # use areas: the declared ranges are how a fallback picker finds them
@@ -288,7 +289,10 @@ def patch_face(src, out_dir, symbols_path):
         # Han Sans's values, which never covered its outliers
         fit_win_metrics(font)
     out = Path(out_dir) / f"{ps}.otf"
-    build.write_face(font, out, [])
+    # the icons carry no hints (font-patcher's did not either); only the
+    # Powerline glyphs redrawn over Source Code Pro's own had hints to
+    # lose, and they get them back
+    build.write_face(font, out, sorted(rehint))
     print(f"  {Path(src).name}: {n} icons grafted, {time.monotonic() - t0:.0f} s -> {out.name}")
     return out
 

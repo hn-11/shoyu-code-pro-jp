@@ -279,11 +279,16 @@ def main():
                         on_result=lambda job, msg: print(msg))
     finally:
         # over every face of the family in the output directory (see
-        # harmonize_win_metrics)
-        paths = static_faces(out_dir, PS_FAMILY)
-        if paths:
-            a, d = harmonize_win_metrics(paths)
-            print(f"win metrics {a}/{d} over {len(paths)} faces")
+        # harmonize_win_metrics). A face a failed worker left half
+        # written would raise here and replace run_faces' own report of
+        # which faces failed, so this pass never raises
+        try:
+            paths = static_faces(out_dir, PS_FAMILY)
+            if paths:
+                a, d = harmonize_win_metrics(paths)
+                print(f"win metrics {a}/{d} over {len(paths)} faces")
+        except Exception as exc:                       # noqa: BLE001
+            print(f"win metrics skipped: {exc!r}")
 
 
 if __name__ == "__main__":

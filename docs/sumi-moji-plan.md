@@ -41,6 +41,10 @@ SHCJ は上流から外れた。
   声調記号 2 字、注音の入声 5 字）は 1 セルのまま**。両ドナーがそう描いて
   いて、これより広い字形を持たないため。ターミナルは 2 桁分を空けるので
   左寄りに見える。2 セルに広げるかは未決（README の「幅の方針」に明記）。
+- **接ぎ木後の `update_bbox` は全グリフを描き直している**（JP 面で約 5 秒）。
+  接ぎ木中にアイコンの bbox を集めて元の面の head/hhea と合成すれば省ける
+  が、hhea の extent 系を部分的な bbox から正確に出す必要があり、今の
+  1 面 45 秒に対する取り分は小さいので未着手。
 - **Nerd Fonts 版の命名は本家の流儀**: アイコンを 1 セルに収めるので
   `<Family> Nerd Font Mono` / `<PSFamily>NFM`。v5.1 で font-patcher と
   FontForge を捨て、本家の `Symbols Nerd Font Mono` から fontTools で

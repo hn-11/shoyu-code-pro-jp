@@ -157,6 +157,10 @@ VARIANTS = {
 # ExtraLight 28u / Black 120u have no partner in the other family and are
 # not built.) Monaspace bottoms out at wght 200 (bar ~53u at our scale);
 # Light's surplus is eroded away in the static faces (VFSource.matched).
+# the weight every face takes its width decisions from (reference_steps):
+# our Regular's donor
+REFERENCE_SHS = "SourceHanSansJP-Normal.otf"
+
 FACES = [
     ("Light", "SourceHanSansJP-ExtraLight.otf"),
     ("Regular", "SourceHanSansJP-Normal.otf"),
@@ -1067,7 +1071,7 @@ def stretch_arrows(font, added, fullwidth, slant=0.0, chars=ARROWS_H + ARROWS_V)
     straight. `fullwidth` is {codepoint: SHS's full-width glyph}
     (graft_halfwidth's `replaced`); the cmap is not touched. Returns
     {codepoint: new glyph name}."""
-    td, cmap, fd_index, private, vdon = append_context(font, fullwidth=True)
+    td, _cmap, fd_index, private, vdon = append_context(font, fullwidth=True)
     gs = font.getGlyphSet()
     t = math.tan(math.radians(-slant))
     swapped = {}
@@ -1134,7 +1138,36 @@ def grid_step(adv, ink, cell):
     return step
 
 
-def fit_to_grid(font, cell, glyph_names=None):
+_REFERENCE_STEPS = {}
+
+
+def reference_steps(path, cell):
+    """{codepoint: grid step} decided once, on one weight, for the whole
+    family. A letter's advance grows with the weight — Source Han Sans's
+    Φ runs 757..850 across the five donors, straddling the midpoint
+    between the cell and a full width — so deciding per face would make
+    the same letter one column in Light Italic and two in Bold Italic.
+    The reference is the donor of our Regular (FACES), read once per
+    process."""
+    key = (str(path), cell)
+    if key not in _REFERENCE_STEPS:
+        ref = TTFont(path)
+        gs, hmtx = ref.getGlyphSet(), ref["hmtx"]
+        steps = {}
+        for cp, name in ref.getBestCmap().items():
+            adv = hmtx[name][0]
+            if adv <= 0 or adv % cell == 0 or adv % FULLWIDTH == 0:
+                continue
+            pen = BoundsPen(gs)
+            gs[name].draw(pen)
+            steps[cp] = grid_step(adv, (pen.bounds[2] - pen.bounds[0]) if pen.bounds else 0,
+                                  cell)
+        _REFERENCE_STEPS[key] = steps
+        ref.close()
+    return _REFERENCE_STEPS[key]
+
+
+def fit_to_grid(font, cell, steps=None, glyph_names=None):
     """Centre Source Han Sans's proportional leftovers on the grid: every
     cmap'd glyph whose advance is neither 0 nor a whole number of cells
     nor of full widths — the half-width kana and symbols at 500 (half of
@@ -1144,9 +1177,14 @@ def fit_to_grid(font, cell, glyph_names=None):
     (grid_step); the outline is centred in the new advance. Runs before
     widen_fullwidth, which then takes the full-width ones along.
 
+    `steps` (when given) is reference_steps()' {codepoint: step}, so
+    every weight of the family agrees on a character's width; a
+    codepoint it does not name falls back to this face's own advance.
+
     `glyph_names` (when given) replaces the cmap scan with an explicit
     iterable of glyph names — used to also centre hwid's own 500-advance
-    alternates (see hwid_targets()). Returns the number of glyphs
+    alternates (see hwid_targets()), which have no codepoint of their
+    own and are half-width in every weight. Returns the number of glyphs
     moved."""
     cff = font["CFF "].cff
     td = cff[cff.fontNames[0]]
@@ -1154,19 +1192,23 @@ def fit_to_grid(font, cell, glyph_names=None):
     hmtx = font["hmtx"]
     done = set()
     moved = 0
-    if glyph_names is None:
-        glyph_names = font.getBestCmap().values()
-    for name in glyph_names:
+    pairs = ((None, n) for n in glyph_names) if glyph_names is not None \
+        else font.getBestCmap().items()
+    for cp, name in pairs:
         if name is None or name in done:
             continue
         done.add(name)
         adv, lsb = hmtx.metrics[name]
         if adv <= 0 or adv % cell == 0 or adv % FULLWIDTH == 0:
             continue
-        bounds = BoundsPen(gs)
-        gs[name].draw(bounds)
-        new = grid_step(adv, (bounds.bounds[2] - bounds.bounds[0]) if bounds.bounds else 0,
-                        cell)
+        new = (steps or {}).get(cp)
+        if new is None:
+            bounds = BoundsPen(gs)
+            gs[name].draw(bounds)
+            new = grid_step(adv, (bounds.bounds[2] - bounds.bounds[0]) if bounds.bounds else 0,
+                            cell)
+        if new == adv:
+            continue
         shift = (new - adv) // 2
         private = glyph_private(font, td, name)
         pen = T2CharStringPen(pen_width(private, new), gs)
@@ -1376,8 +1418,17 @@ def set_names(font, suffix, weight, italic, italic_angle=-12.0, version=None,
                      (17, (weight + (" Italic" if italic else ""))
                           .replace("Regular Italic", "Italic"))):
         name.setName(val, nid, 3, 1, 0x409)
-    font["OS/2"].achVendID = VENDOR_ID
-    font["OS/2"].usWeightClass = WEIGHT_CLASS[weight]
+    os2 = font["OS/2"]
+    os2.achVendID = VENDOR_ID
+    os2.usWeightClass = WEIGHT_CLASS[weight]
+    # PANOSE weight rides with it, and is set here rather than in
+    # set_monospace_metadata because this is where the weight is known:
+    # each face takes the Source Han Sans weight whose bar matches its
+    # Latin, not the one that shares its name, and Source Code Pro's VF
+    # carries its default master's — so every face inherited a PANOSE
+    # that disagreed with its own usWeightClass (Regular 4 against 400).
+    # A GDI-era matcher substitutes on it
+    os2.panose.bWeight = WEIGHT_CLASS[weight] // 100 + 1
     if "DSIG" in font:
         del font["DSIG"]
     # a variable font (build_latin_vf.py) carries CFF2, not CFF; CFF2's
@@ -1745,8 +1796,11 @@ def drop_features(font, tags):
     """Remove every FeatureRecord whose tag is in `tags` from GSUB and GPOS
     alike: drop it from FeatureList and every LangSys's FeatureIndex,
     remapping the remaining indices — same pattern as sort_feature_list().
-    Used for 'pwid'/'palt': proportional-width has no meaning in a
-    fixed-cell terminal font (see the 600-cell families in build_face)."""
+    Used for the features that move a glyph off the fixed cell:
+    'pwid'/'palt' (proportional width has no meaning here), 'kern' and
+    'halt' (Source Han Sans kerns あ+て 20u tighter than the cell, and
+    'kern' is on by default in every horizontal shaper), and Source Han
+    Sans's vertical GPOS, which a face with no vmtx cannot use."""
     for tbl_tag in ("GSUB", "GPOS"):
         if tbl_tag not in font:
             continue
@@ -2026,7 +2080,8 @@ def set_monospace_metadata(font):
     proportion 9 are what Windows Terminal's font picker and GDI's
     FIXED_PITCH filter read — Source Han Sans's 0 would hide the fonts
     there. xAvgCharWidth follows OS/2 v3+'s definition (mean of every
-    non-zero advance)."""
+    non-zero advance). PANOSE weight is set_names' (the weight is known
+    there)."""
     font["post"].isFixedPitch = 1
     font["OS/2"].panose.bProportion = 9
     font["OS/2"].recalcAvgCharWidth(font)
@@ -2390,9 +2445,14 @@ def build_face(job):
     # 500-advance alternates included (walked BEFORE dropping any
     # features that might touch it); pwid / palt have no meaning in a
     # fixed-cell font
-    n_fit = fit_to_grid(base, CELL)
+    steps = reference_steps(Path(env["SHS_DIR"]) / REFERENCE_SHS, CELL)
+    n_fit = fit_to_grid(base, CELL, steps=steps)
     n_fit += fit_to_grid(base, CELL, glyph_names=hwid_targets(base))
-    drop_features(base, {"pwid", "palt"})
+    # kern would pull Japanese pairs off the cell in any shaper that
+    # lays out a run (VS Code, a browser); halt / the vertical GPOS
+    # likewise move or misplace what a terminal grid must not move
+    drop_features(base, {"pwid", "palt", "kern", "halt",
+                         "vert", "vhal", "vkrn", "vpal"})
     # the two-cell forms under fwid: the arrows redrawn from the
     # ligatures so they share their head, everything else Source Han
     # Sans's own — the full-width glyph the one-cell default replaced

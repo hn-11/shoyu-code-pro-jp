@@ -48,6 +48,14 @@
     Regular の和文は以前の Source Han Sans Regular から Normal に、Bold は
     同じ面のまま。可変フォントの wght 軸は SCP の wght と一致する恒等写像
     になり、軸の範囲は 200〜700
+  - **グリッドを崩す GPOS を落とす**: Source Han Sans の `kern` は横組みの
+    シェーパで既定 ON で、`あ`+`て` をセルより 20u 詰める。`halt` と縦組み
+    の GPOS（`vert` `vhal` `vkrn` `vpal`。vmtx を持たない面では死に機能）
+    ともども削除し、`verify.py` が GPOS と実シェーピングの両方で検査する
+  - **PANOSE の weight を自分の usWeightClass から決める**: 各面は名前が
+    同じ Source Han Sans ではなくバーの太さが合う面を使うので、5 面中 4 面
+    が 1 段軽い PANOSE を継いでいた（Regular が usWeightClass 400 に対し
+    PANOSE 4）。欧文版は Source Code Pro VF の既定値 3 のままだった
   - **Sumi Moji が持つ文字はすべて 1 セル**（ギリシャ・キリル・罫線・矢印
     7 種と `≠ ≤ ≥ …` も、両ファミリーで）。JIS 流の全角字形は `fwid` で
     戻す: 矢印は合字から切り出した全角版、その他は Source Han Sans の
@@ -58,7 +66,9 @@
     Source Han Sans のギリシャ（602〜795）や `Ю`（1005〜1064）が 1 桁余計に
     取ることはなく、ウェイトによって幅が変わることもない。斜体は Source
     Code Pro Italic にギリシャ・キリルが無いぶんこの規則が効き、直立と同じ
-    1 セルになる
+    1 セルになる。幅はファミリーで 1 回だけ決める（`reference_steps`、
+    基準は Regular のドナー）ので、送り幅がウェイトで太る文字（`Φ` は
+    757〜850）でも Light と Bold で桁数が変わらない
   - **Nerd Fonts 版の命名は本家の流儀**: アイコンを 1 セルに収めるので
     ファミリー名 `Sumi Moji JP Nerd Font Mono`、PostScript 名
     `SumiMojiJPNFM-*`（`JetBrainsMono Nerd Font Mono` と同じ）

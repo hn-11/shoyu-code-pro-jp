@@ -227,6 +227,19 @@ def main():
     # the upright faces) must stay a 0-advance mark, not become a spacing
     # glyph that takes a cell when selected
     tags = {fr.FeatureTag for fr in tf["GSUB"].table.FeatureList.FeatureRecord}
+    # nothing may move a glyph off the cell: 'kern' is on by default in
+    # every horizontal shaper and Source Han Sans kerns あ+て 20u tighter
+    # than the cell; 'halt' and the vertical features move or misplace
+    # what a terminal grid must not move (drop_features)
+    gpos = {fr.FeatureTag for fr in tf["GPOS"].table.FeatureList.FeatureRecord} \
+        if "GPOS" in tf else set()
+    for tag in ("kern", "halt", "vert", "vhal", "vkrn", "vpal"):
+        check(tag not in gpos, f"GPOS has no {tag} ({sorted(gpos)})")
+    for text, want in (("あて", exp_full), ("いて", exp_full)):
+        _infos, positions = shape_infos(text, {})
+        check(positions[0].x_advance == want,
+              f"{text!r} shapes on the grid ({positions[0].x_advance}u, want {want})")
+
     if "cv11" in tags:
         # 'x' + U+0306 has no precomposed form, so HarfBuzz cannot fold
         # the pair into one glyph ('a' + U+0306 becomes U+0103 ă)
@@ -434,29 +447,32 @@ def main():
     # Han Sans's own 0/0 hid it there), xAvgCharWidth per OS/2 v3+ (mean of every
     # non-zero advance), x/cap height measured on the face's own glyphs.
     fixed = tf["post"].isFixedPitch
-    if fixed is not None:
-        ok = fixed == 1
-        check(ok, f"post.isFixedPitch == 1, got {fixed}")
+    ok = fixed == 1
+    check(ok, f"post.isFixedPitch == 1, got {fixed}")
 
-        panose_prop = tf["OS/2"].panose.bProportion
-        ok = panose_prop == 9
-        check(ok, f"OS/2 PANOSE proportion == 9 (monospaced), got {panose_prop}")
+    panose = tf["OS/2"].panose
+    check(panose.bProportion == 9,
+          f"OS/2 PANOSE proportion == 9 (monospaced), got {panose.bProportion}")
+    want_pw = tf["OS/2"].usWeightClass // 100 + 1
+    check(panose.bWeight == want_pw,
+          f"OS/2 PANOSE weight {panose.bWeight} matches usWeightClass "
+          f"{tf['OS/2'].usWeightClass} (want {want_pw})")
 
-        from fontTools.misc.roundTools import otRound
-        widths = [adv for adv, _ in tf["hmtx"].metrics.values() if adv > 0]
-        avg_w = tf["OS/2"].xAvgCharWidth
-        want_avg = otRound(sum(widths) / len(widths))
-        ok = avg_w == want_avg
-        check(ok, f"OS/2.xAvgCharWidth is the mean non-zero advance ({avg_w} vs {want_avg})")
+    from fontTools.misc.roundTools import otRound
+    widths = [adv for adv, _ in tf["hmtx"].metrics.values() if adv > 0]
+    avg_w = tf["OS/2"].xAvgCharWidth
+    want_avg = otRound(sum(widths) / len(widths))
+    ok = avg_w == want_avg
+    check(ok, f"OS/2.xAvgCharWidth is the mean non-zero advance ({avg_w} vs {want_avg})")
 
-        from fontTools.pens.boundsPen import BoundsPen
-        gs = tf.getGlyphSet()
-        for attr, ch in (("sxHeight", "x"), ("sCapHeight", "H")):
-            pen = BoundsPen(gs)
-            gs[cmap[ord(ch)]].draw(pen)
-            got, want = getattr(tf["OS/2"], attr), round(pen.bounds[3])
-            ok = got == want
-            check(ok, f"OS/2.{attr} == top of {ch!r} ({got} vs {want})")
+    from fontTools.pens.boundsPen import BoundsPen
+    gs = tf.getGlyphSet()
+    for attr, ch in (("sxHeight", "x"), ("sCapHeight", "H")):
+        pen = BoundsPen(gs)
+        gs[cmap[ord(ch)]].draw(pen)
+        got, want = getattr(tf["OS/2"], attr), round(pen.bounds[3])
+        ok = got == want
+        check(ok, f"OS/2.{attr} == top of {ch!r} ({got} vs {want})")
 
     # line-metrics sanity: hhea and OS/2 vertical metrics must be nonzero
     # and internally consistent

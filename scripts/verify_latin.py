@@ -89,6 +89,10 @@ def main():
     os2 = tf["OS/2"]
     check(tf["post"].isFixedPitch == 1 and os2.panose.bProportion == 9,
           "declared monospaced")
+    want_pw = os2.usWeightClass // 100 + 1
+    check(os2.panose.bWeight == want_pw,
+          f"PANOSE weight {os2.panose.bWeight} matches usWeightClass "
+          f"{os2.usWeightClass} (want {want_pw})")
     hhea = tf["hhea"]
     check((os2.sTypoAscender, os2.sTypoDescender, os2.sTypoLineGap)
           == (hhea.ascent, hhea.descent, hhea.lineGap) and os2.fsSelection & 0x80,

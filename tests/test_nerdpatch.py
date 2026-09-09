@@ -155,7 +155,8 @@ def test_icon_transform_keeps_the_aspect_of_a_powerline_symbol():
 def test_graft_symbols_appends_one_cell_icons_the_face_lacks():
     face = _face()
     assert _bounds(face, "uniE0B0") == (0, -280, 600, 1040)     # Source Code Pro's
-    assert nerdpatch.graft_symbols(face, _symbols()) == 4       # not 'A'
+    grafted, rehint = nerdpatch.graft_symbols(face, _symbols())
+    assert (grafted, rehint) == (4, ["uniE0B0"])                # not 'A'
     cmap = face.getBestCmap()
     assert cmap[ord("A")] == "A"
     icon, pl, far = cmap[0xE000], cmap[0xE0B0], cmap[0xF0001]
@@ -166,7 +167,6 @@ def test_graft_symbols_appends_one_cell_icons_the_face_lacks():
     assert y0 == pytest.approx(176, abs=1) and y1 == pytest.approx(776, abs=1)
     assert _bounds(face, pl) == (0, -273, 600, 984)             # stretched to the line
     assert face["hmtx"][pl] == (600, 0)
-    assert "uniE0B0" in face._redrawn
     x0, y0, x1, y1 = _bounds(face, far)
     assert x1 - x0 == pytest.approx(300, abs=1)                # half the em, half the cell
     # the supplementary-plane icon needed a format 12 subtable

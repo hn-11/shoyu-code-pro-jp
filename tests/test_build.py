@@ -833,6 +833,20 @@ def test_fit_to_grid_takes_explicit_glyph_names():
     assert font["hmtx"].metrics["a"][0] == 600 and font["hmtx"].metrics["b"][0] == 500
 
 
+def test_fit_to_grid_follows_the_reference_steps_over_this_face():
+    """The family decides a character's width once, on one weight
+    (reference_steps): a heavier face whose own advance would round the
+    other way follows it, and a codepoint the reference does not name
+    falls back to this face's advance."""
+    font = _cff_font_with_widths({"phi": 824, "psi": 900})
+    cmap = {0xE000: "phi", 0xE001: "psi"}       # _cff_font_with_widths' cmap
+    assert font.getBestCmap() == cmap
+    assert build.fit_to_grid(font, 600, steps={0xE000: 600}) == 2
+    hmtx = font["hmtx"].metrics
+    assert hmtx["phi"][0] == 600                # the reference's answer
+    assert hmtx["psi"][0] == 1000               # its own: nearest a full width
+
+
 def test_set_names():
     font = _cff_font()
     name = font["name"]
