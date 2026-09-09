@@ -4,12 +4,8 @@
 name: Fetch upstreams
 description: >
   Download and cache the pinned Source Han Sans / Source Code Pro /
-  Monaspace / Source Han Code JP releases, then export their extracted
-  paths as step outputs.
+  Monaspace releases, then export their extracted paths as step outputs.
 outputs:
-  shcj_ttc:
-    description: Path to the extracted SourceHanCodeJP.ttc
-    value: ${{ steps.paths.outputs.shcj_ttc }}
   shs_dir:
     description: Directory containing the extracted Source Han Sans JP OTFs
     value: ${{ steps.paths.outputs.shs_dir }}
@@ -32,21 +28,18 @@ runs:
         echo "SCP_TAG=2.042R-u%2F1.062R-i%2F1.026R-vf" >> "$GITHUB_ENV"
         echo "SCP_VF_ZIP=VF-source-code-VF-1.026R.zip" >> "$GITHUB_ENV"
         echo "MONA_TAG=v1.400" >> "$GITHUB_ENV"
-        echo "SHCJ_TAG=2.012R" >> "$GITHUB_ENV"
     - name: Fetch upstreams (cached)
       uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
       id: up
       with:
         path: upstreams
         # Key derives from the pins above so a bump busts the cache automatically.
-        key: upstreams-${{ env.SHS_TAG }}-${{ env.SCP_VF_ZIP }}-${{ env.MONA_TAG }}-${{ env.SHCJ_TAG }}
+        key: upstreams-${{ env.SHS_TAG }}-${{ env.SCP_VF_ZIP }}-${{ env.MONA_TAG }}
     - if: steps.up.outputs.cache-hit != 'true'
       shell: bash
       run: |
         mkdir -p upstreams
         fetch() { echo "fetching $2"; curl -sSfL -o "$1" "$2" || { echo "FAILED: $2"; exit 22; }; }
-        fetch upstreams/shcj.ttc \
-          "https://github.com/adobe-fonts/source-han-code-jp/releases/download/${SHCJ_TAG}/SourceHanCodeJP.ttc"
         fetch /tmp/shs.zip \
           "https://github.com/adobe-fonts/source-han-sans/releases/download/${SHS_TAG}/17_SourceHanSansJP.zip"
         unzip -qo /tmp/shs.zip -d upstreams/shs
@@ -60,7 +53,6 @@ runs:
       id: paths
       shell: bash
       run: |
-        echo "shcj_ttc=upstreams/shcj.ttc" >> "$GITHUB_OUTPUT"
         echo "shs_dir=$(dirname "$(find upstreams/shs -name 'SourceHanSansJP-Regular.otf' | head -1)")" >> "$GITHUB_OUTPUT"
         echo "scp_vf_u=$(find upstreams/scp -name 'SourceCodeVF-Upright.otf' | head -1)" >> "$GITHUB_OUTPUT"
         echo "scp_vf_i=$(find upstreams/scp -name 'SourceCodeVF-Italic.otf' | head -1)" >> "$GITHUB_OUTPUT"

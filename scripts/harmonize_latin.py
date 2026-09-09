@@ -4,12 +4,11 @@ face in the output directories — build_latin.harmonize_win_metrics run
 on its own.
 
 build_latin.py harmonizes the faces it finds after a build; the release
-workflow builds one weight and style per job, so no job ever sees its
-family whole. The package job runs this over the assembled dist/ before
-bundling: the shipped Sumi Moji in dist/latin/, its Nerd Fonts patch in
+workflow builds two weights per job, so no job ever sees its family
+whole. The package job runs this over the assembled dist/ before
+zipping: Sumi Moji in dist/latin/ and its Nerd Fonts patch in
 dist/nerd/latin/ (patched from the unharmonized faces, so it is
-harmonized on its own here), and the Term donors in dist/latin/term/
-(not shipped, kept consistent all the same).
+harmonized on its own here).
 
 Usage:
   python scripts/harmonize_latin.py [DIST]   # default: dist/
@@ -25,9 +24,8 @@ from verifylib import static_faces  # noqa: E402
 
 # (directory under dist, PostScript family) per family to harmonize
 FAMILIES = [
-    ("latin", build.LATIN_PROFILES["ship"][2]),
-    ("latin/term", build.LATIN_PROFILES["term"][2]),
-    ("nerd/latin", build.LATIN_PROFILES["ship"][2] + "NF"),
+    ("latin", build.LATIN_FAMILY[1]),
+    ("nerd/latin", build.LATIN_FAMILY[1] + "NFM"),
 ]
 
 

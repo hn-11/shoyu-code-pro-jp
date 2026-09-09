@@ -33,9 +33,11 @@ CASES = [
 # suffix in the base family name -> expected (half-width, full-width) advances
 FAMILY_METRICS = {
     "Term": (600, 1200),
-    "35": (600, 1000),
 }
-DEFAULT_METRICS = (667, 1000)
+DEFAULT_METRICS = (600, 1000)
+# the line metrics of an English terminal font: Source Code Pro's, hhea
+# and typo alike (build.copy_line_metrics)
+LINE_METRICS = (984, -273, 0)
 
 # a few ligature sequences (rendered text -> glyph to probe) and CJK
 # codepoints, checked for self-intersecting outlines alongside the Latin set
@@ -72,8 +74,8 @@ def is_italic(tf):
 
 def expected_metrics(tf):
     fam = family_name(tf)
-    # whole-token match: "Term" / "35" are separate words in the family
-    # name ("Sumi Moji JP Term"), never substrings of another word
+    # whole-token match: "Term" is a separate word in the family name
+    # ("Sumi Moji JP Term"), never a substring of another word
     for suffix, pair in FAMILY_METRICS.items():
         if suffix in fam.split(" "):
             return pair
@@ -96,32 +98,32 @@ def main():
         f"{FONT}: expected (half,full)=({exp_half},{exp_full}) for family "
         f"{fam!r}, got ({a_adv},{cjk_adv})")
 
-    # Term settles ambiguous-width characters like HackGen Console: a
-    # one-cell glyph from Monaspace (ligature-paired arrows / ≠ ≤ …) or SCP
-    # (box drawing included) where either has the character, and the rest
-    # (①…) left at two cells rather than shrunk. JP / 35 keep SHCJ's
-    # full-width assignments throughout.
-    if "Term" in fam.split(" "):
-        policy = {"\u2192": exp_half, "\u2026": exp_half, "\u03b1": exp_half,
-                  "\u2500": exp_half, "\u2460": exp_full, "\u203b": exp_full}
-    else:
-        policy = {"\u2192": exp_full, "\u2460": exp_full}
-    # half-width kana and the half-width symbols (￩ U+FFE9): SHCJ's 500 in
-    # the 2:3 family, one cell in the 600 ones (fit_halfwidth_forms)
-    policy["\uff71"] = policy["\uffe9"] = 500 if exp_half == 667 else exp_half
-    # SCP-only Latin (ł ğ ₽) is grafted half-width in every family; so is
-    # SHS's proportional ς — upright only, SCP Italic has no Greek
-    policy.update({"\u0142": exp_half, "\u011f": exp_half, "\u20bd": exp_half})
-    if not italic:
-        policy["\u03c2"] = exp_half
-    # SHCJ's full-width '−' used to come through as SHS's proportional 555;
-    # Term then takes SCP's one-cell minus like any other ambiguous symbol
-    policy["\u2212"] = exp_half if "Term" in fam.split(" ") else exp_full
+    # every codepoint Sumi Moji has is one cell in both families — the
+    # ligature-paired arrows and operators, Greek, box drawing, SCP-only
+    # Latin (ł ğ ₽), '−' — and Source Han Sans's own full-width symbols
+    # (① ※) stay two cells. Italic: SCP Italic has no Greek, so α keeps
+    # Source Han Sans's full-width glyph there
+    policy = {"\u2192": exp_half, "\u2026": exp_half, "\u2500": exp_half,
+              "\u2212": exp_half, "\u2460": exp_full, "\u203b": exp_full,
+              "\u0142": exp_half, "\u011f": exp_half, "\u20bd": exp_half}
+    policy["\u03b1"] = policy["\u03c2"] = exp_full if italic else exp_half
+    # half-width kana and the half-width symbols (￩ U+FFE9): Source Han
+    # Sans's 500 centred in the cell (fit_to_grid)
+    policy["\uff71"] = policy["\uffe9"] = exp_half
     for ch, want in policy.items():
         got = hmtx[cmap[ord(ch)]][0]
         assert got == want, (
             f"{FONT}: U+{ord(ch):04X} {ch!r} advance {got}, want {want}")
-    print(f"ok   ambiguous-width policy ({len(policy)} probes)")
+    print(f"ok   width policy ({len(policy)} probes)")
+
+    # line metrics: Source Code Pro's, hhea and typo alike, USE_TYPO_METRICS
+    hhea, os2 = tf["hhea"], tf["OS/2"]
+    got = ((hhea.ascent, hhea.descent, hhea.lineGap),
+           (os2.sTypoAscender, os2.sTypoDescender, os2.sTypoLineGap))
+    assert got == (LINE_METRICS, LINE_METRICS), (
+        f"{FONT}: line metrics hhea/typo {got}, want {LINE_METRICS}")
+    assert os2.fsSelection & (1 << 7), f"{FONT}: USE_TYPO_METRICS not set"
+    print(f"ok   line metrics {LINE_METRICS} (hhea = typo, USE_TYPO_METRICS)")
 
     # every charstring's own width (encoded against its FD's nominalWidthX)
     # must agree with hmtx: a glyph appended under one FD and re-homed to
@@ -152,7 +154,7 @@ def main():
     fsel = tf["OS/2"].fsSelection
     mac = tf["head"].macStyle
     sub = subfamily_name(tf)
-    want_bold = "Bold" in sub
+    want_bold = "Bold" in sub.split()   # SemiBold is not bold
     want_italic = "Italic" in sub
     ok = bool(fsel & 0x20) == want_bold
     check(ok, f"fsSelection BOLD bit matches "
@@ -166,12 +168,24 @@ def main():
     ok = bool(mac & 0x2) == want_italic
     check(ok, f"macStyle Italic bit matches "
               f"subfamily {sub!r} (macStyle={mac:#06x})")
-    if not want_bold and not want_italic:   # Normal/Medium/Heavy too
+    if not want_bold and not want_italic:   # Light/Medium/SemiBold too
         ok = bool(fsel & 0x40) and not (fsel & 0x61 & ~0x40)
         check(ok, f"fsSelection REGULAR bit set, "
                   f"BOLD/ITALIC clear (fsSelection={fsel:#06x})")
 
     shape_infos = make_shaper(FONT)
+
+    # the two-cell forms under fwid: the arrow redrawn from the ligature,
+    # ≠ and ─ from Source Han Sans, Ａ through Source Han Sans's own fwid
+    # form of the proportional A the one-cell A replaced
+    fwid_probes = "\u2192\u2260\u2500A"
+    for ch in fwid_probes:
+        infos, positions = shape_infos(ch, {"fwid": True})
+        got = positions[0].x_advance if positions else None
+        assert got == exp_full, (
+            f"{FONT}: U+{ord(ch):04X} {ch!r} under fwid advances {got}, want {exp_full}")
+    print(f"ok   fwid restores the full-width forms ({len(fwid_probes)} probes)")
+
 
     def shape_len(text, feats):
         return len(shape_infos(text, feats)[0])
@@ -279,11 +293,10 @@ def main():
     # ':' ('::' is the raised colon.case) and '&' (no '&&' ligature) have
     # no such ligature and are not checked.
     from build import (
-        FACES,
         MONA_STANDALONE,
+        WEIGHT_CLASS,
         _contour_bounds,
         _record_contours,
-        _shcj_ref,
         bar_thickness,
     )
     glyph_order = tf.getGlyphOrder()
@@ -308,75 +321,58 @@ def main():
         check(ok, f"{ch!r} rows {rows_ch} "
                   f"found in {pairs[ch].split()[1]!r} {rows_lig}")
 
-    # width alternates of the ligature-paired symbols (← → ≠ … etc.):
-    # 2:3 / 35 default to full width with the arrows redrawn from
-    # Monaspace (same head as '->'), and hwid / ss09 give the one-cell
-    # form; Term defaults to one cell and fwid gives the full-width form.
-    from build import ARROWS_H, MONA_AMBIGUOUS
-    fam_tokens = [t for t in fam.split(" ") if t != "NF"]
+    # the ligature-paired symbols (← → ≠ … etc.): one cell by default in
+    # both families, the full-width form under fwid; the full-width
+    # horizontal arrows are cut from the ligature they pair with
+    # (ARROW_SOURCE): same vertical extent, within 2u
+    from build import ARROW_SOURCE, ARROWS_H, MONA_AMBIGUOUS
 
     def advance_of(text, feats):
         _, positions = shape_infos(text, feats)
         return positions[0].x_advance
 
     full_adv = expected_metrics(tf)[1]
-    is_term = "Term" in fam_tokens
     for ch in MONA_AMBIGUOUS:
-        if is_term:
-            got_default, got_alt = advance_of(ch, {}), advance_of(ch, {"fwid": True})
-            check(got_default == a_adv and got_alt == full_adv,
-                  f"{ch!r} default {got_default} (want {a_adv}), "
-                  f"fwid {got_alt} (want {full_adv})")
-        else:
-            got_default = advance_of(ch, {})
-            got_h, got_s = advance_of(ch, {"hwid": True}), advance_of(ch, {"ss09": True})
-            ok = got_default == full_adv and got_h == a_adv and got_s == a_adv
-            check(ok, f"{ch!r} default {got_default} "
-                      f"(want {full_adv}), hwid {got_h} / ss09 {got_s} (want {a_adv})")
-    if not is_term:
-        # the full-width horizontal arrows are cut from the ligature they
-        # pair with (ARROW_SOURCE): same vertical extent, within 2u
-        from build import ARROW_SOURCE
+        got_default, got_alt = advance_of(ch, {}), advance_of(ch, {"fwid": True})
+        check(got_default == a_adv and got_alt == full_adv,
+              f"{ch!r} default {got_default} (want {a_adv}), "
+              f"fwid {got_alt} (want {full_adv})")
 
-        def extent(rows):
-            return min(a for a, _ in rows), max(b for _, b in rows)
-        for ch in ARROWS_H:
-            seq = ARROW_SOURCE[ch][0]
-            lig_ymin, lig_ymax = extent(y_rows(lig_glyph(f"a {seq} b")))
-            ymin, ymax = extent(y_rows(cmap[ord(ch)]))
-            ok = abs(ymin - lig_ymin) <= 2 and abs(ymax - lig_ymax) <= 2
-            check(ok, f"{ch!r} y extent {ymin}..{ymax} "
-                      f"vs {seq!r} {lig_ymin}..{lig_ymax}")
+    def extent(rows):
+        return min(a for a, _ in rows), max(b for _, b in rows)
+    for ch in ARROWS_H:
+        seq = ARROW_SOURCE[ch][0]
+        lig_ymin, lig_ymax = extent(y_rows(lig_glyph(f"a {seq} b")))
+        infos, _ = shape_infos(ch, {"fwid": True})
+        ymin, ymax = extent(y_rows(glyph_order[infos[0].codepoint]))
+        ok = abs(ymin - lig_ymin) <= 2 and abs(ymax - lig_ymax) <= 2
+        check(ok, f"{ch!r} (fwid) y extent {ymin}..{ymax} "
+                  f"vs {seq!r} {lig_ymin}..{lig_ymax}")
 
-    # stroke weight vs the SHCJ reference: the '=' bar our Latin layer was
-    # weight-matched to should still measure the same after grafting,
-    # rescaling etc. Only meaningful for families that pair to SHCJ's
-    # weight at all — the "35" family deliberately keeps Source Code
-    # Pro's native weight instead (see VARIANTS' comp flag in build.py).
-    shcj_ttc = os.environ.get("SHCJ_TTC")
-    if shcj_ttc is None:
-        print("skip  '=' bar vs SHCJ reference (SHCJ_TTC unset)")
-    elif "35" in fam_tokens:
-        print("skip  '=' bar vs SHCJ reference "
-              "(35 family keeps SCP's native weight)")
+    # stroke weight: the Latin is Source Code Pro's named instance for
+    # this weight, so its '=' bar must measure the VF's at that wght
+    # (SCP_VF_U / SCP_VF_I when set), and the Japanese face is the Source
+    # Han Sans weight whose '＝' bar matches it (build.FACES: within 4u)
+    weight = sub[:-len(" Italic")] if sub.endswith(" Italic") else sub
+    if weight == "Italic":   # "Regular Italic" collapses to "Italic"
+        weight = "Regular"
+    got = bar_thickness(tf, cmap[ord("=")])
+    scp_path = os.environ.get("SCP_VF_I" if italic else "SCP_VF_U")
+    if weight not in WEIGHT_CLASS:
+        print(f"skip  '=' bar vs Source Code Pro (unknown weight {weight!r})")
+    elif scp_path is None:
+        print("skip  '=' bar vs Source Code Pro (SCP_VF_U / SCP_VF_I unset)")
     else:
-        weight = sub[:-len(" Italic")] if sub.endswith(" Italic") else sub
-        if weight == "Italic":   # "Regular Italic" collapses to "Italic"
-            weight = "Regular"
-        ref_names = {w: r for w, r, _ in FACES}
-        ref_name = ref_names.get(weight)
-        if ref_name is None:
-            print(f"skip  '=' bar vs SHCJ reference (unknown weight {weight!r})")
-        else:
-            if italic:
-                ref_name += " Italic"
-            ref = _shcj_ref(shcj_ttc, ref_name)
-            ref_cmap = ref.getBestCmap()
-            got = bar_thickness(tf, cmap[ord("=")])
-            want = bar_thickness(ref, ref_cmap[ord("=")])
-            ok = abs(got - want) <= 1.5
-            check(ok, f"'=' bar vs SHCJ reference "
-                      f"{ref_name!r}: {got:.1f}u (want {want:.1f}u)")
+        scp = TTFont(scp_path)
+        want = bar_thickness(scp.getGlyphSet(location={"wght": WEIGHT_CLASS[weight]}),
+                             scp.getBestCmap()[ord("=")])
+        check(abs(got - want) <= 1.5,
+              f"'=' bar vs Source Code Pro {weight} (wght {WEIGHT_CLASS[weight]}): "
+              f"{got:.1f}u (want {want:.1f}u)")
+    if 0xFF1D in cmap:
+        cjk = bar_thickness(tf, cmap[0xFF1D])
+        check(abs(cjk - got) <= 5,
+              f"'＝' bar (Source Han Sans) {cjk:.1f}u vs '=' {got:.1f}u: paired within 5u")
 
     # imported outlines must be overlap-free (VF instancing leaves seams)
     import pathops
@@ -421,7 +417,7 @@ def main():
     # Windows Terminal's picker and GDI's FIXED_PITCH filter read; SHCJ's
     # own 0/0 hid it there), xAvgCharWidth per OS/2 v3+ (mean of every
     # non-zero advance), x/cap height measured on the face's own glyphs.
-    if " NF" in fam:
+    if " Nerd Font" in fam:
         # font-patcher rewrites PANOSE to monospaced and recalculates
         # xAvgCharWidth on the flattened font; those are its own to set
         print("ok   width metadata checks skipped (Nerd Fonts variant)")

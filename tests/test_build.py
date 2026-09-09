@@ -8,6 +8,7 @@ import pytest
 import uharfbuzz as hb
 from fontTools.fontBuilder import FontBuilder
 from fontTools.misc.roundTools import otRound
+from fontTools.pens.boundsPen import BoundsPen
 from fontTools.pens.t2CharStringPen import T2CharStringPen
 from fontTools.ttLib import TTFont, newTable
 from fontTools.ttLib.tables import otTables
@@ -57,21 +58,25 @@ def test_group_names_all_remap_nontrivially():
         assert build._remap_scp_tag(tag) is not None, tag
 
 
-# --- Latin donor face paths (LATIN_PROFILES) ------------------------------
+# --- Latin donor face paths (LATIN_FAMILY) --------------------------------
 
-def test_latin_face_path_ship_regular_upright():
-    got = build.latin_face_path("dist/latin", "ship", "Regular", False)
+def test_latin_face_path_regular_upright():
+    got = build.latin_face_path("dist/latin", "Regular", False)
     assert got == Path("dist/latin") / "SumiMoji-Regular.otf"
 
 
-def test_latin_face_path_term_bold_italic():
-    got = build.latin_face_path("dist/latin", "term", "Bold", True)
-    assert got == Path("dist/latin") / "term" / "SumiMojiTerm-BoldItalic.otf"
+def test_latin_face_path_bold_italic():
+    got = build.latin_face_path("dist/latin", "Bold", True)
+    assert got == Path("dist/latin") / "SumiMoji-BoldItalic.otf"
 
 
-def test_latin_face_path_unknown_profile_raises():
-    with pytest.raises(KeyError):
-        build.latin_face_path("dist/latin", "bogus", "Regular", False)
+# --- the weight roster ----------------------------------------------------
+
+def test_faces_are_source_code_pro_named_instances_with_a_partner_each():
+    assert [w for w, _ in build.FACES] == list(build.WEIGHT_CLASS)
+    assert list(build.WEIGHT_CLASS.values()) == [300, 400, 500, 600, 700]
+    assert all(f.startswith("SourceHanSansJP-") and f.endswith(".otf")
+               for _, f in build.FACES)
 
 
 # --- CID allocation ------------------------------------------------------
@@ -107,29 +112,6 @@ def test_alloc_never_reuses_low_cids():
         assert int(build.alloc_glyph_name(f)[3:]) >= build.CID_ALLOC_START
 
 
-# --- advance rescale rule ------------------------------------------------
-
-@pytest.mark.parametrize("adv, cell, want", [
-    (667, 600, 600),        # half-width
-    (1334, 600, 1200),      # 2-cell ligature
-    (2001, 600, 1800),      # 3-cell ligature
-    (2668, 600, 2400),      # 4-cell ligature ('<-->') — used to be missed
-    (667, 667, 667),
-    (1000, 600, None),      # full-width CJK: untouched
-    (1200, 600, None),
-    (0, 600, None),
-])
-def test_rescaled_advance(adv, cell, want):
-    assert build.rescaled_advance(adv, cell) == want
-
-
-def test_rescaled_advance_all_ligature_widths():
-    ligs = build.load_ligatures()
-    for spec in ligs.values():
-        adv = build.CELL * spec["cells"]
-        assert build.rescaled_advance(adv, 600) == 600 * spec["cells"]
-
-
 # --- command-line face filter -------------------------------------------
 
 @pytest.mark.parametrize("only, weight, label, suffix, want", [
@@ -144,7 +126,6 @@ def test_rescaled_advance_all_ligature_widths():
     ("Regular Italic", "Regular", "Regular", "", False),
     ("Term", "Bold", "Bold", "Term", True),
     ("Term", "Bold", "Bold", "", False),
-    ("35", "Heavy", "Heavy Italic", "35", True),
     ("", "Bold", "Bold", "", True),          # "" selects the base family
     ("", "Bold", "Bold", "Term", False),
     ("Light Upright", "Light", "Light", "", True),
@@ -153,17 +134,19 @@ def test_rescaled_advance_all_ligature_widths():
     ("Light Upright Term", "Light", "Light", "Term", True),
     ("Light Upright Term", "Light", "Light", "", False),
     ("Term Regular Italic", "Regular", "Regular Italic", "Term", True),
-    ("Upright", "Bold", "Bold", "35", True),
-    ("Upright", "Bold", "Bold Italic", "35", False),
+    ("Upright", "Bold", "Bold", "Term", True),
+    ("Upright", "Bold", "Bold Italic", "Term", False),
     ("Regular Upright base", "Regular", "Regular", "", True),
-    ("Regular Upright base", "Regular", "Regular", "35", False),
+    ("Regular Upright base", "Regular", "Regular", "Term", False),
+    ("SemiBold", "SemiBold", "SemiBold Italic", "", True),
     ("Semibold", "Bold", "Bold", "", False),  # not a weight, suffix or style
     ("Regular Term Extra", "Regular", "Regular", "Term", True),   # "Extra": a variant nobody has
     ("Regular Extra", "Regular", "Regular", "Term", False),
-    ("Light Normal base", "Normal", "Normal Italic", "", True),   # either weight
-    ("Light Normal base", "Regular", "Regular", "", False),
-    ("Light Normal Term 35", "Light", "Light", "35", True),      # either variant
-    ("Light Normal Term 35", "Light", "Light", "", False),
+    ("Light Regular base", "Regular", "Regular Italic", "", True),   # either weight
+    ("Light Regular base", "Medium", "Medium", "", False),
+    ("Light Regular Term base", "Light", "Light", "Term", True),    # either variant
+    ("Light Regular Term base", "Light", "Light", "", True),
+    ("Light Regular Term", "Light", "Light", "", False),
     ("Upright Italic Bold", "Bold", "Bold Italic", "Term", True),
 ])
 def test_face_matches(only, weight, label, suffix, want):
@@ -766,6 +749,55 @@ def _cff_font():
     return fb.font
 
 
+def _cff_font_with_widths(widths):
+    """A CID-less CFF font whose glyphs are 100-unit squares at the given
+    advances: what fit_to_grid moves."""
+    glyph_order = [".notdef", *widths]
+    charstrings = {}
+    for g in glyph_order:
+        pen = T2CharStringPen(0, None)
+        pen.moveTo((0, 0))
+        pen.lineTo((100, 0))
+        pen.lineTo((100, 100))
+        pen.closePath()
+        charstrings[g] = pen.getCharString()
+    fb = FontBuilder(1000, isTTF=False)
+    fb.setupGlyphOrder(glyph_order)
+    fb.setupCharacterMap({0xE000 + i: g for i, g in enumerate(widths)})
+    fb.setupCFF("T", {}, charstrings, {})
+    fb.setupHorizontalMetrics({".notdef": (0, 0), **{g: (w, 0) for g, w in widths.items()}})
+    fb.setupHorizontalHeader(ascent=800, descent=-200)
+    fb.setupNameTable({"familyName": "T", "styleName": "R"})
+    fb.setupOS2()
+    fb.setupPost()
+    return fb.font
+
+
+def test_fit_to_grid_centres_proportional_advances_on_the_grid():
+    """Half-width kana at 500 -> the cell; Hangul jamo at 920 -> one full
+    width; a three-em dash at 2459 -> three; a mark at 0, a cell, a full
+    width and a ligature (2 cells) are left alone."""
+    font = _cff_font_with_widths({"kana": 500, "jamo": 920, "dash": 2459,
+                                  "mark": 0, "cell": 600, "full": 1000, "lig": 1200})
+    assert build.fit_to_grid(font, 600) == 3
+    hmtx = font["hmtx"].metrics
+    assert {g: hmtx[g][0] for g in ("kana", "jamo", "dash", "mark", "cell", "full", "lig")} == \
+        {"kana": 600, "jamo": 1000, "dash": 3000, "mark": 0, "cell": 600,
+         "full": 1000, "lig": 1200}
+    gs = font.getGlyphSet()
+    for g, want_lsb in (("kana", 50), ("jamo", 40), ("dash", 270)):
+        pen = BoundsPen(gs)
+        gs[g].draw(pen)
+        assert pen.bounds[0] == want_lsb == hmtx[g][1]     # centred, lsb kept in step
+    assert font._redrawn == {"kana", "jamo", "dash"}
+
+
+def test_fit_to_grid_takes_explicit_glyph_names():
+    font = _cff_font_with_widths({"a": 500, "b": 500})
+    assert build.fit_to_grid(font, 600, glyph_names=["a", "a", None]) == 1
+    assert font["hmtx"].metrics["a"][0] == 600 and font["hmtx"].metrics["b"][0] == 500
+
+
 def test_set_names():
     font = _cff_font()
     name = font["name"]
@@ -910,17 +942,6 @@ def test_set_cmap_replaces_existing_and_adds_only_when_asked():
     for t in font["cmap"].tables:
         assert t.cmap[0x62] == "c"
         assert (0x10001 in t.cmap) == (t.format == 12)   # BMP-only skips it
-
-
-def test_halfwidth_forms_cover_every_halfwidth_codepoint():
-    """Unicode's East Asian Width 'H' set is exactly what fit_halfwidth_forms
-    re-centres — including ￩ U+FFE9 and its neighbours past U+FFDC."""
-    import unicodedata
-    covered = {cp for lo, hi in build.HALFWIDTH_FORMS for cp in range(lo, hi + 1)}
-    halfwidth = {cp for cp in range(0xFF00, 0xFFF0)
-                 if unicodedata.east_asian_width(chr(cp)) == "H"}
-    assert halfwidth <= covered
-    assert 0xFFE9 in covered
 
 
 def test_env_paths_reads_defaults_and_exits_on_missing(tmp_path, monkeypatch, capsys):

@@ -1,5 +1,47 @@
 # Changelog
 
+## Unreleased
+
+- **基準を英語圏のターミナルフォントに置き換えた**（v5.0.0）。v4.0.0 までは
+  Source Han Code JP（SHCJ）が基準だった: 2:3 の比率、SHCJ の行間
+  （1.453 em）、SHCJ の `=` バーに Latin の太さを寄せる主従、SHCJ の
+  半角/全角の割り当て。Source Code Pro を基準にし、和文がそれに従う:
+  - ファミリーは **Sumi Moji JP（3:5、600:1000）** と **Sumi Moji JP Term
+    （1:2、600:1200）** の 2 つ。2:3 の旧基本ファミリーと 35 は廃止
+    （旧 35 が新しい基本ファミリーに相当）。Term は全角の送りを 2 セルに
+    広げるだけの変種になり、Latin・記号・幅の方針は基本ファミリーと共通
+  - **行間は Source Code Pro の 984 / −273（1.257 em）**。hhea = typo、
+    `USE_TYPO_METRICS`。JetBrains Mono や Cascadia と並べたときの行の高さが
+    揃う（SHCJ の行間は 16% 高かった）。win は Source Han Sans の宣言値
+  - **ウェイトは Source Code Pro の名前付きインスタンス**: Light 300 /
+    Regular 400 / Medium 500 / SemiBold 600 / Bold 700（Normal と Heavy は
+    廃止、SemiBold を追加）。Latin は wght を指定してインスタンス化する
+    だけ（二分探索なし）、和文は `＝` のバーが Latin の `=` に合う Source
+    Han Sans の面を実測で選ぶ（ExtraLight 36u / Normal 63u / Regular 69u /
+    Medium 83u / Bold 101u に対し Latin 37 / 62 / 73 / 83 / 104u）。
+    Regular の和文は以前の Source Han Sans Regular から Normal に、Bold は
+    同じ面のまま。可変フォントの wght 軸は SCP の wght と一致する恒等写像
+    になり、軸の範囲は 200〜700
+  - **Sumi Moji が持つ文字はすべて 1 セル**（ギリシャ・キリル・罫線・矢印
+    7 種と `≠ ≤ ≥ …` も、両ファミリーで）。JIS 流の全角字形は `fwid` で
+    戻す: 矢印は合字から切り出した全角版、その他は Source Han Sans の
+    全角グリフか同フォントの `fwid` 形（`A` → `Ａ`）。`hwid` / `ss09` の
+    幅切り替えは廃止。Source Han Sans の比例幅の残り（半角カナ 500、
+    Hangul 字母 920、ﬀ、⸻）はセルか全角の倍数に中央配置（`fit_to_grid`）
+  - **Nerd Fonts 版の命名は本家の流儀**: アイコンを 1 セルに収めるので
+    ファミリー名 `Sumi Moji JP Nerd Font Mono`、PostScript 名
+    `SumiMojiJPNFM-*`（`JetBrainsMono Nerd Font Mono` と同じ）
+  - **Source Han Code JP は上流から外れた**（`SHCJ_TTC` / `SHCJ_TAG` 廃止、
+    LICENSE の構成要素からも削除）。バーの目標値、半角カナのドナー、
+    行間、半角の集合のいずれも不要になった。上流は Source Han Sans /
+    Source Code Pro / Monaspace の 3 つ
+  - リリースは 2 ファミリー × 5 ウェイト × 2 スタイル = JP 20 面、Sumi
+    Moji 静的 10 面（配布は VF 2 本）。faces ジョブは 6 つ
+  - `build.py` から `rescale` / `narrow_ambiguous` / `latin_onecell` /
+    `shcj_bar_target` が消え、`graft_halfwidth` は Sumi Moji の cmap を
+    そのまま載せる。`verify.py` は幅の方針・`fwid`・行間・Source Code Pro
+    との `=` バー一致・和文との太さ対応を検査する
+
 ## v4.0.0
 
 最後に公開したのは v3.2.0 で、v3.3.0 として書いた下の変更もこのリリースで

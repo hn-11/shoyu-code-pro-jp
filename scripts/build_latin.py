@@ -1,20 +1,16 @@
 #!/usr/bin/env python3
-"""Sumi Moji (provisional name): the Latin-only font, assembled straight
-from the variable fonts — Source Code Pro VF as the base, Monaspace VF
-for the punctuation, the ligatures and the one-cell arrows.
+"""Sumi Moji: the Latin-only font, assembled straight from the variable
+fonts — Source Code Pro VF as the base, Monaspace VF for the punctuation,
+the ligatures and the one-cell arrows.
 
-This is the Latin layer every Sumi Moji JP family carries, built
-once and on its own (docs/sumi-moji-plan.md, stage 1b): build.py grafts
-these faces into Source Han Sans instead of instancing the two VFs
-itself. Two weight profiles come out of the same recipe:
-
-  dist/latin/       Sumi Moji        '=' bar = SHCJ's bar x 600/667 — the
-                                     35 family's weight, Source Code Pro at
-                                     its native size; the shipped font
-  dist/latin/term/  Sumi Moji Term   '=' bar = SHCJ's bar as-is at 600 —
-                                     what the Term family needs (its Latin
-                                     is not scaled down, so it is paired
-                                     heavier); an internal donor only
+This is the Latin layer every Sumi Moji JP family carries, built once
+and on its own (docs/sumi-moji-plan.md): build.py grafts these faces
+into Source Han Sans as they are. Each face is one of Source Code Pro's
+own named instances — Light 300 / Regular 400 / Medium 500 / SemiBold
+600 / Bold 700 (build.WEIGHT_CLASS), instanced at exactly that wght, no
+bar search — with Monaspace's wght matched to the instance's '=' bar.
+The Japanese faces follow the Latin's weight (build.FACES), not the
+other way round: Source Code Pro is the benchmark.
 
 The base is the SCP VF instance converted to a static CID-keyed CFF
 (fontTools CFF2ToCFF): SCP's own outlines, alignment zones, GSUB
@@ -22,18 +18,17 @@ The base is the SCP VF instance converted to a static CID-keyed CFF
 (mark positioning) survive untouched; the hints do not survive the
 instancer, so the whole font is re-hinted against SCP's zones. On top:
 the 61 ligatures and the 32 ASCII punctuation glyphs from Monaspace,
-weight-matched to the same bar
-and baseline-aligned on '='; the ligature-paired symbols ← → ↑ ↓ ⇐ ⇒ ⇔ ≠
-≤ ≥ … as Monaspace's one-cell glyphs (a Latin font has no full width);
-calt/liga with the context guards, ss01-ss08, cv99. otfautohint hints
-everything against SCP's zones; cffsubr subroutinizes.
+weight-matched to the same bar and baseline-aligned on '='; the
+ligature-paired symbols ← → ↑ ↓ ⇐ ⇒ ⇔ ≠ ≤ ≥ … as Monaspace's one-cell
+glyphs; calt/liga with the context guards, ss01-ss08, cv99. otfautohint
+hints everything against SCP's zones; cffsubr subroutinizes.
 
 Usage:
-  python scripts/build_latin.py [FILTER]   # build.py's weight / style words;
-                                           # the profile ("ship" / "term")
-                                           # stands in for its variant word
+  python scripts/build_latin.py [FILTER]   # build.py's weight / style words
+                                           # ("base" is accepted and means
+                                           # nothing here: one family)
 Env (all required):
-  SCP_VF_U, SCP_VF_I, MONA_VF, SHCJ_TTC   as for build.py
+  SCP_VF_U, SCP_VF_I, MONA_VF
 Env (optional): SUMI_VERSION, SUMI_SKIP_AUTOHINT
 """
 
@@ -52,13 +47,8 @@ from verifylib import static_faces  # noqa: E402
 CELL = build.SCP_CELL   # 600
 MONA_K = CELL / build.MONA_CELL
 
-PROFILES = {
-    # subdir, family, PostScript family (build.LATIN_PROFILES, shared with
-    # build.py which reads these faces back), bar factor against SHCJ's
-    # 667 bar
-    "ship": (*build.LATIN_PROFILES["ship"], CELL / build.CELL),
-    "term": (*build.LATIN_PROFILES["term"], 1.0),
-}
+FAMILY, PS_FAMILY = build.LATIN_FAMILY   # "Sumi Moji", "SumiMoji"
+
 
 def static_base(scp):
     """The matched Source Code Pro VF instance as a static CID-keyed CFF
@@ -193,17 +183,19 @@ def harmonize_win_metrics(paths):
 
 
 def build_face(job):
-    profile, weight, ref_name, italic, env, out_dir = job
-    subdir, family, ps_family, factor = PROFILES[profile]
-    label = f"{weight}{' Italic' if italic else ''} [{profile}]"
-    target = build.shcj_bar_target(env["SHCJ_TTC"], ref_name, italic, factor)
+    weight, italic, env, out_dir = job
+    label = f"{weight}{' Italic' if italic else ''}"
+    wght = build.WEIGHT_CLASS[weight]
     scp_src = build._vf_source(env["SCP_VF_I" if italic else "SCP_VF_U"], 1.0,
                                {"wght": 0})
-    # SCP's exact blend at the matched wght; round_outlines rounds it
-    # point by point below (the instancer's own operand rounding drifts
-    # an outline several units along a path — build.unrounded_cff2_instancing)
+    # SCP's exact blend at its named instance's wght; round_outlines
+    # rounds it point by point below (the instancer's own operand
+    # rounding drifts an outline several units along a path —
+    # build.unrounded_cff2_instancing)
     with build.unrounded_cff2_instancing():
-        scp = scp_src.matched(target)
+        scp = scp_src.at(wght)
+    # the stroke weight Monaspace is matched to: this instance's own bar
+    target = build.bar_thickness(scp, scp.getBestCmap()[ord("=")])
     ref_angle = (scp["post"].italicAngle or -12.0) if italic else None
     mona_src = build._vf_source(env["MONA_VF"], MONA_K,
                                 {"wght": 0, "wdth": 100, "slnt": 0})
@@ -231,22 +223,20 @@ def build_face(job):
     ps = build.set_names(base, "", weight, italic,
                          ref_angle if ref_angle is not None else -12.0,
                          version=env.get("SUMI_VERSION"), credits=credits,
-                         family_base=family, ps_base=ps_family, base_credit=None)
+                         family_base=FAMILY, ps_base=PS_FAMILY, base_credit=None)
     build.classify_unicode_marks(base)
     build.add_stat(base, weight, italic)
     build.prune_orphan_names(base)
     build.update_bbox(base)
     fit_win_metrics(base)
-    out_path = Path(out_dir) / subdir
-    out_path.mkdir(parents=True, exist_ok=True)
-    out = out_path / f"{ps}.otf"
+    out = Path(out_dir) / f"{ps}.otf"
     # every glyph: fontTools' CFF2 instancing leaves the SCP outlines
     # without their hints (the VF's charstrings carry them inside blended
     # subroutines that the instancer flattens), so the whole font is
     # hinted here against SCP's own alignment zones
     build.write_face(base, out, base.getGlyphOrder())
-    return (f"{label}: bar {target:.1f} ligs={len(added)} "
-            f"glyphs={base['maxp'].numGlyphs} -> {out.relative_to(out_dir)}")
+    return (f"{label}: wght {wght} bar {target:.1f} ligs={len(added)} "
+            f"glyphs={base['maxp'].numGlyphs} -> {out.name}")
 
 
 def _copy_instance(scp):
@@ -258,7 +248,7 @@ def _copy_instance(scp):
     return TTFont(buf)
 
 
-VF_ENV = ("SCP_VF_U", "SCP_VF_I", "MONA_VF", "SHCJ_TTC")   # all required
+VF_ENV = ("SCP_VF_U", "SCP_VF_I", "MONA_VF")   # all required
 
 
 def main():
@@ -267,42 +257,33 @@ def main():
     out_dir = build.ROOT / "dist" / "latin"
     out_dir.mkdir(parents=True, exist_ok=True)
     jobs = []
-    for profile in PROFILES:
-        for weight, ref_name, _ in build.FACES:
-            for italic in (False, True):
-                label = f"{weight}{' Italic' if italic else ''}"
-                # the profile name is this script's "variant" word:
-                # "Regular Upright term" is the one Term donor face
-                if not build.face_matches(only, weight, label, profile):
-                    continue
-                jobs.append((profile, weight, ref_name, italic, env, str(out_dir)))
+    for weight, _ in build.FACES:
+        for italic in (False, True):
+            label = f"{weight}{' Italic' if italic else ''}"
+            # one family: the "base" variant word is the only one that
+            # matches (a Term face has no Latin of its own)
+            if not build.face_matches(only, weight, label, ""):
+                continue
+            jobs.append((weight, italic, env, str(out_dir)))
     if not jobs:
         sys.exit(f"no face matches {only!r}")
     if only is None:
         # a full build must not leave faces from an older roster for
         # harmonize_win_metrics / nerdpatch.py to pick up (same as build.py)
-        for subdir, _, ps_family, _ in PROFILES.values():
-            for stale in static_faces(out_dir / subdir, ps_family):
-                stale.unlink()
-    built = set()
-
-    def done(job, result):
-        print(result)
-        built.add(job[0])
-
+        for stale in static_faces(out_dir, PS_FAMILY):
+            stale.unlink()
     try:
-        # a weight-and-style job builds two faces (ship and term): side
-        # by side, not one after the other
+        # a weight's two styles side by side, not one after the other
         build.run_faces(jobs, build_face, pool_from=2,
-                        label=lambda job: f"{job[1]} [{job[0]}]", on_result=done)
+                        label=lambda job: f"{job[0]}{' Italic' if job[1] else ''}",
+                        on_result=lambda job, msg: print(msg))
     finally:
         # over every face of the family in the output directory (see
-        # harmonize_win_metrics), for the profiles this run touched
-        for profile in built:
-            subdir, _, ps_family, _ = PROFILES[profile]
-            paths = static_faces(out_dir / subdir, ps_family)
+        # harmonize_win_metrics)
+        paths = static_faces(out_dir, PS_FAMILY)
+        if paths:
             a, d = harmonize_win_metrics(paths)
-            print(f"{profile}: win metrics {a}/{d} over {len(paths)} faces")
+            print(f"win metrics {a}/{d} over {len(paths)} faces")
 
 
 if __name__ == "__main__":

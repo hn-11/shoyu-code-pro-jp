@@ -23,8 +23,10 @@ from conftest import make_font  # noqa: E402
 # up the normalized axis (its 400 master sits at 0.368).
 SCP_AVAR = {-1.0: -1.0, 0.0: 0.0, 0.142883: 0.099976, 0.285706: 0.367981,
             0.428589: 0.486023, 0.571411: 0.599976, 0.714294: 0.823974, 1.0: 1.0}
-POS = {"Light": 317.0, "Normal": 374.0, "Regular": 406.0,
-       "Medium": 546.0, "Bold": 669.0, "Heavy": 857.0}
+# the identity pairing (weight_positions): Source Code Pro's own named
+# instances, user wght = usWeightClass
+POS = {"Light": 300.0, "Regular": 400.0, "Medium": 500.0,
+       "SemiBold": 600.0, "Bold": 700.0}
 
 
 def _vf_meta(avar=SCP_AVAR, lo=200, default=200, hi=900):
@@ -69,9 +71,10 @@ def test_scp_design_axis_is_monotonic():
 def test_user_axis_range_and_default_are_usweightclass():
     design, breaks = vf.scp_design_axis(_vf_meta())
     lo, default, hi, mapping, _ = vf.user_axis(POS, design, breaks, 200)
-    assert (lo, default, hi) == (200, 400, 900)
+    assert (lo, default, hi) == (200, 400, 700)
     assert default == build.WEIGHT_CLASS["Regular"]
-    assert hi == build.WEIGHT_CLASS["Heavy"]
+    assert hi == build.WEIGHT_CLASS["Bold"]
+    assert vf.weight_positions() == POS
 
 
 def test_user_axis_map_hits_every_named_weight_exactly():
@@ -92,42 +95,45 @@ def test_user_axis_map_reproduces_scp_between_the_named_weights():
     design, breaks = vf.scp_design_axis(_vf_meta())
     _, _, _, mapping, to_scp = vf.user_axis(POS, design, breaks, 200)
     m = dict(mapping)
-    for u in range(200, 901):
+    for u in range(200, 701):
         assert piecewiseLinearMap(u, m) == pytest.approx(design(to_scp(u)), abs=1e-6)
 
 
-def test_user_axis_map_is_monotonic_and_ends_at_heavy():
+def test_user_axis_map_is_monotonic_and_ends_at_bold():
     design, breaks = vf.scp_design_axis(_vf_meta())
     _, _, _, mapping, _ = vf.user_axis(POS, design, breaks, 200)
     us = [u for u, _ in mapping]
     ds = [d for _, d in mapping]
     assert us == sorted(us) and ds == sorted(ds)
     assert mapping[0] == (200, pytest.approx(200))
-    assert mapping[-1][0] == 900 and mapping[-1][1] == pytest.approx(design(857))
+    assert mapping[-1][0] == 700 and mapping[-1][1] == pytest.approx(design(700))
 
 
 def test_user_axis_rejects_non_monotonic_pairing():
     design, breaks = vf.scp_design_axis(_vf_meta())
-    bad = dict(POS, Medium=680.0)   # Medium heavier than Bold
+    bad = dict(POS, Medium=680.0)   # Medium heavier than SemiBold
     with pytest.raises(RuntimeError, match="monotonic"):
         vf.user_axis(bad, design, breaks, 200)
 
 
 # --- master_scp_wghts -----------------------------------------------------
 
-def test_masters_are_scp_masters_in_range_plus_regular_and_heavy():
+def test_masters_are_scp_masters_in_range_plus_regular_and_bold():
+    """SCP's 200 and 400 masters, the Regular default (coincident with
+    400, so deduped) and Bold as the axis top; SCP's 900 master sits
+    above Bold and is dropped."""
     design, breaks = vf.scp_design_axis(_vf_meta())
     _, default, hi, _, to_scp = vf.user_axis(POS, design, breaks, 200)
     assert vf.master_scp_wghts([200, 400, 900], to_scp, 200, default, hi) == \
-        [200.0, 400.0, 406.0, 857.0]
+        [200.0, 400.0, 700.0]
 
 
-def test_masters_drop_scp_masters_above_heavy_and_dedupe():
+def test_masters_keep_a_regular_off_the_scp_master():
     design, breaks = vf.scp_design_axis(_vf_meta())
-    pos = dict(POS, Regular=400.0, Heavy=900.0)
+    pos = dict(POS, Regular=406.0)
     _, default, hi, _, to_scp = vf.user_axis(pos, design, breaks, 200)
     assert vf.master_scp_wghts([200, 400, 900], to_scp, 200, default, hi) == \
-        [200.0, 400.0, 900.0]
+        [200.0, 400.0, 406.0, 700.0]
 
 
 def test_masters_take_extra_positions_inside_the_range_only():
@@ -136,7 +142,7 @@ def test_masters_take_extra_positions_inside_the_range_only():
     got = vf.master_scp_wghts([200, 400, 900], to_scp, 200, default, hi,
                               extra=[366.123, 150, 880, 400.2])
     # 366.12 kept (rounded), 150/880 outside, 400.2 within 0.5 of 400 dropped
-    assert got == [200.0, 366.12, 400.0, 406.0, 857.0]
+    assert got == [200.0, 366.12, 400.0, 700.0]
 
 
 # --- name_default_instance_by_font ----------------------------------------
@@ -193,10 +199,10 @@ def _stat_values(font):
 
 def test_add_stat_family_form_uses_usweightclass_values():
     font = _vf_meta()
-    build.add_stat(font, [w for w, _, _ in build.FACES], italic=False)
+    build.add_stat(font, [w for w, _ in build.FACES], italic=False)
     vals = _stat_values(font)
     assert [(n, v) for n, v, _, _ in vals["wght"]] == \
-        [(w, build.WEIGHT_CLASS[w]) for w, _, _ in build.FACES]
+        [(w, build.WEIGHT_CLASS[w]) for w, _ in build.FACES]
     regular = next(x for x in vals["wght"] if x[0] == "Regular")
     assert regular[2] & 0x2 and regular[3] == build.WEIGHT_CLASS["Bold"]
     assert vals["ital"] == [("Regular", 0, 0x2, 1)]
@@ -204,7 +210,7 @@ def test_add_stat_family_form_uses_usweightclass_values():
 
 def test_add_stat_family_form_italic_file_declares_ital_1():
     font = _vf_meta()
-    build.add_stat(font, [w for w, _, _ in build.FACES], italic=True)
+    build.add_stat(font, [w for w, _ in build.FACES], italic=True)
     assert _stat_values(font)["ital"] == [("Italic", 1, 0, None)]
 
 

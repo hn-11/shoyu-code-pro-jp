@@ -12,7 +12,6 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-import pytest
 from fontTools.pens.ttGlyphPen import TTGlyphPen
 from fontTools.ttLib import TTFont
 
@@ -277,25 +276,11 @@ def test_remap_scp_stylistic_sets_shifts_ss_and_sorts_the_feature_list():
     assert set(ls.FeatureIndex) == set(range(len(records)))
 
 
-# --- PROFILES -------------------------------------------------------------
+# --- the family --------------------------------------------------------------
 
-def test_profiles_has_ship_and_term():
-    assert set(build_latin.PROFILES) == {"ship", "term"}
-
-
-def test_ship_profile():
-    subdir, family, ps_family, factor = build_latin.PROFILES["ship"]
-    assert subdir == ""
-    assert family == "Sumi Moji"
-    assert ps_family == "SumiMoji"
-    assert factor == pytest.approx(600 / 667)
-
-
-def test_term_profile_is_unscaled_and_distinctly_named():
-    subdir, family, ps_family, factor = build_latin.PROFILES["term"]
-    assert factor == 1.0
-    assert family != build_latin.PROFILES["ship"][1]
-    assert ps_family != build_latin.PROFILES["ship"][2]
+def test_family_is_the_latin_family_build_reads_back():
+    assert (build_latin.FAMILY, build_latin.PS_FAMILY) == build.LATIN_FAMILY
+    assert build_latin.PS_FAMILY == "SumiMoji"
 
 
 # --- CELL / MONA_K constants ----------------------------------------------

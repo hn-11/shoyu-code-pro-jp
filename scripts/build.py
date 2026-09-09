@@ -1,45 +1,49 @@
 #!/usr/bin/env python3
 """Assemble Sumi Moji JP from live upstreams.
 
-Recipe (Source Han Mono's approach, re-executed against latest releases):
-  - Japanese / full-width layer: Source Han Sans JP (latest, per weight)
-  - Half-width Latin layer:      Sumi Moji (dist/latin, scripts/build_latin.py):
-                                 Source Code Pro VF + Monaspace's punctuation,
-                                 ligatures and one-cell arrows, already
-                                 weight-paired to Source Han Code JP's '=' bar
-                                 at the 600 cell; scaled 10/9 to 667 here
-                                 (Adobe's own SHCJ derivation, re-run)
-  - Source Han Code JP serves as the PAIRING REFERENCE (build_latin.py
-    matches the VF wght to each face's '=' bar) and as the donor for the
-    few 667-cell glyphs SCP lacks (‑ U+2011, ␣ U+2423), plus the vertical
-    line metrics, so the rendered result stays continuous with what SHCJ
-    users know. (The half-width kana are Source Han Sans's own glyphs:
-    500 wide in the 2:3 family as in SHCJ, re-centred into the cell by
-    fit_halfwidth_forms() in the 600-cell families.)
+Sumi Moji JP is an English terminal font with Japanese: the Latin layer
+is Sumi Moji (dist/latin, scripts/build_latin.py — Source Code Pro's
+named instances with Monaspace's punctuation and ligatures), taken as
+it is, and Source Han Sans JP supplies everything Sumi Moji does not
+have. Source Code Pro sets the terms: the 600 cell, the stroke weight of
+each named weight (the Japanese face is the Source Han Sans weight whose
+strokes match), and the line metrics (984 / -273: the line pitch of an
+English terminal font, not a Japanese one).
 
-Italic faces take the Sumi Moji Italic + upright Japanese, matching
-SHCJ's own behavior. The Term family (Latin not scaled down, so paired
-heavier) takes the internal "term" profile from dist/latin/term.
+  - Half-width layer:  every codepoint Sumi Moji covers gets its one-cell
+                       glyph — Latin, Greek, Cyrillic, box drawing, the
+                       ligature-paired arrows and operators included. The
+                       two-cell forms Source Han Sans had for some of
+                       them (JIS-style → α ─) stay reachable under fwid.
+  - Full-width layer:  Source Han Sans JP, untouched: kanji, kana, the
+                       full-width symbols Sumi Moji has no glyph for (① ※
+                       ...). Its proportional leftovers (half-width kana
+                       at 500, Hangul jamo at 920, ﬀ ...) are centred on
+                       the grid (fit_to_grid).
+  - Weights:           Source Code Pro's Light / Regular / Medium /
+                       SemiBold / Bold (usWeightClass 300-700); the
+                       Japanese glyphs come from the Source Han Sans
+                       static whose '=' bar matches that instance's
+                       (FACES).
 
-Families (suffix -> half-width cell):
-  ""     667  2:3 (SHCJ metrics) — editor AND terminal, as SHCJ always was
-  "35"   600  Source Code Pro's native proportion
-  "Term" 600  1:2 terminal grid: full-width widened to 1200 (see VARIANTS)
+Italic faces take the Sumi Moji Italic + upright Japanese.
 
-A separate, narrower 1:2 "Console" experiment (a 500 cell, not Term's 600)
-was built and retired: squeezing SCP's roomy skeleton down that far loses
-too much (25% smaller Latin isotropically, or ~17% condensation +
-stroke-contrast skew anisotropically). The rescale(ky=) machinery stays
-for anyone who wants it back.
+Families (suffix -> full-width advance):
+  ""     1000  3:5 — Sumi Moji plus Japanese at Source Han Sans's own
+               advance; the natural setting for editors
+  "Term" 1200  1:2 — full-width widened to two cells (widen_fullwidth) so
+               a non-grid application lays Japanese out on the terminal
+               grid too. Identical to the base family everywhere else:
+               a terminal renders both the same way.
 
 Usage:
   python scripts/build.py [FILTER]
   FILTER is a run of words: weight names ("Bold"), styles ("Italic" /
-  "Upright") and variants ("35" / "Term" / "base" for the suffix-less
-  family; "" alone is that family). A face must be one of the words of
-  every kind named: "Regular" takes Regular and Regular Italic of every
+  "Upright") and variants ("Term" / "base" for the suffix-less family;
+  "" alone is that family). A face must be one of the words of every
+  kind named: "Regular" takes Regular and Regular Italic of every
   family, "Light Italic" one face per family, "Light Upright Term" one
-  face, "Light Normal base" four (the release builds a family's two
+  face, "Light Regular base" four (the release builds a family's two
   weights per job). Whole words, never a substring match (face_matches).
   With no FILTER, dist/SumiMojiJP*.otf is cleared before building, so a
   full build never leaves faces from an older roster behind. A filtered run
@@ -47,7 +51,6 @@ Usage:
 
 Env (SHS_DIR required, the rest default):
   SHS_DIR   = dir with SourceHanSansJP-<Weight>.otf
-  SHCJ_TTC  = upstream/SourceHanCodeJP.ttc (default)
   LATIN_DIR = dist/latin (default) — scripts/build_latin.py's output; it
               needs SCP_VF_U / SCP_VF_I / MONA_VF and must run first
 
@@ -83,17 +86,16 @@ from fontTools.pens.boundsPen import BoundsPen
 from fontTools.pens.recordingPen import RecordingPen
 from fontTools.pens.t2CharStringPen import T2CharStringPen
 from fontTools.pens.transformPen import TransformPen
-from fontTools.ttLib import TTCollection, TTFont
+from fontTools.ttLib import TTFont
 from fontTools.ttLib.tables import otTables
 from fontTools.varLib import instancer
 from fontTools.varLib.instancer import instantiateVariableFont
 
 ROOT = Path(__file__).resolve().parent.parent
-CELL = 667          # half-width advance of the 2:3 metrics
+SCP_CELL = 600      # Source Code Pro advance (upm 1000)
+CELL = SCP_CELL     # the half-width cell: Sumi Moji's, as it is
 FULLWIDTH = 1000    # full-width advance of the CJK layer (upm 1000)
 MONA_CELL = 1240    # Monaspace advance (upm 2000)
-SCP_CELL = 600      # Source Code Pro advance (upm 1000)
-SCP_K = CELL / SCP_CELL  # 10/9, Adobe's SHCJ scale factor
 
 # Adobe-Japan1-7 defines CIDs 0..23057; a PDF consumer that assumes the
 # ROS is really Adobe-Japan1 decodes those CIDs as their standard
@@ -104,8 +106,8 @@ CID_MAX = 65534
 
 # Unicode Combining Diacritical Marks block. SCP has these (as spacing
 # clones centered in their own 600-unit cell — SCP is monospace, so even a
-# bare accent gets a full column), SHCJ doesn't; graft_halfwidth() grafts
-# them at 0 advance instead of CELL so they behave as real combining marks.
+# bare accent gets a full column); graft_halfwidth() grafts them at 0
+# advance instead of CELL so they behave as real combining marks.
 COMBINING_MARKS = range(0x0300, 0x0370)
 
 # Provenance stamped into every face (name IDs 0/3/8/11, OS/2 achVendID).
@@ -115,58 +117,52 @@ PROJECT_URL = "https://github.com/hn-11/shoyu-code-pro-jp"
 PROJECT_COPYRIGHT = f"Copyright 2026 hn-11 ({PROJECT_URL})"
 VENDOR_ID = "SUMI"
 
-# OS/2 usWeightClass per output weight, and the STAT table's wght axis
-# values — the same numbers Source Han Sans declares for these faces.
-WEIGHT_CLASS = {"Light": 300, "Normal": 350, "Regular": 400,
-                "Medium": 500, "Bold": 700, "Heavy": 900}
+# OS/2 usWeightClass per output weight, the STAT table's wght axis values
+# and the Source Code Pro VF wght the Latin is instanced at (Source Code
+# Pro's own named instances: its user wght is usWeightClass).
+WEIGHT_CLASS = {"Light": 300, "Regular": 400, "Medium": 500,
+                "SemiBold": 600, "Bold": 700}
 
 
-# The Latin donor faces scripts/build_latin.py writes: profile -> (subdir
-# under LATIN_DIR, family name, PostScript family). "ship" is the Sumi
-# Moji that is released; "term" is paired to SHCJ's bar at 600 unscaled,
-# for the Term family only.
-LATIN_PROFILES = {
-    "ship": ("", "Sumi Moji", "SumiMoji"),
-    "term": ("term", "Sumi Moji Term", "SumiMojiTerm"),
-}
+# The Latin donor faces scripts/build_latin.py writes under LATIN_DIR:
+# (family name, PostScript family). The released Sumi Moji, exactly.
+LATIN_FAMILY = ("Sumi Moji", "SumiMoji")
 
 
-def latin_face_path(latin_dir, profile, weight, italic):
-    subdir, _, ps_family = LATIN_PROFILES[profile]
-    return (Path(latin_dir) / subdir
-            / f"{ps_family}-{weight}{'Italic' if italic else ''}.otf")
+def latin_face_path(latin_dir, weight, italic):
+    _, ps_family = LATIN_FAMILY
+    return Path(latin_dir) / f"{ps_family}-{weight}{'Italic' if italic else ''}.otf"
 
 
 class Variant(NamedTuple):
-    cell: int    # half-width advance
-    comp: bool   # take the "term" Latin profile: paired to SHCJ's bar at
-                 # 600 unscaled, so after the rescale the Latin keeps
-                 # SHCJ's CJK pairing (69/1000em bar). Without comp the
-                 # rescaled Latin keeps Source Code Pro's native weight.
-    term: bool   # widen full-width advances to 2 cells (centered); EAW-
-                 # ambiguous codepoints take a one-cell Monaspace / SCP glyph
-                 # where one exists, else stay full-width (narrow_ambiguous).
+    term: bool   # widen full-width advances to 2 cells (widen_fullwidth)
 
 
 VARIANTS = {
-    "": Variant(667, False, False),      # 2:3, the SHCJ look — editor
-    "35": Variant(600, False, False),    # SCP native size AND native weight
-    "Term": Variant(600, True, True),    # 1:2 terminal grid (600:1200)
+    "": Variant(False),      # 3:5 — Sumi Moji plus Japanese at 1000
+    "Term": Variant(True),   # 1:2 terminal grid (600:1200)
 }
 
-# (output weight name, SHCJ reference face, Source Han Sans static file)
-# The Latin donor (build_latin.py) pairs Monaspace's wght to each SHCJ
-# face's bar; Monaspace bottoms out at 200 (bar ~59u at our scale), SHCJ
-# Light measures 47u and the surplus is eroded away there. ExtraLight
-# would need 14u/side, which hollows out the dots of ':=' and '...', so
-# it is not built — nobody codes in a hairline anyway.
+# (output weight name, Source Han Sans static file): the Source Han Sans
+# weight whose '=' bar (U+FF1D, in the same 1000 em) matches the Source
+# Code Pro instance the Latin comes from — measured, not by name:
+#
+#   Light    SCP 300  37u   Source Han Sans ExtraLight  36u
+#   Regular  SCP 400  62u   Source Han Sans Normal      63u
+#   Medium   SCP 500  73u   Source Han Sans Regular     69u
+#   SemiBold SCP 600  83u   Source Han Sans Medium      83u
+#   Bold     SCP 700 104u   Source Han Sans Bold       101u
+#
+# (Source Han Sans's own Light 49u, Heavy 120u and Source Code Pro's
+# ExtraLight 28u / Black 120u have no partner in the other family and are
+# not built.) Monaspace bottoms out at wght 200 (bar ~53u at our scale);
+# Light's surplus is eroded away in the static faces (VFSource.matched).
 FACES = [
-    ("Light", "Source Han Code JP L", "SourceHanSansJP-Light.otf"),
-    ("Normal", "Source Han Code JP N", "SourceHanSansJP-Normal.otf"),
-    ("Regular", "Source Han Code JP R", "SourceHanSansJP-Regular.otf"),
-    ("Medium", "Source Han Code JP M", "SourceHanSansJP-Medium.otf"),
-    ("Bold", "Source Han Code JP R Bold", "SourceHanSansJP-Bold.otf"),
-    ("Heavy", "Source Han Code JP H", "SourceHanSansJP-Heavy.otf"),
+    ("Light", "SourceHanSansJP-ExtraLight.otf"),
+    ("Regular", "SourceHanSansJP-Normal.otf"),
+    ("Medium", "SourceHanSansJP-Regular.otf"),
+    ("SemiBold", "SourceHanSansJP-Medium.otf"),
+    ("Bold", "SourceHanSansJP-Bold.otf"),
 ]
 
 
@@ -429,6 +425,20 @@ class VFSource:
         lo, _ = self.axis_range("wght", (200.0, 800.0))
         return self._probe_bar(dict(self._axes_for(slant), wght=float(lo))) * self.scale
 
+    def at(self, wght, slant=None):
+        """The instance at an exact `wght` (no bar search): what the Latin
+        faces are — Source Code Pro's own named instances. Cached like
+        matched()'s; `residual_slant` as there."""
+        axes = self._axes_for(slant)
+        key = ("at", float(wght), axes.get("slnt"))
+        if key not in self._cache:
+            inst = self._instance(dict(axes, wght=float(wght)))
+            inst.wght = float(wght)
+            inst.residual_slant = (slant - axes["slnt"]
+                                   if slant is not None and "slnt" in axes else 0.0)
+            self._cache[key] = inst
+        return self._cache[key]
+
     def matched(self, target_units, slant=None, erode=True):
         key = (round(target_units), slant if slant is None else round(slant), erode)
         if key in self._cache:
@@ -444,7 +454,7 @@ class VFSource:
                                if slant is not None and "slnt" in axes else 0.0)
         t = bar_thickness(inst, inst.getBestCmap()[ord("=")])
         # the axis floor may stop short of a thin target (Monaspace's
-        # wght 200 is 59u at our scale; SHCJ Light measures 47u). Record
+        # wght 200 is 53u at our scale; SCP Light measures 37u). Record
         # the surplus per side, in this font's units, and mona_glyphset()
         # erodes the outlines by it — see erode_path(). A VF master can't
         # take that path (erosion is a pathops boolean op on a fixed
@@ -603,7 +613,7 @@ def vmtx_donor(font, fullwidth=True):
 def note_redrawn(font, names):
     """Remember glyphs whose charstring WE generated. T2CharStringPen output
     carries no hints, so every glyph that passes through it — grafted,
-    rescaled, shifted, widened — is re-hinted by autohint_face() after the
+    fitted, shifted, widened — is re-hinted by autohint_face() after the
     face is saved. Source Han Sans's own untouched glyphs keep theirs."""
     redrawn = getattr(font, "_redrawn", None)
     if redrawn is None:
@@ -665,120 +675,68 @@ def set_cmap(font, mapping, add_new=False):
                 table.cmap[cp] = name
 
 
-def graft_halfwidth(base, scp, ref):
-    """Give `base` (Source Han Sans JP) its half-width layer. `scp` is
-    the Latin donor face (Sumi Moji, dist/latin: Source Code Pro's
-    designs already weight-paired), `ref` the SHCJ face for this weight.
+def graft_halfwidth(base, latin):
+    """Give `base` (Source Han Sans JP) its half-width layer: every
+    codepoint the Latin donor (Sumi Moji, dist/latin) has gets the
+    donor's one-cell glyph, at the donor's own size — Latin, Greek,
+    Cyrillic, box drawing, the ligature-paired arrows and operators,
+    everything an English terminal font sets in one cell. The glyph
+    Source Han Sans had for the codepoint (full-width for → ─ ≠ in the
+    JIS tradition, proportional for A é α) is left in the font and
+    reported in `replaced`: build_face wires the two-cell forms under
+    fwid (fullwidth_forms).
 
-    Three kinds of codepoint get a new 667-advance glyph:
-      - SHCJ maps it to its 667 cell: outline from the SCP instance scaled
-        10/9 when SCP has it, else copied verbatim from the SHCJ reference
-        face (‑ U+2011 and ␣ U+2423 — all that SCP never had). SHCJ's
-        half-width kana are NOT in this set — SHCJ draws them at 500, so
-        they stay Source Han Sans's own glyphs and fit_halfwidth_forms()
-        re-centres them in the 600-cell families;
-      - SHCJ lacks it but SCP has it (ł ğ ş ı ř ₽ ... — some 600 Latin
-        Extended / Cyrillic / symbol codepoints Polish, Turkish, Czech and
-        friends need): SCP, so those languages don't fall back to another
-        font mid-word;
-      - SHCJ maps it to an advance that is neither the cell nor full-width
-        (ς 482, ⁴ 411 ... proportional leftovers that break the grid) and
-        SCP has it: SCP.
-    Codepoints SHCJ keeps full-width (→, ①, ...) stay full-width — and
-    where Source Han Sans's own glyph for one of them is proportional
-    (− 555, ˇ 600, ˙ 500: SHS never made those monospaced), SHCJ's
-    full-width glyph is copied in, so the 2:3 grid holds everywhere SHCJ's
-    does.
+    Combining marks (U+0300-U+036F) are the one case that must NOT get
+    CELL: SCP draws them as if standalone — a spacing clone centered in
+    its own 600-unit cell, same as every other SCP glyph — but a proper
+    combining accent has to have 0 advance so 'k' + U+0301 shapes as one
+    cell, not two. Grafted at 0 advance, with the outline shifted left by
+    one CELL so the ink lands centered over the PRECEDING glyph's cell.
 
-    Combining marks (U+0300-U+036F) are the one SCP-only case that must NOT
-    get CELL: SCP draws them as if standalone — a spacing clone centered in
-    its own 600-unit cell, same as every other SCP glyph (there is no 0
-    advance to inherit; every instance at every weight measures 600) — but
-    a proper combining accent has to have 0 advance so 'k' + U+0301 shapes
-    as one cell, not two. Grafted here at 0 advance, with the outline
-    additionally shifted left by one CELL so the ink — centered in SCP's
-    own cell — lands centered over the PRECEDING glyph's cell instead of
-    its own. Returns (from_scp, from_ref, default_map, marks), where
-    `marks` is the set of grafted 0-advance glyph names, for rescale() to
-    still track (see there).
-    """
-    ref_cm, ref_hm = ref.getBestCmap(), ref["hmtx"]
-    scp_cm = scp.getBestCmap()
-    scp_gs, ref_gs = scp.getGlyphSet(), ref.getGlyphSet()
+    Returns (grafted glyph count, {codepoint: the Source Han Sans glyph
+    replaced}, {donor glyph: our glyph} for the variant wiring, the set
+    of grafted 0-advance mark glyphs)."""
+    scp_cm, scp_gs = latin.getBestCmap(), latin.getGlyphSet()
     td, bcm, fd_index, private, vdon = append_context(base)
-    vdon_full = vmtx_donor(base, fullwidth=True)
-
     new_map = {}
-    default_map = {}  # scp glyph name -> our glyph name (for variant wiring)
-    made = {}         # source glyph -> our glyph (dedup shared sources)
-    marks = set()     # 0-advance combining marks grafted from SCP — their
-                       # OUTLINE still needs the family's cell rescale later
-                       # even though their advance stays 0 (see rescale())
-    from_scp = from_ref = 0
-    bhm = base["hmtx"]
-    for cp in sorted(set(ref_cm) | set(scp_cm)):
-        g = ref_cm.get(cp)
-        ref_adv = ref_hm[g][0] if g is not None else None
-        if ref_adv == CELL:
-            pass                                   # SHCJ's half-width set
-        elif cp in scp_cm and (ref_adv is None or ref_adv not in (0, FULLWIDTH)):
-            pass                                   # SCP-only, or off-grid
-        elif (ref_adv == FULLWIDTH and cp in bcm
-              and bhm[bcm[cp]][0] not in (0, FULLWIDTH)):
-            # SHCJ made it full-width; SHS's own glyph is proportional
-            key = (("ref", g), False)
-            if key not in made:
-                pen = T2CharStringPen(pen_width(private, FULLWIDTH), ref_gs)
-                draw_clean([(ref_gs, g, (1, 0, 0, 1, 0, 0))], pen)
-                name = alloc_glyph_name(base)
-                append_glyph(base, td, name, pen.getCharString(private=private),
-                             fd_index, FULLWIDTH, None, vdon_full)
-                made[key] = name
-                from_ref += 1
-            new_map[cp] = made[key]
-            continue
-        else:
-            continue
-        # several codepoints often share one source glyph (SCP's own cmap
-        # aliases, SHCJ's kana forms) — one grafted glyph per source keeps
-        # default_map 1:1 so zero/cv/salt wiring survives for all of them
-        src = ("scp", scp_cm[cp]) if cp in scp_cm else ("ref", g)
-        is_mark = src[0] == "scp" and cp in COMBINING_MARKS
-        key = (src, is_mark)   # a source glyph shared by a mark and a
-        if key not in made:    # spacing codepoint gets both renderings
+    default_map = {}  # donor glyph name -> our glyph name (variant wiring)
+    made = {}         # (donor glyph, is_mark) -> our glyph (dedup aliases)
+    marks = set()
+    replaced = {}
+    for cp in sorted(scp_cm):
+        src = scp_cm[cp]
+        is_mark = cp in COMBINING_MARKS
+        # several codepoints often share one donor glyph (SCP's cmap
+        # aliases) — one grafted glyph per source keeps default_map 1:1
+        # so zero/cv/salt wiring survives for all of them; a source glyph
+        # shared by a mark and a spacing codepoint gets both renderings
+        key = (src, is_mark)
+        if key not in made:
             width = 0 if is_mark else CELL
             pen = T2CharStringPen(pen_width(private, width), scp_gs)
-            if src[0] == "scp":
-                # is_mark: shift left by one CELL so ink SCP centered in
-                # its OWN cell instead lands over the PRECEDING glyph's
-                dx = -CELL if is_mark else 0
-                draw_clean([(scp_gs, src[1], (SCP_K, 0, 0, SCP_K, dx, 0))], pen)
-                if not is_mark:
-                    from_scp += 1
-            else:
-                draw_clean([(ref_gs, g, (1, 0, 0, 1, 0, 0))], pen)
-                from_ref += 1
+            draw_clean([(scp_gs, src, (1, 0, 0, 1, -CELL if is_mark else 0, 0))], pen)
             name = alloc_glyph_name(base)
             append_glyph(base, td, name, pen.getCharString(private=private),
                          fd_index, width, None, vdon)
             made[key] = name
             if is_mark:
                 marks.add(name)
-            # variant wiring keys off the SCP glyph, one rendering per
-            # glyph: for a source glyph cmap'd to both a mark and a spacing
-            # codepoint (none today) the spacing one is wired — variants are
-            # chosen on letters and symbols, the accent keeps its default
-            if src[0] == "scp" and (not is_mark or src[1] not in default_map):
-                default_map[src[1]] = name
+            # variant wiring keys off the donor glyph, one rendering per
+            # glyph: the spacing one is wired — variants are chosen on
+            # letters and symbols, the accent keeps its default
+            if not is_mark or src not in default_map:
+                default_map[src] = name
         new_map[cp] = made[key]
+        if cp in bcm:
+            replaced[cp] = bcm[cp]
 
     # Drop legacy non-Unicode subtables (Mac (1,0) format 6): they still
     # point at the old proportional Latin, and FontForge unifies subtables
     # on load — the conflict silently drops ~40 ASCII slots after
     # cidFlatten, which is how the Nerd Font variants lost 'M' et al.
     base["cmap"].tables = [t for t in base["cmap"].tables if t.isUnicode()]
-    set_cmap(base, new_map, add_new=True)   # SCP-only codepoints are new entries
-    return from_scp, from_ref, default_map, marks
+    set_cmap(base, new_map, add_new=True)   # donor-only codepoints are new entries
+    return len(made), replaced, default_map, marks
 
 
 def _remap_scp_tag(tag):
@@ -874,7 +832,7 @@ def import_scp_variants(base, scp, default_map, marks):
                     width, dx = (0, -CELL) if is_mark else (CELL, 0)
                     pen = T2CharStringPen(pen_width(private, width), scp_gs)
                     draw_clean(
-                        [(scp_gs, dst, (SCP_K, 0, 0, SCP_K, dx, 0))], pen)
+                        [(scp_gs, dst, (1, 0, 0, 1, dx, 0))], pen)
                     name = alloc_glyph_name(base)
                     append_glyph(
                         base, td, name,
@@ -887,19 +845,21 @@ def import_scp_variants(base, scp, default_map, marks):
     return tag_maps, tag_names
 
 
-def copy_line_metrics(base, ref):
-    """Keep SHCJ's vertical rhythm — the rendered line height must not
-    change. Width metadata (isFixedPitch, PANOSE proportion, xAvgCharWidth,
-    x/cap height) is NOT copied: SHCJ declares itself proportional, which
-    hides it from monospace-only font pickers; see set_monospace_metadata()."""
+def copy_line_metrics(base, latin):
+    """The line pitch of an English terminal font: hhea and typo ascender
+    / descender / line gap from the Latin donor (Source Code Pro's 984 /
+    -273 / 0, hhea and typo alike, USE_TYPO_METRICS set), so a line of
+    Sumi Moji JP is as tall as a line of Source Code Pro, not of Source
+    Han Sans (1160 / -288, 15% more). Source Han Sans's own kanji body
+    (880 / -120) sits inside. usWinAscent / Descent stay Source Han
+    Sans's (1160 / 288): a GDI-era clipping bound, not a line height."""
     for tbl, attrs in (
         ("hhea", ("ascent", "descent", "lineGap")),
-        ("OS/2", ("sTypoAscender", "sTypoDescender", "sTypoLineGap",
-                  "usWinAscent", "usWinDescent")),
+        ("OS/2", ("sTypoAscender", "sTypoDescender", "sTypoLineGap")),
     ):
         for a in attrs:
-            setattr(base[tbl], a, getattr(ref[tbl], a))
-    base["OS/2"].panose = ref["OS/2"].panose
+            setattr(base[tbl], a, getattr(latin[tbl], a))
+    base["OS/2"].fsSelection |= 1 << 7   # USE_TYPO_METRICS
 
 
 # Representative sample chars per ulCodePageRange1 bit: a bit is set when
@@ -932,44 +892,20 @@ def recalc_codepage_range(font):
     os2.ulCodePageRange1 = bits
 
 
-# Term: ambiguous-width symbols that pair with a ligature take Monaspace's
-# one-cell glyph rather than SCP's, so '←' beside '<-' (and ≠ / !=, ≤ / <=,
-# … / ...) shares its stroke weight and arrowhead. Only in Term — in the
-# 2:3 families these are full-width Source Han Sans glyphs that fill the
-# em, which a 600-unit arrow centered in 1000 would not.
+# The symbols that pair with a ligature take Monaspace's one-cell glyph
+# rather than SCP's (in Sumi Moji, build_latin.py), so '←' beside '<-'
+# (and ≠ / !=, ≤ / <=, … / ...) shares its stroke weight and arrowhead.
+# Their two-cell forms live under fwid (stretch_arrows for the arrows).
 MONA_AMBIGUOUS = "←→↑↓⇐⇒⇔≠≤≥…"
 ARROWS_H = "←→⇐⇒⇔"   # shaft runs along x
 ARROWS_V = "↑↓"      # shaft runs along y
-
-
-def latin_onecell(font, cell, latin, chars=MONA_AMBIGUOUS):
-    """One-cell glyphs for `chars` copied from the Latin donor (Monaspace's
-    designs, already weight-paired and baseline-aligned there) at this
-    family's cell. Appends them and returns {codepoint: glyph name}; the
-    cmap is NOT touched — Term makes them the default (narrow_ambiguous),
-    the 2:3 / 35 families expose them under hwid / ss09."""
-    td, cmap, fd_index, private, vdon = append_context(font)
-    lcm, lgs = latin.getBestCmap(), latin.getGlyphSet()
-    k = cell / SCP_CELL
-    out = {}
-    for ch in chars:
-        cp = ord(ch)
-        if cp not in cmap or cp not in lcm:
-            continue
-        pen = T2CharStringPen(pen_width(private, cell), lgs)
-        draw_clean([(lgs, lcm[cp], (k, 0, 0, k, 0, 0))], pen)
-        name = alloc_glyph_name(font)
-        append_glyph(font, td, name, pen.getCharString(private=private),
-                     fd_index, cell, None, vdon)
-        out[cp] = name
-    return out
 
 
 def latin_ligatures(font, latin, latin_path, alts, ligatures):
     """Append the ligature glyphs by copying them out of the Latin donor:
     each sequence is shaped there (HarfBuzz, calt+liga) to find its glyph,
     and again with cv99 for the alternate design. Drawn at CELL per input
-    character (the donor's 600 scaled 10/9). Returns {seq: glyph name};
+    character, as the donor has them. Returns {seq: glyph name};
     alternates land in `alts`."""
     import uharfbuzz as hb
     # 'A' like every other appender: add_latin_fd() later re-homes all
@@ -1001,7 +937,7 @@ def latin_ligatures(font, latin, latin_path, alts, ligatures):
             continue
         width = CELL * spec["cells"]
         pen = T2CharStringPen(pen_width(private, width), lgs)
-        draw_clean([(lgs, glyphs[0], (SCP_K, 0, 0, SCP_K, 0, 0))], pen)
+        draw_clean([(lgs, glyphs[0], (1, 0, 0, 1, 0, 0))], pen)
         name = alloc_glyph_name(font)
         append_glyph(font, td, name, pen.getCharString(private=private),
                      fd_index, width, None, vdon)
@@ -1009,7 +945,7 @@ def latin_ligatures(font, latin, latin_path, alts, ligatures):
         alt = shaped(seq, {"calt": True, "liga": True, "cv99": True})
         if len(alt) == 1 and alt[0] != glyphs[0]:
             pen = T2CharStringPen(pen_width(private, width), lgs)
-            draw_clean([(lgs, alt[0], (SCP_K, 0, 0, SCP_K, 0, 0))], pen)
+            draw_clean([(lgs, alt[0], (1, 0, 0, 1, 0, 0))], pen)
             alt_name = alloc_glyph_name(font)
             append_glyph(font, td, alt_name, pen.getCharString(private=private),
                          fd_index, width, None, vdon)
@@ -1106,15 +1042,17 @@ ARROW_SOURCE = {
 }
 
 
-def stretch_arrows(font, added, slant=0.0, chars=ARROWS_H + ARROWS_V):
-    """2:3 / 35 families: full-width arrows built from the ligature glyphs
-    (ARROW_SOURCE) so they share head and stroke with '->' '=>' '<=>',
-    but keep Source Han Sans's full-width advance and ink extent — the
-    shaft is shortened or lengthened (stretch_path) to SHS's ink length.
-    ⇐ mirrors '=>', ↑ ↓ rotate '->' and take SHS's height. Italic: the
-    slant is taken out before mirroring / rotating / resizing and put
-    back after, so a slanted vertical shaft stays straight. Replaces the
-    cmap default; returns {codepoint: (SHS glyph name, new glyph name)}."""
+def stretch_arrows(font, added, fullwidth, slant=0.0, chars=ARROWS_H + ARROWS_V):
+    """The fwid forms of the arrows: full-width arrows built from the
+    ligature glyphs (ARROW_SOURCE) so they share head and stroke with
+    '->' '=>' '<=>', but keep Source Han Sans's full-width advance and
+    ink extent — the shaft is shortened or lengthened (stretch_path) to
+    SHS's ink length. ⇐ mirrors '=>', ↑ ↓ rotate '->' and take SHS's
+    height. Italic: the slant is taken out before mirroring / rotating /
+    resizing and put back after, so a slanted vertical shaft stays
+    straight. `fullwidth` is {codepoint: SHS's full-width glyph}
+    (graft_halfwidth's `replaced`); the cmap is not touched. Returns
+    {codepoint: new glyph name}."""
     td, cmap, fd_index, private, vdon = append_context(font, fullwidth=True)
     gs = font.getGlyphSet()
     t = math.tan(math.radians(-slant))
@@ -1122,9 +1060,9 @@ def stretch_arrows(font, added, slant=0.0, chars=ARROWS_H + ARROWS_V):
     for ch in chars:
         cp = ord(ch)
         seq, op = ARROW_SOURCE[ch]
-        if cp not in cmap or seq not in added:
+        if cp not in fullwidth or seq not in added:
             continue
-        old = cmap[cp]
+        old = fullwidth[cp]
         adv = font["hmtx"][old][0]
         shs = _bounds(gs, old)
         if shs is None:
@@ -1154,113 +1092,53 @@ def stretch_arrows(font, added, slant=0.0, chars=ARROWS_H + ARROWS_V):
         name = alloc_glyph_name(font)
         append_glyph(font, td, name, pen.getCharString(private=private),
                      fd_index, adv, None, vdon)
-        swapped[cp] = (old, name)
-    set_cmap(font, {cp: name for cp, (_, name) in swapped.items()})
-    print(f"  full-width arrows from the ligatures: {len(swapped)}")
+        swapped[cp] = name
+    print(f"  full-width arrows from the ligatures (fwid): {len(swapped)}")
     return swapped
 
 
-def narrow_ambiguous(font, cell, latin):
-    """Term (1:2) only: settle the East-Asian-Width Ambiguous/Narrow
-    codepoints that carry full-width (1000) glyphs, the way HackGen Console
-    / PlemolJP Console / Moralerspace HW do:
+def fit_to_grid(font, cell, glyph_names=None):
+    """Centre Source Han Sans's proportional leftovers on the grid: every
+    cmap'd glyph whose advance is neither 0 nor a whole number of cells
+    nor of full widths — the half-width kana and symbols at 500 (half of
+    the 1000 em, on neither grid), Hangul jamo at 920, ﬀ ﬃ ﬄ, the
+    enclosed 🄯 — goes to one cell when it fits (advance <= cell), else
+    to the next whole number of full widths (⸻ 2459 -> 3000); the outline
+    is centred in the new advance. Runs before widen_fullwidth, which
+    then takes the full-width ones along.
 
-      - MONA_AMBIGUOUS (arrows, ≠ ≤ ≥ …): Sumi Moji's one-cell glyph —
-        Monaspace's, from the same instance as the ligatures they sit
-        next to.
-      - Sumi Moji has the character (× ÷ ° ■ Greek, accented Latin,
-        Cyrillic, and all 160 box-drawing / block elements): its (Source
-        Code Pro's) one-cell glyph, already weight-matched — a real
-        half-width design instead of a shrunken full-width one. SCP's box
-        drawing runs -400..1000 so it tiles under any line spacing.
-      - everything else (① ※ ⌘ ★ ...): left full-width. Terminals that
-        count ambiguous as narrow overprint the next cell, exactly as they
-        do with HackGen; `compatibility.ambiguousWidth: wide` (Windows
-        Terminal) or the equivalent elsewhere gives them their two cells.
-
-    CJK (W/F) stays two cells; the original glyphs are untouched (the
-    MONA_AMBIGUOUS ones come back under fwid, see add_width_alternates).
-    Must run BEFORE widen_fullwidth, i.e. while full-width is still 1000,
-    and AFTER rescale, so the imported glyphs land at the final cell size.
-    Returns {codepoint: (old full-width glyph, new one-cell glyph)}."""
-    td, cmap, fd_index, private, vdon = append_context(font)
-    scp_cm, scp_gs = latin.getBestCmap(), latin.getGlyphSet()
-    scp_k = cell / SCP_CELL
-    onecell = latin_onecell(font, cell, latin)
-    n_latin = len(onecell)
-    swapped = {}
-    made = {}  # scp glyph -> one-cell glyph (dedup shared sources)
-    n_scp = n_wide = 0
-    for cp, g in sorted(cmap.items()):
-        if font["hmtx"][g][0] != FULLWIDTH:
-            continue
-        if unicodedata.east_asian_width(chr(cp)) in ("W", "F"):
-            continue
-        if cp in onecell:
-            swapped[cp] = (g, onecell[cp])
-            continue
-        if cp not in scp_cm:
-            n_wide += 1
-            continue
-        src = scp_cm[cp]
-        if src not in made:
-            pen = T2CharStringPen(pen_width(private, cell), scp_gs)
-            draw_clean([(scp_gs, src, (scp_k, 0, 0, scp_k, 0, 0))], pen)
-            n_scp += 1
-            name = alloc_glyph_name(font)
-            append_glyph(font, td, name, pen.getCharString(private=private),
-                         fd_index, cell, None, vdon)
-            made[src] = name
-        swapped[cp] = (g, made[src])
-    set_cmap(font, {cp: name for cp, (_, name) in swapped.items()})
-    print(f"  ambiguous width: {n_latin} one-cell (Monaspace designs via the "
-          f"Latin donor), {n_scp} from SCP, "
-          f"{n_wide} left full-width")
-    return swapped
-
-
-# the East Asian Width "H" (halfwidth) block: half-width kana and
-# punctuation U+FF61-FFDC, then the half-width symbols ￨ ￩ ￪ ￫ ￬ ￭ ￮
-# U+FFE8-FFEE (U+FFDD-FFE7 hold no half-width forms)
-HALFWIDTH_FORMS = ((0xFF61, 0xFFDC), (0xFFE8, 0xFFEE))
-
-
-def fit_halfwidth_forms(font, cell, glyph_names=None):
-    """600-cell families only: SHCJ draws the half-width forms (ｱ ｡ ｢ ...)
-    at 500 — half of its 1000 em, which lands on neither its own 667 cell
-    nor ours. The 2:3 family keeps that as SHCJ's look; here the glyph is
-    centered in one cell so the terminal grid holds. Runs after rescale
-    (the 500 glyphs are untouched by it: 500 % 667 != 0).
-
-    `glyph_names` (when given) replaces the default HALFWIDTH_FORMS
-    codepoint scan with an explicit iterable of glyph names — used to
-    also center hwid's own 500-advance alternates (see hwid_targets())."""
+    `glyph_names` (when given) replaces the cmap scan with an explicit
+    iterable of glyph names — used to also centre hwid's own 500-advance
+    alternates (see hwid_targets()). Returns the number of glyphs
+    moved."""
     cff = font["CFF "].cff
     td = cff[cff.fontNames[0]]
     gs = font.getGlyphSet()
     hmtx = font["hmtx"]
     done = set()
+    moved = 0
     if glyph_names is None:
-        cmap = font.getBestCmap()
-        glyph_names = (cmap.get(cp) for lo, hi in HALFWIDTH_FORMS
-                       for cp in range(lo, hi + 1))
+        glyph_names = font.getBestCmap().values()
     for name in glyph_names:
         if name is None or name in done:
             continue
-        adv, lsb = hmtx.metrics[name]
-        if adv == 0 or adv == cell:
-            continue
-        shift = (cell - adv) // 2
-        gid = font.getGlyphID(name)
-        private = td.FDArray[td.FDSelect[gid]].Private
-        pen = T2CharStringPen(pen_width(private, cell), gs)
-        gs[name].draw(TransformPen(pen, (1, 0, 0, 1, shift, 0)))
-        td.CharStrings.charStringsIndex[td.CharStrings.charStrings[name]] = \
-            pen.getCharString(private=private)
-        hmtx.metrics[name] = (cell, lsb + shift)
         done.add(name)
-    note_redrawn(font, done)
-    return len(done)
+        adv, lsb = hmtx.metrics[name]
+        if adv <= 0 or adv % cell == 0 or adv % FULLWIDTH == 0:
+            continue
+        new = cell if adv <= cell else -(-adv // FULLWIDTH) * FULLWIDTH
+        shift = (new - adv) // 2
+        if hasattr(td, "FDArray"):   # CID-keyed (the JP faces)
+            private = td.FDArray[td.FDSelect[font.getGlyphID(name)]].Private
+        else:
+            private = td.Private
+        pen = T2CharStringPen(pen_width(private, new), gs)
+        gs[name].draw(TransformPen(pen, (1, 0, 0, 1, shift, 0)))
+        td.CharStrings[name] = pen.getCharString(private=private)
+        hmtx.metrics[name] = (new, lsb + shift)
+        note_redrawn(font, [name])
+        moved += 1
+    return moved
 
 
 _STACK_CLEARING = {"hstem", "vstem", "hstemhm", "vstemhm", "hintmask", "cntrmask",
@@ -1332,16 +1210,15 @@ def shift_charstring(cs, dx, width, private):
 
 def widen_fullwidth(font, cell):
     """Term variant: widen every full-width glyph's advance to two cells
-    (2 x cell) and center the unchanged 1000-unit outline. The Latin layer
-    is untouched by this pass; the terminal grid becomes exact (CJK = two
-    cells, symmetric padding instead of a right-side gap).
+    (2 x cell; an n-full-width glyph such as ⸻ to 2n cells) and center
+    the unchanged outline. The Latin layer is untouched by this pass; the
+    terminal grid becomes exact (CJK = two cells, symmetric padding
+    instead of a right-side gap).
 
     The outlines are moved inside their charstrings (shift_charstring),
     so Source Han Sans's own hints survive on the 17,000 glyphs this
     touches — redrawing them cost autohint 100 seconds per face; a
     glyph shift_charstring declines is redrawn and re-hinted."""
-    full = 2 * cell
-    shift = (full - FULLWIDTH) // 2
     cff = font["CFF "].cff
     cff.desubroutinize()   # shift_charstring reads a flat program
     td = cff[cff.fontNames[0]]
@@ -1351,8 +1228,10 @@ def widen_fullwidth(font, cell):
     shifted = 0
     for name in font.getGlyphOrder():
         adv, lsb = hmtx.metrics[name]
-        if adv != FULLWIDTH:
+        if adv <= 0 or adv % FULLWIDTH:
             continue
+        full = (adv // FULLWIDTH) * 2 * cell
+        shift = (full - adv) // 2
         gid = font.getGlyphID(name)
         private = td.FDArray[td.FDSelect[gid]].Private
         if shift_charstring(td.CharStrings[name], shift, full, private):
@@ -1365,7 +1244,7 @@ def widen_fullwidth(font, cell):
     for name, cs in redrawn.items():
         td.CharStrings.charStringsIndex[td.CharStrings.charStrings[name]] = cs
     note_redrawn(font, redrawn)
-    print(f"  full-width widened to {full}: {shifted} shifted with their hints, "
+    print(f"  full-width widened to {2 * cell}: {shifted} shifted with their hints, "
           f"{len(redrawn)} redrawn")
 
 
@@ -1843,23 +1722,29 @@ def drop_features(font, tags):
             ls.FeatureCount = len(ls.FeatureIndex)
 
 
-def hwid_targets(font):
-    """Glyph names reachable via the 'hwid' feature (Single or Alternate
-    subst) — SHS's own half-width alternates, drawn at its native 500-unit
-    half cell (half of the 1000 em), not our 600-unit one. Used to center
-    them onto the terminal grid (see fit_halfwidth_forms())."""
+def feature_map(font, tag):
+    """{glyph: substitute} over every Single / Alternate subst reachable
+    under `tag` — Source Han Sans's own hwid / fwid forms."""
     if "GSUB" not in font:
-        return set()
+        return {}
     gsub = font["GSUB"].table
-    targets = set()
+    out = {}
     for fr in gsub.FeatureList.FeatureRecord:
-        if fr.FeatureTag != "hwid":
+        if fr.FeatureTag != tag:
             continue
         for li in fr.Feature.LookupListIndex:
             kind, subs = _unwrap(gsub.LookupList.Lookup[li])
-            for _, dst in _subst_pairs(kind, subs, "hwid"):
-                targets.add(dst)
-    return targets
+            for src, dst in _subst_pairs(kind, subs, tag):
+                out.setdefault(src, dst)
+    return out
+
+
+def hwid_targets(font):
+    """Glyph names reachable via the 'hwid' feature — SHS's own half-width
+    alternates, drawn at its native 500-unit half cell (half of the 1000
+    em), not our 600-unit one. Used to center them onto the terminal grid
+    (see fit_to_grid())."""
+    return set(feature_map(font, "hwid").values())
 
 
 def add_gsub(font, added, alts, ligatures, variant_maps=None,
@@ -1915,70 +1800,36 @@ def add_gsub(font, added, alts, ligatures, variant_maps=None,
     sort_feature_list(gsub)
 
 
-def add_width_alternates(font, hwid=None, fwid=None, ss09=None):
-    """Wire the width alternates of the MONA_AMBIGUOUS characters into
-    GSUB: {default glyph: alternate glyph} maps for hwid (2:3 / 35: the
-    one-cell Monaspace form), fwid (Term: the full-width Source Han Sans
-    form the default replaced) and ss09 (the arrow-only counterpart of
-    hwid, for users who don't want SHS's own half-width kana to follow).
-    hwid / fwid already exist in the Source Han Sans base; the new lookups
-    are merged into those records. Runs after add_gsub, so it re-sorts."""
-    gsub = font["GSUB"].table
-    for tag, mapping in (("hwid", hwid), ("fwid", fwid), ("ss09", ss09)):
-        if not mapping:
-            continue
-        lookup = _new_lookup(gsub, otl.buildSingleSubstSubtable(mapping))
-        index = _add_feature(gsub, tag, [lookup])
-        if tag == "ss09":
-            _set_feature_params(font, gsub, index, tag)
-    sort_feature_list(gsub)
-
-
-def rescaled_advance(adv, cell):
-    """New advance for `adv` under a 667 -> `cell` rescale, or None when the
-    glyph is left alone. Every whole number of half-width cells rescales —
-    the old hardcoded {667, 1334, 2001} map silently skipped the 4-cell
-    ligatures (2668, e.g. '<-->')."""
-    if adv > 0 and adv % CELL == 0:
-        return (adv // CELL) * cell
-    return None
-
-
-def rescale(font, cell, ky=None, also_rescale=()):
-    """Rescale half-width glyphs (and ligatures) from 667 to `cell`.
-    Isotropic by default — Adobe's own SHCJ recipe. Pass `ky` to keep a
-    taller vertical scale (condensed experiment: terminal fonts like
-    HackGen/PlemolJP run cap/half ~1.3 vs SCP's roomy 1.09).
-
-    `also_rescale`: glyph names whose advance is 0 (so rescaled_advance()
-    leaves them alone) but whose OUTLINE was drawn against the 667 grid and
-    must still track it — the 0-advance combining marks graft_halfwidth()
-    grafts from SCP, positioned by negative sidebearing over a Latin base
-    that DOES get rescaled here. Their advance stays 0; only the outline
-    and lsb get the same k."""
-    cff = font["CFF "].cff
-    td = cff[cff.fontNames[0]]
-    gs = font.getGlyphSet()
+def fullwidth_forms(font, replaced):
+    """{codepoint: Source Han Sans's two-cell glyph} for the codepoints
+    graft_halfwidth replaced: the replaced glyph itself when it is
+    full-width, else the glyph Source Han Sans's own fwid feature maps it
+    to when that one is; the rest (Greek in Source Han Sans JP) have no
+    two-cell form and are left out."""
     hmtx = font["hmtx"]
-    k = cell / CELL
-    ky = k if ky is None else ky
-    new_cs = {}
-    for name in font.getGlyphOrder():
-        adv, lsb = hmtx.metrics[name]
-        new_adv = rescaled_advance(adv, cell)
-        if new_adv is None:
-            if name not in also_rescale:
-                continue
-            new_adv = adv   # keep the 0 advance; only the outline moves
-        gid = font.getGlyphID(name)
-        private = td.FDArray[td.FDSelect[gid]].Private
-        pen = T2CharStringPen(pen_width(private, new_adv), gs)
-        gs[name].draw(TransformPen(pen, (k, 0, 0, ky, 0, 0)))
-        new_cs[name] = pen.getCharString(private=private)
-        hmtx.metrics[name] = (new_adv, round(lsb * k))
-    for name, cs in new_cs.items():  # swap after drawing everything
-        td.CharStrings.charStringsIndex[td.CharStrings.charStrings[name]] = cs
-    note_redrawn(font, new_cs)
+    fw = feature_map(font, "fwid")
+    out = {}
+    for cp, old in replaced.items():
+        for g in (old, fw.get(old)):
+            if g is not None and hmtx[g][0] == FULLWIDTH:
+                out[cp] = g
+                break
+    return out
+
+
+def add_width_alternates(font, fwid):
+    """Wire the full-width forms into GSUB's fwid: {default one-cell
+    glyph: full-width glyph} — Source Han Sans's own two-cell form of a
+    character Sumi Moji sets in one cell (Greek, box drawing, ≠ ≤ ≥ …),
+    or the arrow redrawn from the ligatures (stretch_arrows). fwid
+    already exists in the Source Han Sans base; the new lookup is merged
+    into that record. Runs after add_gsub, so it re-sorts."""
+    if not fwid:
+        return
+    gsub = font["GSUB"].table
+    lookup = _new_lookup(gsub, otl.buildSingleSubstSubtable(fwid))
+    _add_feature(gsub, "fwid", [lookup])
+    sort_feature_list(gsub)
 
 
 def glyph_bounds(font):
@@ -2114,11 +1965,11 @@ def classify_unicode_marks(font):
 
 def set_monospace_metadata(font):
     """Declare the font monospaced, the way HackGen / PlemolJP do for the
-    same two-width (1:2 / 2:3) CJK layout: post.isFixedPitch and PANOSE
+    same two-width (3:5 / 1:2) CJK layout: post.isFixedPitch and PANOSE
     proportion 9 are what Windows Terminal's font picker and GDI's
-    FIXED_PITCH filter read — SHCJ's inherited 0 hid the fonts there.
-    xAvgCharWidth follows OS/2 v3+'s definition (mean of every non-zero
-    advance) instead of SHCJ's stale number."""
+    FIXED_PITCH filter read — Source Han Sans's 0 would hide the fonts
+    there. xAvgCharWidth follows OS/2 v3+'s definition (mean of every
+    non-zero advance)."""
     font["post"].isFixedPitch = 1
     font["OS/2"].panose.bProportion = 9
     font["OS/2"].recalcAvgCharWidth(font)
@@ -2180,8 +2031,8 @@ def add_latin_fd(font):
     """Give every glyph we appended its own CID FontDict, a copy of the
     Source Han Sans Latin one with the alignment zones re-measured on OUR
     outlines (latin_blue_zones). Autohinting reads zones from the FD; SHS's
-    zones (x-height 543, cap 733) miss SCP's (488 / 655 at 600, 539 / 729
-    at 667) and the hints would snap to nothing. Returns the FD index."""
+    zones (x-height 543, cap 733) miss SCP's (488 / 655) and the hints
+    would snap to nothing. Returns the FD index."""
     cff = font["CFF "].cff
     td = cff[cff.fontNames[0]]
     cmap = font.getBestCmap()
@@ -2299,7 +2150,7 @@ def autohint_face(path, glyph_names):
     """Hint `glyph_names` with AFDKO's otfautohint, in place. The JP
     faces pass the glyphs they (re)drew (note_redrawn): Source Han Sans's
     own hints on untouched glyphs are kept as shipped, and the run stays
-    seconds for the 667 family (grafted Latin only) instead of minutes.
+    seconds for the base family (grafted Latin only) instead of minutes.
     The Latin faces pass every glyph — the instancer drops SCP's hints.
     SUMI_SKIP_AUTOHINT=1 skips it for quick local iterations."""
     if os.environ.get("SUMI_SKIP_AUTOHINT"):
@@ -2374,20 +2225,20 @@ class _WarningCounter(logging.Handler):
 def face_matches(only, weight, face_label, suffix):
     """Command-line filter: words of three kinds — weight names
     ("Regular"), the styles "Italic" / "Upright", and variants ("Term",
-    "35", or "base" for the suffix-less family; "" alone is that family
-    too). A face matches when, for every kind named, it is one of the
-    words of that kind: "Regular" takes Regular and Regular Italic of
-    every family, "Light Italic" one face per family, "Light Upright
-    Term" exactly one face, "Light Normal base" four (the release
-    workflow builds a family's two weights per job). Whole words only,
-    never a substring match; a word that is none of these is a variant
-    nobody has, so on its own it matches nothing."""
+    or "base" for the suffix-less family; "" alone is that family too).
+    A face matches when, for every kind named, it is one of the words of
+    that kind: "Regular" takes Regular and Regular Italic of every
+    family, "Light Italic" one face per family, "Light Upright Term"
+    exactly one face, "Light Regular base" four (the release workflow
+    builds a family's two weights per job). Whole words only, never a
+    substring match; a word that is none of these is a variant nobody
+    has, so on its own it matches nothing."""
     if only is None:
         return True
     words = only.split()
     if not words:
         return suffix == ""
-    weights = {w for w, _, _ in FACES}
+    weights = {w for w, _ in FACES}
     styles = {"Italic", "Upright"}
     kinds = {"weight": [], "style": [], "variant": []}
     for word in words:
@@ -2462,56 +2313,43 @@ def write_face(font, out, hint_glyphs):
 def build_face(job):
     """Build one output face. Plain data in and out, so it can run in a
     pool worker (unfiltered builds) as well as in-process."""
-    (suffix, cell, comp, term, weight, ref_name, shs_file, italic,
-     env, out_dir) = job
+    suffix, term, weight, shs_file, italic, env, out_dir = job
     face_label = f"{weight}{' Italic' if italic else ''}"
-    latin_path = latin_face_path(env["LATIN_DIR"], "term" if comp else "ship",
-                                 weight, italic)
+    latin_path = latin_face_path(env["LATIN_DIR"], weight, italic)
     if not latin_path.exists():
         raise FileNotFoundError(f"{latin_path}: run scripts/build_latin.py first")
     latin = TTFont(latin_path)
-    ref = _shcj_ref(env["SHCJ_TTC"], ref_name + (" Italic" if italic else ""))
     base = TTFont(Path(env["SHS_DIR"]) / shs_file)
-    n_scp, n_ref, default_map, marks = graft_halfwidth(base, latin, ref)
+    n_scp, replaced, default_map, marks = graft_halfwidth(base, latin)
     variant_maps, variant_names = import_scp_variants(base, latin, default_map, marks)
     classify_marks(base, marks)   # the grafted marks and their variants
-    copy_line_metrics(base, ref)
-    # the outlines' real slant lives in the Latin donor (SCP Italic's);
-    # SHCJ's italic faces declare italicAngle=0, so they can't be the source
-    ref_angle = (latin["post"].italicAngle or ref["post"].italicAngle or -12.0) \
-        if italic else None
+    copy_line_metrics(base, latin)
+    # the outlines' real slant lives in the Latin donor (SCP Italic's)
+    ref_angle = (latin["post"].italicAngle or -12.0) if italic else None
     alts = {}
     added = latin_ligatures(base, latin, latin_path, alts, LIGATURES)
     add_gsub(base, added, alts, LIGATURES, variant_maps, variant_names)
-    if cell != CELL:
-        rescale(base, cell, also_rescale=marks)
-        fit_halfwidth_forms(base, cell)
-        # hwid/pwid alternates off the grid: pwid/palt have no meaning in a
-        # fixed-cell font, and hwid's own 500-advance alternates (from SHS's
-        # 1000em) need centering into `cell`, same as fit_halfwidth_forms
-        # above — walk hwid BEFORE dropping any features that might touch it
-        hwid_500 = {g for g in hwid_targets(base)
-                    if base["hmtx"].metrics[g][0] == 500}
-        fit_halfwidth_forms(base, cell, glyph_names=hwid_500)
-        drop_features(base, {"pwid", "palt"})
+    # Source Han Sans's proportional leftovers onto the grid, hwid's own
+    # 500-advance alternates included (walked BEFORE dropping any
+    # features that might touch it); pwid / palt have no meaning in a
+    # fixed-cell font
+    n_fit = fit_to_grid(base, CELL)
+    n_fit += fit_to_grid(base, CELL, glyph_names=hwid_targets(base))
+    drop_features(base, {"pwid", "palt"})
+    # the two-cell forms under fwid: the arrows redrawn from the
+    # ligatures so they share their head, everything else Source Han
+    # Sans's own — the full-width glyph the one-cell default replaced
+    # (→ ─ ≠), or its fwid form where the replaced glyph was proportional
+    # (A é: Source Han Sans's own fwid maps those to Ａ é). Greek has
+    # neither in Source Han Sans JP and stays one cell under fwid too
+    fullwidth = fullwidth_forms(base, replaced)
+    arrows = stretch_arrows(base, added, fullwidth,
+                            ref_angle if ref_angle is not None else 0.0)
+    cmap_now = base.getBestCmap()
+    add_width_alternates(base, {cmap_now[cp]: arrows.get(cp, old)
+                                for cp, old in fullwidth.items()})
     if term:
-        # ambiguous-width first (adv==1000 probe), then widen CJK; the
-        # replaced full-width forms of the ligature-paired 11 stay
-        # reachable under fwid
-        swapped = narrow_ambiguous(base, cell, latin)
-        widen_fullwidth(base, cell)
-        add_width_alternates(base, fwid={
-            new: old for cp, (old, new) in swapped.items()
-            if chr(cp) in MONA_AMBIGUOUS})
-    else:
-        # full-width stays the default (SHCJ's look), but the arrows are
-        # redrawn from Monaspace at full width, and every ligature-paired
-        # symbol has a one-cell Monaspace form under hwid / ss09
-        onecell = latin_onecell(base, cell, latin)
-        stretch_arrows(base, added, ref_angle if ref_angle is not None else 0.0)
-        cmap_now = base.getBestCmap()
-        halfwidth = {cmap_now[cp]: name for cp, name in onecell.items()}
-        add_width_alternates(base, hwid=halfwidth, ss09=halfwidth)
+        widen_fullwidth(base, CELL)
     # OS/2 Unicode / code-page range bits, from the now-final cmap
     base["OS/2"].recalcUnicodeRanges(base)
     recalc_codepage_range(base)
@@ -2528,14 +2366,14 @@ def build_face(job):
     out = Path(out_dir) / f"{ps}.otf"
     write_face(base, out, getattr(base, "_redrawn", set()))
     return (f"{face_label}{f' [{suffix}]' if suffix else ''}: "
-            f"scp={n_scp} shcj={n_ref} ligs={len(added)} -> {out.name}")
+            f"latin={n_scp} fwid={len(fullwidth)} fitted={n_fit} "
+            f"ligs={len(added)} -> {out.name}")
 
 
 # VFSource / _vf_source are build_latin.py's and build_latin_vf.py's
 # (build.py's own JP faces never instance a VF): one loaded VF and its
 # instances per process, keyed by path and axes
 _VF_CACHE = {}
-_REF_CACHE = {}
 
 
 def _vf_source(path, scale, axes):
@@ -2545,33 +2383,9 @@ def _vf_source(path, scale, axes):
     return _VF_CACHE[key]
 
 
-def shcj_bar_target(ttc_path, ref_name, italic, factor):
-    """The '=' bar of the Source Han Code JP face `ref_name` (its Italic
-    when `italic`) times `factor`: the stroke weight the Latin donors are
-    matched to (build_latin.py: 600/667 for the shipped profile, 1.0 for
-    the unscaled term profile; build_latin_vf.py likewise)."""
-    ref = _shcj_ref(ttc_path, ref_name + (" Italic" if italic else ""))
-    return bar_thickness(ref, ref.getBestCmap()[ord("=")]) * factor
-
-
-def _shcj_ref(ttc_path, name):
-    key = str(ttc_path)
-    if key not in _REF_CACHE:
-        _REF_CACHE[key] = {f["name"].getDebugName(4): f
-                           for f in TTCollection(ttc_path).fonts}
-    refs = _REF_CACHE[key]
-    if name not in refs:
-        # raise, not sys.exit: this runs inside main()'s pool workers,
-        # whose failure collection catches Exception, not SystemExit
-        raise KeyError(f"reference face not found: {name!r}; available: "
-                       + ", ".join(sorted(refs)))
-    return refs[name]
-
-
 def main():
     only = sys.argv[1] if len(sys.argv) > 1 else None
     env = env_paths({"SHS_DIR": None,
-                     "SHCJ_TTC": str(ROOT / "upstream" / "SourceHanCodeJP.ttc"),
                      "LATIN_DIR": str(ROOT / "dist" / "latin")})
     out_dir = ROOT / "dist"
     out_dir.mkdir(exist_ok=True)
@@ -2587,17 +2401,17 @@ def main():
 
     jobs = []
     for suffix, var in VARIANTS.items():
-        for weight, ref_name, shs_file in FACES:
+        for weight, shs_file in FACES:
             for italic in (False, True):
                 face_label = f"{weight}{' Italic' if italic else ''}"
                 if not face_matches(only, weight, face_label, suffix):
                     continue
-                jobs.append((suffix, var.cell, var.comp, var.term, weight,
-                             ref_name, shs_file, italic, env, str(out_dir)))
+                jobs.append((suffix, var.term, weight, shs_file, italic,
+                             env, str(out_dir)))
     if not jobs:
         sys.exit(f"no face matches {only!r}")
     run_faces(jobs, build_face,
-              label=lambda job: f"{job[4]} [{job[0] or 'base'}]",
+              label=lambda job: f"{job[2]} [{job[0] or 'base'}]",
               on_result=lambda job, msg: print(msg))
 
 

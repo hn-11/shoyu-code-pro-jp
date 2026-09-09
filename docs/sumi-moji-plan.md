@@ -1,21 +1,52 @@
 # Sumi Moji — 欧文中間フォント計画
 
-状態: 段階 1（1a・1b とも）・段階 2（VF 化）とも実装済み（v4.0.0）。
+状態: 段階 1（1a・1b とも）・段階 2（VF 化）とも実装済み。v5.0.0 で
+基準を英語圏のターミナルフォントに置き換えた（下の「v5」節）。
 `scripts/build_latin.py` が Source Code Pro VF + Monaspace VF から直接
-Sumi Moji（`dist/latin`、Term 用の内部プロファイルは `dist/latin/term`）
-を組み、`scripts/build.py` はそれを Source Han Sans に接ぎ木する側に
-なった（VF には直接触れない）。`scripts/build_latin_vf.py` が同じ
-レシピを CFF2 可変フォントとして組む（`dist/latin/SumiMoji[wght].otf` /
-`SumiMoji-Italic[wght].otf`）。wght 軸は usWeightClass の値（既定 400 =
-Regular）で、マスターは SCP VF 自身のマスター位置（wght 200 / 400——CFF2
-の VarStore から実測）に Regular と Heavy の位置、Monaspace の下限位置を
-加えた 5 つ。`SumiMoji.zip` は VF 2 面（静的 12 面は JP 面のドナー・
-NF パッチの入力・VF の検証に使い、配布しない）。名前は **Sumi Moji**
-（墨文字）で確定し、和文入りは **Sumi Moji JP**（v3.2.0 までの
-Shoyu Code Pro JP を改名。2 節の一覧はリポジトリ名を除き実施済み）。
-衝突調査済み（フォント・技術領域で同名なし、
-商標は未確認、`sumimoji.com` / `.net` は取得済みで `.dev` / `.jp` は
-空き）。
+Sumi Moji（`dist/latin`）を組み、`scripts/build.py` はそれを Source Han
+Sans に接ぎ木する側になった（VF には直接触れない）。
+`scripts/build_latin_vf.py` が同じレシピを CFF2 可変フォントとして組む
+（`dist/latin/SumiMoji[wght].otf` / `SumiMoji-Italic[wght].otf`）。
+`SumiMoji.zip` は VF 2 面（静的 10 面は JP 面のドナー・NF パッチの入力・
+VF の検証に使い、配布しない）。名前は **Sumi Moji**（墨文字）で確定し、
+和文入りは **Sumi Moji JP**（v3.2.0 までの Shoyu Code Pro JP を改名。
+2 節の一覧はリポジトリ名を除き実施済み）。衝突調査済み（フォント・技術
+領域で同名なし、商標は未確認、`sumimoji.com` / `.net` は取得済みで
+`.dev` / `.jp` は空き）。
+
+## v5: 基準を英語圏のターミナルフォントに
+
+v4.0.0 までは Source Han Code JP（SHCJ）が基準だった: 2:3 の比率、SHCJ の
+行間（1.453 em）、SHCJ の `=` バーに Latin の太さを寄せる主従、SHCJ の
+半角/全角の割り当て。v5.0.0 で基準を欧文側（Source Code Pro）に置き換え、
+SHCJ は上流から外れた。
+
+- **セルは 600、既定は 3:5**。Sumi Moji（SCP 原寸）に Source Han Sans を
+  そのまま載せる。2:3（旧基本ファミリー）と 35 は廃止、Term（1:2）は
+  全角の送りを 2 セルに広げるだけの変種として残す。
+- **行間は SCP の 984 / −273（1.257 em）**。hhea = typo、
+  `USE_TYPO_METRICS`。win は Source Han Sans の宣言値（1160 / 288）。
+- **太さの主従を逆転**。Latin は SCP の名前付きインスタンス（Light 300 /
+  Regular 400 / Medium 500 / SemiBold 600 / Bold 700）そのもの、和文は
+  `＝` のバーが合う Source Han Sans の面を実測で選ぶ（ExtraLight / Normal /
+  Regular / Medium / Bold）。Normal と Heavy は消え、ウェイト名は英語
+  フォントの体系になった。VF の wght 軸は SCP の wght と一致（恒等写像）。
+- **幅の方針**: Sumi Moji が持つ文字はすべて 1 セル（ギリシャ・キリル・
+  罫線・矢印 7 種と `≠ ≤ ≥ …` も）。JIS 流の全角字形は `fwid` で戻す
+  （矢印は合字から切り出した全角版、その他は Source Han Sans の全角
+  グリフか同フォントの `fwid` 形）。`hwid` / `ss09` の幅切り替えは不要に
+  なり廃止。Source Han Sans の比例幅の残り（半角カナ 500、Hangul 字母
+  920、ﬀ、⸻）はセルか全角の倍数に中央配置（`fit_to_grid`）。
+- **Nerd Fonts 版の命名は本家の流儀**: アイコンを 1 セルに収めるので
+  `<Family> Nerd Font Mono` / `<PSFamily>NFM`。
+- **SHCJ 依存の解消**: バーの目標値（Latin が固定なので不要）、半角カナ
+  のドナー（Source Han Sans 自身の 500 幅を中央配置）、行間（SCP）、
+  半角の集合（Sumi Moji の cmap）。`SHCJ_TTC` と `SHCJ_TAG` は消えた。
+
+英語フォント基準で判断した残りの課題（優先順）: README の見本画像、
+fontbakery を CI に、VS Code 統合ターミナル（xterm.js）の合字、Homebrew
+cask / Scoop、リポジトリ名と `PROJECT_URL` の改名。合字なし変種
+（JetBrains Mono NL / Cascadia Mono 相当）は需要が出てから。
 
 ## 1. 目的
 
@@ -38,9 +69,9 @@ Sumi Moji JP の欧文層（Source Code Pro の文字 + Monaspace の記号・�
 | 用途 | ファミリー名 | PostScript 名 |
 |---|---|---|
 | 欧文のみ | Sumi Moji | SumiMoji-Regular など |
-| 欧文のみ NF | Sumi Moji NF | SumiMojiNF-Regular |
-| 和文入り | Sumi Moji JP / Sumi Moji JP 35 / Sumi Moji JP Term | SumiMojiJP-Regular, SumiMojiJP35-Regular, SumiMojiJPTerm-Regular |
-| 和文入り NF | Sumi Moji JP NF など | SumiMojiJPNF-Regular など |
+| 欧文のみ NF | Sumi Moji Nerd Font Mono | SumiMojiNFM-Regular |
+| 和文入り | Sumi Moji JP / Sumi Moji JP Term | SumiMojiJP-Regular, SumiMojiJPTerm-Regular |
+| 和文入り NF | Sumi Moji JP Nerd Font Mono など | SumiMojiJPNFM-Regular など |
 
 リブランディングで Shoyu Code Pro JP から名前を変えた箇所（リポジトリ名と
 `PROJECT_URL` を除き実施済み。リポジトリを改名すれば GitHub は旧 URL を転送する）:

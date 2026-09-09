@@ -5,8 +5,8 @@
 # second, versus the 12-15 s of apt-get) plus the cached FontPatcher.
 name: Set up a build job
 description: >
-  Python + requirements, the pinned upstream fonts exported as SHCJ_TTC /
-  SHS_DIR / SCP_VF_U / SCP_VF_I / MONA_VF, and optionally FontForge with
+  Python + requirements, the pinned upstream fonts exported as SHS_DIR /
+  SCP_VF_U / SCP_VF_I / MONA_VF, and optionally FontForge with
   the Nerd Fonts FontPatcher.
 inputs:
   fontforge:
@@ -36,7 +36,6 @@ runs:
     - name: Export upstream paths
       shell: bash
       run: |
-        echo "SHCJ_TTC=${{ steps.upstreams.outputs.shcj_ttc }}" >> "$GITHUB_ENV"
         echo "SHS_DIR=${{ steps.upstreams.outputs.shs_dir }}" >> "$GITHUB_ENV"
         echo "SCP_VF_U=${{ steps.upstreams.outputs.scp_vf_u }}" >> "$GITHUB_ENV"
         echo "SCP_VF_I=${{ steps.upstreams.outputs.scp_vf_i }}" >> "$GITHUB_ENV"
