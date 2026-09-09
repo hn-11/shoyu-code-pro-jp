@@ -115,6 +115,11 @@ def main():
     check(len(shape("a -> b", off)[0]) == 6, "calt/liga off leaves '->' plain")
     check(len(shape("a -> b", dict(off, ss02=True))[0]) == 5, "ss02 alone ligates '->'")
 
+    if is_nf:
+        import nerdpatch
+        for ok, msg in nerdpatch.icon_checks(tf, nerdpatch.symbols_for_checks()):
+            check(ok, msg)
+
     print("FAILED" if check.failed else "all checks passed")
     sys.exit(check.exit_code())
 

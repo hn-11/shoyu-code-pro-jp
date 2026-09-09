@@ -27,6 +27,7 @@ def test_main_harmonizes_each_family(tmp_path, capsys, monkeypatch):
     _face(latin / "SumiMoji[wght].otf", 5000, 5000)      # a VF: never touched
     _face(nerd / "SumiMojiNFM-Regular.otf", 1200, 200)
     _face(nerd / "SumiMojiNFM-Bold.otf", 1000, 400)
+    assert harmonize_latin.FAMILIES == [("latin", "SumiMoji"), ("nerd/latin", "SumiMojiNFM")]
 
     monkeypatch.setattr(sys, "argv", ["harmonize_latin.py", str(tmp_path)])
     harmonize_latin.main()
@@ -40,3 +41,16 @@ def test_main_harmonizes_each_family(tmp_path, capsys, monkeypatch):
     out = capsys.readouterr().out
     assert "latin/SumiMoji: win metrics 1100/300 over 2 faces" in out
     assert "nerd/latin/SumiMojiNFM: win metrics 1200/400 over 2 faces" in out
+
+
+def test_main_skips_a_family_directory_with_no_faces(tmp_path, capsys, monkeypatch):
+    """The package job assembles dist/ from the release artifacts: a
+    directory that arrived empty is reported and stepped over, not a
+    crash inside max() on no faces."""
+    for name, _family in harmonize_latin.FAMILIES:
+        (tmp_path / name).mkdir(parents=True)
+    monkeypatch.setattr(sys, "argv", ["harmonize_latin.py", str(tmp_path)])
+    harmonize_latin.main()
+    out = capsys.readouterr().out
+    for name, family in harmonize_latin.FAMILIES:
+        assert f"{name}/{family}: no faces, skipped" in out

@@ -7,10 +7,18 @@
   fontTools で接ぎ木する（`nerdpatch.py`、環境変数 `NF_SYMBOLS`）。
   記号集合は font-patcher の `--complete --mono` と同一（記号フォント自体
   がその出力）で、寸法はセル幅 / 記号フォントの em で一律、Powerline の
-  範囲だけ行の全高に引き伸ばす。Source Code Pro 自身が持つ Powerline 7 字
+  範囲は font-patcher 自身の群分けに従う: 区切り（`^xy` の 32 字）はインクを
+  セル幅と行の全高に引き伸ばし、記号フォントが付けている食み出しは比率の
+  まま残す。ブランチ・鍵などその他の Powerline（`^pa`）は縦横比を保った
+  まま行の全高に収める。Source Code Pro 自身が持つ Powerline 7 字
   （U+E0A0〜E0A2、E0B0〜E0B3。行より高く描かれている）も記号フォントの
   ものに置き換える（font-patcher と同じ）ので、プロンプトの区切りはすべて
-  同じ行ボックスに揃う。CID 構造・STAT・OS/2・post・ヒントは元の
+  同じ行ボックスに揃い、セル間・行間に隙間が出ない。接ぎ木後に OS/2 の
+  Unicode 範囲ビットを再計算し（私用領域の 1 万字が宣言に載る）、
+  name の著作権・デザイナ記録に Nerd Fonts を加える（LICENSE にも
+  `Nerd Font Mono` 版の記載を追加）。`verify.py` / `verify_latin.py` は
+  Powerline の幾何（区切りがセルと行に届くか、その他が縦横比を保っているか）
+  を検査する。CID 構造・STAT・OS/2・post・ヒントは元の
   面のまま残るので、平坦化後の復元処理（`restore_metadata` /
   `patched_bounds` / `fit_nerd_glyphs`）は消えた。1 面 10 秒（従来は
   平坦化 8 秒 + font-patcher 78 秒 + 復元 23 秒）。従来の font-patcher の

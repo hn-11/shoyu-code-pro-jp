@@ -37,6 +37,10 @@ SHCJ は上流から外れた。
   グリフか同フォントの `fwid` 形）。`hwid` / `ss09` の幅切り替えは不要に
   なり廃止。Source Han Sans の比例幅の残り（半角カナ 500、Hangul 字母
   920、ﬀ、⸻）はセルか全角の倍数に中央配置（`fit_to_grid`）。
+- **東アジア文字幅が Wide の 13 字（`☕` `🎵` `🎶` `💩` `🔒` `🤖`、Hangul
+  声調記号 2 字、注音の入声 5 字）は 1 セルのまま**。両ドナーがそう描いて
+  いて、これより広い字形を持たないため。ターミナルは 2 桁分を空けるので
+  左寄りに見える。2 セルに広げるかは未決（README の「幅の方針」に明記）。
 - **Nerd Fonts 版の命名は本家の流儀**: アイコンを 1 セルに収めるので
   `<Family> Nerd Font Mono` / `<PSFamily>NFM`。v5.1 で font-patcher と
   FontForge を捨て、本家の `Symbols Nerd Font Mono` から fontTools で

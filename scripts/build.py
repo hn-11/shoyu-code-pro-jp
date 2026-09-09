@@ -652,12 +652,26 @@ def append_context(font, fullwidth=False):
     already lives in. Every appender uses it: in the JP faces
     add_latin_fd() later moves all appended glyphs into a copy of A's FD,
     and a width encoded against any other FD's nominalWidthX would then
-    be wrong (the ligatures were, by 510u); the Latin faces have one FD."""
+    be wrong (the ligatures were, by 510u); the Latin faces have one FD.
+
+    A plain CFF (Sumi Moji, the faces nerdpatch.py grafts into) has no
+    FDSelect at all: the index is None and the Private dict the top
+    dict's own. A face with no vmtx has no donor either."""
     cff = font["CFF "].cff
     td = cff[cff.fontNames[0]]
     cmap = font.getBestCmap()
-    fd_index = td.FDSelect[font.getGlyphID(cmap[ord("A")])]
-    return td, cmap, fd_index, td.FDArray[fd_index].Private, vmtx_donor(font, fullwidth)
+    a = cmap[ord("A")]
+    fd_index = td.FDSelect[font.getGlyphID(a)] if hasattr(td, "FDArray") else None
+    return td, cmap, fd_index, glyph_private(font, td, a), vmtx_donor(font, fullwidth)
+
+
+def glyph_private(font, td, name):
+    """The Private dict a charstring for `name` is written against: its
+    own FD's in a CID-keyed face (the JP ones), the top dict's in a plain
+    CFF (Sumi Moji, the tests' fixtures)."""
+    if hasattr(td, "FDArray"):   # CID-keyed
+        return td.FDArray[td.FDSelect[font.getGlyphID(name)]].Private
+    return td.Private
 
 
 def set_cmap(font, mapping, add_new=False):
@@ -1128,10 +1142,7 @@ def fit_to_grid(font, cell, glyph_names=None):
             continue
         new = cell if adv <= cell else -(-adv // FULLWIDTH) * FULLWIDTH
         shift = (new - adv) // 2
-        if hasattr(td, "FDArray"):   # CID-keyed (the JP faces)
-            private = td.FDArray[td.FDSelect[font.getGlyphID(name)]].Private
-        else:
-            private = td.Private
+        private = glyph_private(font, td, name)
         pen = T2CharStringPen(pen_width(private, new), gs)
         gs[name].draw(TransformPen(pen, (1, 0, 0, 1, shift, 0)))
         td.CharStrings[name] = pen.getCharString(private=private)
@@ -1208,12 +1219,18 @@ def shift_charstring(cs, dx, width, private):
     return True
 
 
-def widen_fullwidth(font, cell):
+def widen_fullwidth(font, cell, skip=()):
     """Term variant: widen every full-width glyph's advance to two cells
     (2 x cell; an n-full-width glyph such as ⸻ to 2n cells) and center
-    the unchanged outline. The Latin layer (every glyph appended by this
-    build) is untouched by this pass; the terminal grid becomes exact
-    (CJK = two cells, symmetric padding instead of a right-side gap).
+    the unchanged outline. The terminal grid becomes exact (CJK = two
+    cells, symmetric padding instead of a right-side gap).
+
+    The Latin layer is on the cell grid and passes through untouched —
+    except that a multi-cell ligature can land on a whole number of full
+    widths too (5 cells = 3000 = three full widths), so `skip` names the
+    ligature glyphs. The full-width forms this build appended for fwid
+    (stretch_arrows' arrows, fullwidth_forms' Source Han Sans glyphs)
+    are full-width and widen with the rest.
 
     The outlines are moved inside their charstrings (shift_charstring),
     so Source Han Sans's own hints survive on the 17,000 glyphs this
@@ -1226,19 +1243,14 @@ def widen_fullwidth(font, cell):
     hmtx = font["hmtx"]
     redrawn = {}
     shifted = 0
-    appended = getattr(font, "_appended", set())
+    skip = set(skip)
     for name in font.getGlyphOrder():
         adv, lsb = hmtx.metrics[name]
-        # a glyph this build appended is the Latin layer's, on the cell
-        # grid already: a 5-cell ligature's 3000 is also 3 full widths
-        if adv <= 0 or adv % FULLWIDTH or name in appended:
+        if adv <= 0 or adv % FULLWIDTH or name in skip:
             continue
         full = (adv // FULLWIDTH) * 2 * cell
         shift = (full - adv) // 2
-        if hasattr(td, "FDArray"):   # CID-keyed (the JP faces)
-            private = td.FDArray[td.FDSelect[font.getGlyphID(name)]].Private
-        else:
-            private = td.Private
+        private = glyph_private(font, td, name)
         if shift_charstring(td.CharStrings[name], shift, full, private):
             shifted += 1
         else:
@@ -2354,7 +2366,9 @@ def build_face(job):
     add_width_alternates(base, {cmap_now[cp]: arrows.get(cp, old)
                                 for cp, old in fullwidth.items()})
     if term:
-        widen_fullwidth(base, CELL)
+        # the ligatures are the Latin layer's only multi-cell glyphs, so
+        # the only ones an advance test cannot tell from a full width
+        widen_fullwidth(base, CELL, skip=set(added.values()) | set(alts.values()))
     # OS/2 Unicode / code-page range bits, from the now-final cmap
     base["OS/2"].recalcUnicodeRanges(base)
     recalc_codepage_range(base)

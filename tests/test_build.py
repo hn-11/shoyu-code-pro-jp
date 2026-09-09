@@ -792,14 +792,13 @@ def test_fit_to_grid_centres_proportional_advances_on_the_grid():
     assert font._redrawn == {"kana", "jamo", "dash"}
 
 
-def test_widen_fullwidth_spares_the_glyphs_this_build_appended():
+def test_widen_fullwidth_spares_the_ligatures_it_is_given():
     """Term: a full width goes to two cells, three full widths to six,
-    but a 5-cell ligature — 3000 too, appended by this build — stays on
-    the cell grid; a cell and a mark are never touched."""
+    but a named 5-cell ligature — 3000 too — stays on the cell grid; a
+    cell and a mark are never touched."""
     font = _cff_font_with_widths({"full": 1000, "dash": 3000, "lig5": 3000,
                                   "cell": 600, "mark": 0})
-    font._appended = {"lig5"}
-    build.widen_fullwidth(font, 600)
+    build.widen_fullwidth(font, 600, skip={"lig5"})
     hmtx = font["hmtx"].metrics
     assert {g: hmtx[g][0] for g in ("full", "dash", "lig5", "cell", "mark")} == \
         {"full": 1200, "dash": 3600, "lig5": 3000, "cell": 600, "mark": 0}
@@ -967,14 +966,14 @@ def test_env_paths_reads_defaults_and_exits_on_missing(tmp_path, monkeypatch, ca
     a.mkdir()
     b.mkdir()
     monkeypatch.setenv("SHS_DIR", str(a))
-    monkeypatch.delenv("SHCJ_TTC", raising=False)
+    monkeypatch.delenv("NF_SYMBOLS", raising=False)
     monkeypatch.setenv("SUMI_VERSION", "9.9.9")
-    env = build.env_paths({"SHS_DIR": None, "SHCJ_TTC": str(b)})
-    assert env == {"SHS_DIR": str(a), "SHCJ_TTC": str(b), "SUMI_VERSION": "9.9.9"}
-    monkeypatch.setenv("SHCJ_TTC", str(tmp_path / "nowhere"))
+    env = build.env_paths({"SHS_DIR": None, "NF_SYMBOLS": str(b)})
+    assert env == {"SHS_DIR": str(a), "NF_SYMBOLS": str(b), "SUMI_VERSION": "9.9.9"}
+    monkeypatch.setenv("NF_SYMBOLS", str(tmp_path / "nowhere"))
     monkeypatch.delenv("SHS_DIR")
-    with pytest.raises(SystemExit, match=r"missing env: \['SHS_DIR', 'SHCJ_TTC'\]"):
-        build.env_paths({"SHS_DIR": None, "SHCJ_TTC": str(b)})
+    with pytest.raises(SystemExit, match=r"missing env: \['SHS_DIR', 'NF_SYMBOLS'\]"):
+        build.env_paths({"SHS_DIR": None, "NF_SYMBOLS": str(b)})
 
 
 _SEEN_IN_THIS_PROCESS = []

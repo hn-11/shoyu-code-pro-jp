@@ -76,11 +76,13 @@ def _symbols():
     """A Symbols Nerd Font Mono in miniature: a 2048 em, the 1638/-410
     line box, every glyph in a 2048 cell — an icon filling the em box at
     U+E000, a Powerline separator filling the line box at U+E0B0, a
+    narrow Powerline symbol (a git branch) at U+E0A0, a
     supplementary-plane icon at U+F0001, and 'A', which a face already
     has."""
     fb = FontBuilder(2048, isTTF=True)
     glyphs, cmap, metrics = {}, {}, {".notdef": (2048, 0)}
     boxes = {"icon": (0, 0, 2048, 2048), "pl": (0, -410, 2048, 1638),
+             "branch": (608, -410, 1440, 1638),
              "far": (512, 0, 1536, 1024), "A": (0, 0, 1000, 1000)}
     for name, box in boxes.items():
         pen = TTGlyphPen(None)
@@ -89,7 +91,8 @@ def _symbols():
         metrics[name] = (2048, box[0])
     pen = TTGlyphPen(None)
     glyphs[".notdef"] = pen.glyph()
-    cmap = {0xE000: "icon", 0xE0B0: "pl", 0xF0001: "far", ord("A"): "A"}
+    cmap = {0xE000: "icon", 0xE0B0: "pl", 0xE0A0: "branch",
+            0xF0001: "far", ord("A"): "A"}
     fb.setupGlyphOrder([".notdef", *boxes])
     fb.setupCharacterMap(cmap)
     fb.setupGlyf(glyphs)
@@ -107,21 +110,52 @@ def _bounds(font, name):
     return pen.bounds
 
 
-def test_icon_transforms_fit_the_cell_and_centre_the_line_box():
-    uniform, powerline = nerdpatch.icon_transforms(_face(), _symbols())
+def _place(xform, ink):
+    """The box `ink` lands in once `xform` is applied."""
+    a, _b, _c, d, e, f = xform
+    x0, y0, x1, y1 = ink
+    return a * x0 + e, d * y0 + f, a * x1 + e, d * y1 + f
+
+
+def test_icon_transform_scales_an_icon_by_the_cell_over_the_em():
+    ctx = nerdpatch.icon_context(_face(), _symbols())
     k = 600 / 2048
-    assert uniform[0] == uniform[3] == pytest.approx(k)
+    xform = nerdpatch.icon_transform(0xE000, None, ctx)
+    assert xform[0] == xform[3] == pytest.approx(k)
     # the symbols' line box centre (614) lands on ours (355.5)
-    assert k * 614 + uniform[5] == pytest.approx(355.5)
-    assert powerline[0] == pytest.approx(k)
-    assert -410 * powerline[3] + powerline[5] == pytest.approx(-273)
-    assert 1638 * powerline[3] + powerline[5] == pytest.approx(984)
+    assert k * 614 + xform[5] == pytest.approx(355.5)
+
+
+def test_icon_transform_stretches_a_separator_to_the_cell_and_the_line():
+    ctx = nerdpatch.icon_context(_face(), _symbols())
+    # a separator that fills its own cell and line box fills ours
+    box = _place(nerdpatch.icon_transform(0xE0B0, (0, -410, 2048, 1638), ctx),
+                 (0, -410, 2048, 1638))
+    assert box == pytest.approx((0, -273, 600, 984))
+    # the real one: 1447u of the symbols' 2048 cell (font-patcher's
+    # xy-ratio capped it there in a square cell) bleeding 6% past the
+    # left edge. The bleed rides along in proportion and the other edge
+    # reaches ours, so two cells tile
+    bled = (-122, -420, 1325, 1648)
+    assert _place(nerdpatch.icon_transform(0xE0B0, bled, ctx), bled) == \
+        pytest.approx((-35.7, -279, 600, 990), abs=0.6)
+
+
+def test_icon_transform_keeps_the_aspect_of_a_powerline_symbol():
+    """U+E0A0-E0A3 are symbols, not separators: they fill the line box
+    with their aspect kept, never stretched to the cell."""
+    ctx = nerdpatch.icon_context(_face(), _symbols())
+    ink = (608, -410, 1440, 1638)
+    box = _place(nerdpatch.icon_transform(0xE0A0, ink, ctx), ink)
+    assert box[3] - box[1] == pytest.approx(1257)            # the whole line
+    assert (box[2] - box[0]) / (box[3] - box[1]) == pytest.approx(832 / 2048)
+    assert box[0] + box[2] == pytest.approx(600)             # centred in the cell
 
 
 def test_graft_symbols_appends_one_cell_icons_the_face_lacks():
     face = _face()
     assert _bounds(face, "uniE0B0") == (0, -280, 600, 1040)     # Source Code Pro's
-    assert nerdpatch.graft_symbols(face, _symbols()) == 3       # icon, far, E0B0; not 'A'
+    assert nerdpatch.graft_symbols(face, _symbols()) == 4       # not 'A'
     cmap = face.getBestCmap()
     assert cmap[ord("A")] == "A"
     icon, pl, far = cmap[0xE000], cmap[0xE0B0], cmap[0xF0001]
@@ -137,13 +171,17 @@ def test_graft_symbols_appends_one_cell_icons_the_face_lacks():
     assert x1 - x0 == pytest.approx(300, abs=1)                # half the em, half the cell
     # the supplementary-plane icon needed a format 12 subtable
     assert any(t.format == 12 and 0xF0001 in t.cmap for t in face["cmap"].tables)
-    assert face["maxp"].numGlyphs == 5
+    assert face["maxp"].numGlyphs == 6
 
 
-def test_rename_splices_the_marker_into_every_family_name():
+def test_rename_splices_the_marker_and_credits_nerd_fonts():
     face = _face()
     assert nerdpatch.rename(face) == "SumiMojiJPNFM-Regular"
     name = face["name"]
+    assert "Nerd Fonts" in name.getDebugName(0)                 # the icons' donor
+    assert "LICENSE-NerdFonts" in name.getDebugName(0)
+    nerdpatch.rename(face)                                      # idempotent
+    assert name.getDebugName(0).count("Nerd Fonts:") == 1
     assert name.getDebugName(1) == "Sumi Moji JP Nerd Font Mono"
     assert name.getDebugName(3) == "5.0.0;SUMI;SumiMojiJPNFM-Regular"
     assert name.getDebugName(6) == "SumiMojiJPNFM-Regular"

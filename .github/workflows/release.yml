@@ -86,6 +86,9 @@ jobs:
               Italic) faces="$faces dist/latin/SumiMoji-${w}Italic.otf" ;;
             esac
           done
+          # an empty list would mean "patch everything" — the same faces
+          # the foreground run below writes, at the same time
+          [ -n "$faces" ] || { echo "no Sumi Moji faces for LATIN_NF='$LATIN_NF'"; exit 1; }
           python scripts/nerdpatch.py $faces > nerd-latin.log 2>&1 &
           latin=$!
           python scripts/build.py "${{ matrix.weights }} ${{ matrix.family }}"

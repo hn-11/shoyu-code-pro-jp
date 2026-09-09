@@ -459,6 +459,11 @@ def main():
               f"(typoAsc={os2.sTypoAscender}, typoDesc={os2.sTypoDescender}, "
               f"winAsc={os2.usWinAscent}, winDesc={os2.usWinDescent})")
 
+    if "Nerd Font" in fam:
+        import nerdpatch
+        for ok, msg in nerdpatch.icon_checks(tf, nerdpatch.symbols_for_checks()):
+            check(ok, msg)
+
     sys.exit(check.exit_code())
 
 
