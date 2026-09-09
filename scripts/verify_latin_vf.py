@@ -31,7 +31,7 @@ FONT = Path(sys.argv[1]) if len(sys.argv) > 1 else (
 # context to trigger the guard's OWN longer match, so plain '-' '>' '>'),
 # and a 4-cell true ligature ("<!--", added in 3.3 — see CHANGELOG).
 LIG_CASES = [("a -> b", 5), ("->>", 3), ("<!--", 1)]
-WEIGHTS = ["Light", "Normal", "Regular", "Medium", "Bold", "Heavy"]
+WEIGHTS = [w for w, _ in build.FACES]
 
 
 def bounds(gs, cmap, ch):
@@ -49,16 +49,13 @@ def close(a, b, tol):
 def scp_reference(italic):
     """(SCP VF, to_scp) — the SCP VF this file was assembled from (env
     SCP_VF_U / SCP_VF_I) and the user wght -> SCP wght pairing
-    build_latin_vf builds its axis map from (needs SHCJ_TTC for the same
-    bar search); (None, None) when the env is not set."""
+    build_latin_vf builds its axis map from; (None, None) when the env
+    is not set."""
     path = os.environ.get("SCP_VF_I" if italic else "SCP_VF_U")
-    shcj = os.environ.get("SHCJ_TTC")
-    if not (path and Path(path).exists() and shcj and Path(shcj).exists()):
+    if not (path and Path(path).exists()):
         return None, None
     scp = TTFont(path)
-    weight_pos = {w: round(v, 2) for w, v in
-                  build_latin_vf.weight_positions(build_latin_vf.scp_source(path),
-                                                  shcj, italic).items()}
+    weight_pos = build_latin_vf.weight_positions()
     design, breaks = build_latin_vf.scp_design_axis(scp)
     axis = next(a for a in scp["fvar"].axes if a.axisTag == "wght")
     _, _, _, _, to_scp = build_latin_vf.user_axis(weight_pos, design, breaks,
@@ -76,8 +73,9 @@ def main():
     if not check(axis is not None, "fvar present with a wght axis"):
         print("FAILED (not a variable font; nothing else to check)")
         sys.exit(1)
-    check((axis.minValue, axis.maxValue) == (200, 900),
-          f"wght axis range {axis.minValue:.0f}-{axis.maxValue:.0f} (want 200-900)")
+    hi = build.WEIGHT_CLASS["Bold"]
+    check((axis.minValue, axis.maxValue) == (200, hi),
+          f"wght axis range {axis.minValue:.0f}-{axis.maxValue:.0f} (want 200-{hi})")
     check(axis.defaultValue == build.WEIGHT_CLASS["Regular"],
           f"wght axis default {axis.defaultValue:.0f} (want 400 = Regular)")
     check(tf["OS/2"].usWeightClass == axis.defaultValue,
@@ -86,7 +84,7 @@ def main():
           "avar maps the usWeightClass axis onto SCP's bar-matched wghts")
     instances = tf["fvar"].instances
     styles = [name.getDebugName(i.subfamilyNameID) for i in instances]
-    check(len(instances) == 6, f"{len(instances)} named instances (want 6): {styles}")
+    check(len(instances) == len(WEIGHTS), f"{len(instances)} named instances (want {len(WEIGHTS)}): {styles}")
     want_coords = [float(build.WEIGHT_CLASS[w]) for w in WEIGHTS]
     got_coords = [i.coordinates.get("wght") for i in instances]
     check(got_coords == want_coords,
@@ -105,7 +103,7 @@ def main():
                        if getattr(av, "AxisIndex", None) == wght_axis]
         ital_values = [av for av in stat.AxisValueArray.AxisValue
                        if getattr(av, "AxisIndex", None) == ital_axis]
-        check(len(wght_values) == 6, f"STAT has {len(wght_values)} wght values (want 6)")
+        check(len(wght_values) == len(WEIGHTS), f"STAT has {len(wght_values)} wght values (want {len(WEIGHTS)})")
         stat_vals = sorted(av.Value for av in wght_values)
         check(stat_vals == sorted(want_coords),
               f"STAT wght values {stat_vals} == the static faces' usWeightClass values")
@@ -217,9 +215,12 @@ def main():
                       f"below Monaspace's floor {floor_bar:.1f}; instanced bar "
                       f"{bar_i:.1f} sits at the floor (want within 1u of it)")
             else:
-                check(abs(bar_i - bar_r) <= 1,
+                # 1.5u: '=' is Monaspace's, bar-matched at the static's
+                # exact wght but interpolated between masters here, and
+                # Monaspace's bar is not linear in SCP's design coordinate
+                check(abs(bar_i - bar_r) <= 1.5,
                       f"[{style}] instanced '=' bar {bar_i:.1f} vs static "
-                      f"{static_name} {bar_r:.1f} (delta {bar_i - bar_r:+.1f}, want <=1u)")
+                      f"{static_name} {bar_r:.1f} (delta {bar_i - bar_r:+.1f}, want <=1.5u)")
             # 1u: the static face is the VF's blend rounded point by
             # point (build_latin.round_outlines) — half a unit, plus a
             # curve extreme moving with its rounded control points
@@ -235,7 +236,7 @@ def main():
     # (16.16 fixed precision)
     if scp is not None:
         scp_cmap = scp.getBestCmap()
-        for u in (250, 300, 325, 350, 375, 400, 450, 500, 600, 700, 800, 900):
+        for u in (250, 300, 325, 350, 375, 400, 450, 500, 550, 600, 650, 700):
             s = to_scp(u)
             gs = tf.getGlyphSet(location={"wght": u})
             ref = scp.getGlyphSet(location={"wght": s})
@@ -244,7 +245,7 @@ def main():
                 check(close(bi, br, 1), f"[wght {u} = SCP {s:.1f}] {ch!r} bounds {bi} vs "
                                         f"SCP {br} (want within 1u)")
     else:
-        print("  (skip SCP exactness check: set SCP_VF_U / SCP_VF_I and SHCJ_TTC)")
+        print("  (skip SCP exactness check: set SCP_VF_U / SCP_VF_I)")
 
     print("FAILED" if check.failed else "all checks passed")
     sys.exit(check.exit_code())

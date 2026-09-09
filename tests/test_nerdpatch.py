@@ -19,14 +19,15 @@ import nerdpatch  # noqa: E402
 
 
 @pytest.mark.parametrize("name, want", [
-    ("Sumi Moji JP", "Sumi Moji JP NF"),
-    ("Sumi Moji JP Term", "Sumi Moji JP Term NF"),
-    ("Sumi Moji JP 35 Bold Italic", "Sumi Moji JP 35 NF Bold Italic"),
-    ("SumiMojiJPTerm-BoldItalic", "SumiMojiJPTermNF-BoldItalic"),
-    ("SumiMojiJP35-Light", "SumiMojiJP35NF-Light"),
-    ("Sumi Moji", "Sumi Moji NF"),
-    ("SumiMoji-RegularItalic", "SumiMojiNF-RegularItalic"),
-    ("3.3.0;SUMI;SumiMojiJP-Regular", "3.3.0;SUMI;SumiMojiJPNF-Regular"),
+    ("Sumi Moji JP", "Sumi Moji JP Nerd Font Mono"),
+    ("Sumi Moji JP Term", "Sumi Moji JP Term Nerd Font Mono"),
+    ("Sumi Moji JP Term SemiBold Italic", "Sumi Moji JP Term Nerd Font Mono SemiBold Italic"),
+    ("SumiMojiJPTerm-BoldItalic", "SumiMojiJPTermNFM-BoldItalic"),
+    ("SumiMojiJP-Light", "SumiMojiJPNFM-Light"),
+    ("Sumi Moji", "Sumi Moji Nerd Font Mono"),
+    ("SumiMoji-RegularItalic", "SumiMojiNFM-RegularItalic"),
+    ("5.0.0;SUMI;SumiMojiJP-Regular", "5.0.0;SUMI;SumiMojiJPNFM-Regular"),
+    ("Version 5.0.0;Sumi Moji JP;SHS 2.005", "Version 5.0.0;Sumi Moji JP Nerd Font Mono;SHS 2.005"),
     ("Source Han Sans", "Source Han Sans"),
 ])
 def test_nf_name(name, want):
@@ -106,8 +107,8 @@ def test_restore_metadata_takes_names_declarations_and_stat_from_the_source():
 
     ps = nerdpatch.restore_metadata(patched, src)
 
-    assert ps == "SumiMojiJPNF-Regular"
-    assert patched["name"].getDebugName(1) == "Sumi Moji JP NF"
+    assert ps == "SumiMojiJPNFM-Regular"
+    assert patched["name"].getDebugName(1) == "Sumi Moji JP Nerd Font Mono"
     assert patched["name"].getDebugName(6) == ps
     assert patched["CFF "].cff.fontNames[0] == ps
     os2 = patched["OS/2"]

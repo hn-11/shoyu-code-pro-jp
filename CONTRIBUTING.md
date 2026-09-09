@@ -1,9 +1,8 @@
 # Contributing
 
 Sumi Moji JP は上流フォント（Source Han Sans JP / Source Code Pro /
-Monaspace / Source Han Code JP）を CI 上で合成して作られています。ソース
-グリフを直接同梱していないため、ビルドには毎回それらの上流ファイルが
-必要です。
+Monaspace）を CI 上で合成して作られています。ソースグリフを直接同梱して
+いないため、ビルドには毎回それらの上流ファイルが必要です。
 
 ## ローカルビルド
 
@@ -21,10 +20,9 @@ Monaspace VF から欧文レイヤー Sumi Mojiを `dist/latin` に組み、
 | `SCP_VF_U` | `build_latin.py` / `build_latin_vf.py` | `SourceCodeVF-Upright.otf` へのパス | [Source Code Pro Releases](https://github.com/adobe-fonts/source-code-pro/releases) |
 | `SCP_VF_I` | 同上 | `SourceCodeVF-Italic.otf` へのパス | 同上 |
 | `MONA_VF` | 同上 | Monaspace の可変フォント（例: `Monaspace Neon Var.ttf`） | [Monaspace Releases](https://github.com/githubnext/monaspace/releases) |
-| `SHCJ_TTC` | 両方（`build.py` は省略時 `upstream/SourceHanCodeJP.ttc`） | `SourceHanCodeJP.ttc` へのパス | [Source Han Code JP Releases](https://github.com/adobe-fonts/source-han-code-jp/releases) |
 | `SHS_DIR` | `build.py` | `SourceHanSansJP-<Weight>.otf` が入ったディレクトリ | [Source Han Sans Releases](https://github.com/adobe-fonts/source-han-sans/releases) |
 | `LATIN_DIR` | `build.py`（任意、既定 `dist/latin`） | `build_latin.py` の出力先 | — |
-| `SUMI_VERSION` | 3つとも（任意） | リリース版番号（例 `3.3.0`）。未設定なら上流のリビジョンを name に残す | — |
+| `SUMI_VERSION` | 3つとも（任意） | リリース版番号（例 `5.0.0`）。未設定なら上流のリビジョンを name に残す | — |
 | `SUMI_SKIP_AUTOHINT` | `build.py` / `build_latin.py`（任意） | `1` でヒント付けをスキップ（試しビルドの時短用） | — |
 
 取得元の URL パターンや正確なタグは `.github/actions/fetch-upstreams/action.yml`
@@ -32,23 +30,23 @@ Monaspace VF から欧文レイヤー Sumi Mojiを `dist/latin` に組み、
 リファレンスです）。
 
 ```sh
-SCP_VF_U=... SCP_VF_I=... MONA_VF=... SHCJ_TTC=... \
-  python scripts/build_latin.py           # dist/latin{,/term}/SumiMoji*-*.otf
+SCP_VF_U=... SCP_VF_I=... MONA_VF=... \
+  python scripts/build_latin.py           # dist/latin/SumiMoji-*.otf（10 面）
   python scripts/build_latin.py "Regular" # Regular 系のみ
-SHS_DIR=... SHCJ_TTC=... \
-  python scripts/build.py                 # 全ファミリー
+SHS_DIR=... \
+  python scripts/build.py                 # 両ファミリー
   python scripts/build.py "Regular"       # Regular 系のみ（動作確認用、速い）
   python scripts/build.py "Light Upright Term"   # 1 面だけ
 ```
 
 フィルタは語の組み合わせで、面がすべての語に合うものを組みます:
-ウェイト名（`Light` … `Heavy`）、書体（`Upright` / `Italic`）、変種
-（`35` / `Term` / 変種なしの基本ファミリーは `base`。`build_latin.py` では
-プロファイル名 `ship` / `term` がこの位置に入る）。同じ種類の語を複数
-書けばそのいずれか（`"Light Normal base"` は基本ファミリーの Light と
-Normal の 4 面）。`"Regular"` は Regular と Regular Italic の全ファミリー、
-`"Light Italic"` はファミリーごとに 1 面、`""`（空文字列）だけなら基本
-ファミリーです。
+ウェイト名（`Light` `Regular` `Medium` `SemiBold` `Bold`）、書体
+（`Upright` / `Italic`）、変種（`Term` / 変種なしの基本ファミリーは
+`base`。`build_latin.py` は 1 ファミリーなので `base` 以外の変種語には
+何も合いません）。同じ種類の語を複数書けばそのいずれか
+（`"Light Regular base"` は基本ファミリーの Light と Regular の 4 面）。
+`"Regular"` は Regular と Regular Italic の全ファミリー、`"Light Italic"`
+はファミリーごとに 1 面、`""`（空文字列）だけなら基本ファミリーです。
 
 可変フォント版の Sumi Moji は `python scripts/build_latin_vf.py`
 （`build_latin.py` と同じ環境変数）で `dist/latin/SumiMoji[wght].otf` /
@@ -133,7 +131,7 @@ python scripts/nerdpatch.py <FontPatcher dir> [名前の一部]
 
 上流の固定タグは `.github/actions/fetch-upstreams/action.yml` の
 「Pin upstream releases」ステップ（`SHS_TAG` / `SCP_TAG` / `SCP_VF_ZIP` /
-`MONA_TAG` / `SHCJ_TAG`）に一元化されており、`ci.yml` / `release.yml` は
+`MONA_TAG`）に一元化されており、`ci.yml` / `release.yml` は
 このアクションを共有しています。
 
 通常は手で更新する必要はありません。`upstream-sync.yml`（毎週月曜 実行、

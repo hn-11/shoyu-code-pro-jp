@@ -32,14 +32,13 @@ def main():
 
     name = tf["name"]
     fam = name.getDebugName(16) or name.getDebugName(1)
-    # a Nerd Fonts variant (e.g. "Sumi Moji NF") splices "NF" in as its own
-    # token after the family, same convention verify.py uses for the JP
-    # families — strip it before matching against the known family names.
-    is_nf = bool(fam) and " NF" in fam
-    base_fam = " ".join(t for t in (fam or "").split(" ") if t != "NF")
-    families = {p[1]: p[2] for p in build_latin.PROFILES.values()}
-    check(base_fam in families, f"family name {fam!r}")
-    ps_family = families.get(base_fam, "?") + ("NF" if is_nf else "")
+    # a Nerd Fonts variant ("Sumi Moji Nerd Font Mono", nerdpatch.nf_name)
+    # appends Nerd Fonts' own marker after the family — strip it before
+    # matching against the family name.
+    is_nf = bool(fam) and fam.endswith(" Nerd Font Mono")
+    base_fam = fam[:-len(" Nerd Font Mono")] if is_nf else (fam or "")
+    check(base_fam == build_latin.FAMILY, f"family name {fam!r}")
+    ps_family = build_latin.PS_FAMILY + ("NFM" if is_nf else "")
     check((name.getDebugName(6) or "").startswith(ps_family + "-"),
           f"PostScript name {name.getDebugName(6)!r}")
     n0 = name.getDebugName(0) or ""

@@ -80,12 +80,12 @@ def _glyph_private(td, gid):
 def fit_nerd_glyphs(font, cell):
     """font-patcher --complete sizes every Nerd Font icon (PUA + the
     supplementary planes NF uses) for a 1000-unit cell, no matter the
-    target family's half-width cell — 1000 lands on neither 667 (JP) nor
-    600 (JP35), breaking the monospace grid (Term is already 600, so
-    font-patcher's output happens to already match there).
+    target family's half-width cell — 1000 is not our 600, and would
+    break the monospace grid (Nerd Fonts' own "Mono" variant is the
+    same idea: every icon in one cell).
 
     Rescale each affected glyph isotropically by cell/advance, like
-    build.rescale, but about the glyph's vertical center (build.py's
+    a rescale, but about the glyph's vertical center (build.py's
     glyph_vcenter) instead of the origin, so the icon stays put vertically
     while its footprint shrinks to fit the cell horizontally too. A glyph
     may be reachable from several codepoints (icons get aliased); rewrite
@@ -137,14 +137,14 @@ def fit_nerd_glyphs(font, cell):
 
 
 def nf_name(s):
-    """The Nerd Fonts name of one of our names: the NF marker spliced in
-    after the family, variant token included."""
-    # JP-font convention (HackGen/PlemolJP/UDEV): NF goes AFTER the
-    # variant token — "Sumi Moji JP Term NF", not "... NF Term". The
-    # Latin-only Sumi Moji has no variant (Sumi Moji Term is the internal
-    # donor and is never patched): the marker follows the family name.
-    s = re.sub(r"(Sumi Moji(?: JP(?: 35| Term)?)?)", r"\1 NF", s, count=1)
-    return re.sub(r"(SumiMoji(?:JP(?:35|Term)?)?)", r"\1NF", s, count=1)
+    """The Nerd Fonts name of one of our names, Nerd Fonts' own
+    convention: "<Family> Nerd Font Mono" / "<PSFamily>NFM" — the Mono
+    variant is the one whose icons are fitted to a single cell
+    (fit_nerd_glyphs), which is what every face here is. The marker
+    follows the whole family name, variant token included ("Sumi Moji JP
+    Term Nerd Font Mono", like "JetBrainsMono Nerd Font Mono")."""
+    s = re.sub(r"(Sumi Moji(?: JP(?: Term)?)?)", r"\1 Nerd Font Mono", s, count=1)
+    return re.sub(r"(SumiMoji(?:JP(?:Term)?)?)", r"\1NFM", s, count=1)
 
 
 # what FontForge's round trip (the flattening, font-patcher's generate)
@@ -233,7 +233,7 @@ def restore_metadata(font, src_font):
     build.update_bbox(font, patched_bounds(font, src_font))
     # the win metrics follow the source's own policy: Sumi Moji's hold its
     # whole box (build_latin.fit_win_metrics), so they widen to whatever
-    # the icons add; the JP faces carry Source Han Code JP's line metrics
+    # the icons add; the JP faces keep Source Han Sans's win metrics
     # (build.copy_line_metrics), which do not cover SHS's outliers, and
     # keep them as they are
     src_head = src_font["head"]
@@ -246,9 +246,9 @@ def restore_metadata(font, src_font):
 def fix_names(patched: Path, src: Path) -> Path:
     """Finish one font-patcher output: icons fitted to the cell
     (fit_nerd_glyphs), names and metadata from the source face
-    (restore_metadata — font-patcher can't parse SHCJ's subfamily scheme
-    (N/R/M/B/H + Italic) and collapses every face to "Regular", colliding
-    on disk and at install time), subroutinized again (FontForge's round
+    (restore_metadata — font-patcher does not keep our subfamily scheme
+    and collapses every face to "Regular", colliding on disk and at
+    install time), subroutinized again (FontForge's round
     trip writes the CFF with far fewer subroutines than the source's,
     and the icons come flat: a JP face with the complete set is 7.8 MB,
     6.9 MB once tx folds the repetition back, ten seconds), saved under

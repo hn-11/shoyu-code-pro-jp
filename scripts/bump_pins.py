@@ -30,7 +30,6 @@ ACTION = Path(".github/actions/fetch-upstreams/action.yml")
 SHS_REPO = "adobe-fonts/source-han-sans"
 SCP_REPO = "adobe-fonts/source-code-pro"
 MONA_REPO = "githubnext/monaspace"
-SHCJ_REPO = "adobe-fonts/source-han-code-jp"
 
 PIN_RE = re.compile(r'(?P<head>echo "(?P<key>[A-Z_]+)=)(?P<val>[^"]*)(?P<tail>")')
 
@@ -64,8 +63,6 @@ def scp_vf_zip(tag: str) -> str:
 def download_urls(pins: dict[str, str]) -> list[str]:
     mona = pins["MONA_TAG"]
     return [
-        f"https://github.com/{SHCJ_REPO}/releases/download/"
-        f"{pins['SHCJ_TAG']}/SourceHanCodeJP.ttc",
         f"https://github.com/{SHS_REPO}/releases/download/"
         f"{pins['SHS_TAG']}/17_SourceHanSansJP.zip",
         # SCP_TAG is stored %2F-encoded, so it drops into the path as-is.
@@ -121,7 +118,6 @@ def main() -> int:
         "SHS_TAG": latest_tag(SHS_REPO),
         **scp_pins,
         "MONA_TAG": latest_tag(MONA_REPO),
-        "SHCJ_TAG": latest_tag(SHCJ_REPO),
     }
     missing = set(new) - set(current)
     if missing:

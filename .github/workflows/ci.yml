@@ -1,10 +1,10 @@
 # Gate for every push/PR, in about a minute: the Regular faces (upright
-# and italic) and the Light Italic faces (the erosion path) of every
-# family, the variable Sumi Moji and a Nerd Fonts patch, assembled from
+# and italic) and the Light Italic faces (the erosion path) of both
+# families, the variable Sumi Moji and a Nerd Fonts patch, assembled from
 # the live upstreams in eight parallel jobs (around ten, jobs start to
 # queue behind each other and finish late). upstream-sync.yml waits on
 # these jobs by name (REQUIRED_CHECKS there): renaming one here means
-# renaming it there. The full 36-face build happens in release.yml.
+# renaming it there. The full 20-face build happens in release.yml.
 name: CI
 on:
   push:
@@ -27,10 +27,8 @@ jobs:
       - run: pip install -r requirements.txt ruff pytest
       - run: ruff check scripts/ tests/
       - run: python -m pytest tests/ -q
-  # one weight and style per job, split by donor: the ship donor with
-  # the base and 35 faces on top, or the term donor with the Term face
-  # (build_latin.py, then build.py — a job's faces build side by side),
-  # then every face verified side by side
+  # one weight, style and family per job: the Latin donor (build_latin.py),
+  # then the JP face on top (build.py), then both verified side by side
   faces:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -38,21 +36,16 @@ jobs:
       fail-fast: false
       matrix:
         face: [Regular Upright, Regular Italic, Light Italic]
-        family: [base 35, Term]
-        include:
-          - family: base 35
-            latin: ship
-          - family: Term
-            latin: term
+        family: [base, Term]
     name: faces (${{ matrix.face }} ${{ matrix.family }})
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: ./.github/actions/setup-build
       # the Latin layer (Sumi Moji, provisional name) is assembled first
       # from the VFs; build.py grafts it into Source Han Sans
-      - run: python scripts/build_latin.py "${{ matrix.face }} ${{ matrix.latin }}"
+      - run: python scripts/build_latin.py "${{ matrix.face }}"
       - run: python scripts/build.py "${{ matrix.face }} ${{ matrix.family }}"
-      - run: python scripts/verify_many.py 'dist/latin/term/*.otf' 'dist/latin/*.otf' 'dist/*.otf'
+      - run: python scripts/verify_many.py 'dist/latin/*.otf' 'dist/*.otf'
   # the variable Sumi Moji (upright only here, Italic is covered in
   # release.yml; verify_latin_vf.py's static-face comparison skips when
   # dist/latin has no statics and its check against Source Code Pro
@@ -73,8 +66,8 @@ jobs:
           fontforge: "true"
       - run: python scripts/build_latin_vf.py upright
       - run: python scripts/verify_latin_vf.py "dist/latin/SumiMoji[wght].otf"
-      - run: python scripts/build_latin.py "Regular Upright ship"
+      - run: python scripts/build_latin.py "Regular Upright"
       - run: python scripts/nerdpatch.py FontPatcher dist/latin/SumiMoji-Regular.otf
         env:
           SUMI_NERD_SETS: --powerline
-      - run: python scripts/verify_latin.py dist/nerd/latin/SumiMojiNF-Regular.otf
+      - run: python scripts/verify_latin.py dist/nerd/latin/SumiMojiNFM-Regular.otf
