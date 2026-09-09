@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v5.0.0
 
 - Nerd Fonts 版は font-patcher と FontForge を使わず、Nerd Fonts が配る
   記号フォント `Symbols Nerd Font Mono`（NerdFontsSymbolsOnly.zip）から
@@ -16,8 +16,6 @@
   上流の固定タグに `NF_TAG` が加わり、`bump_pins.py` が追随する。CI の
   Regular Upright ジョブは JP 面への接ぎ木も検証する。verify.py は NF 面
   でも幅メタデータを検査する（xAvgCharWidth は接ぎ木後に再計算）
-
-## v5.0.0
 
 - **基準を英語圏のターミナルフォントに置き換えた**（v5.0.0）。v4.0.0 までは
   Source Han Code JP（SHCJ）が基準だった: 2:3 の比率、SHCJ の行間
