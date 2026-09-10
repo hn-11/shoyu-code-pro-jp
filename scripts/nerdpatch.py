@@ -33,6 +33,19 @@ Sizing follows font-patcher's own rules for each group (icon_transform):
 The Powerline glyphs Source Code Pro draws itself (U+E0A0-E0A2,
 E0B0-E0B3) are replaced by the symbols font's, as font-patcher did.
 
+One divergence from `--complete`: where the face already draws a
+codepoint the symbols font also has, font-patcher overwrites the face's
+glyph and only `--careful` keeps it. Here the face's is kept, because
+outside Powerline that overlap is not icons — it is text. The two fonts
+share exactly eight codepoints: those seven Powerline glyphs, replaced,
+and U+2665 BLACK HEART SUIT, which both donors (Source Code Pro in a
+Sumi Moji face, Source Han Sans in a JP one) draw as the character it
+is and Nerd Fonts draws as an Octicon. A prompt wants the
+Octicon separators; prose wants its own heart. graft_symbols pins that
+one codepoint (TEXT_OVER_ICON) and fails the build when the overlap
+widens, so an upstream release cannot quietly turn a character into an
+icon behind a maintainer's back.
+
 Names: "<Family> Nerd Font Mono", PostScript "<PSFamily>NFM-", Nerd
 Fonts' own convention for a font whose icons are one cell wide (nf_name).
 Everything else — STAT, OS/2, post, the hints, the GSUB — is the source
@@ -77,6 +90,12 @@ POWERLINE = range(0xE0A0, 0xE0D8)
 # range keeps its aspect ('^pa').
 SEPARATORS = frozenset(range(0xE0B0, 0xE0C9)) | {
     0xE0CA, 0xE0CC, 0xE0CD, 0xE0D2, 0xE0D4, 0xE0D6, 0xE0D7}
+# Powerline aside, the codepoints Symbols Nerd Font Mono and a Sumi Moji
+# face both draw. The face's glyph wins there (see the divergence in the
+# module docstring), so this is the set of characters an icon does NOT
+# take over. Pinned, so an upstream that widens the overlap fails the
+# graft rather than quietly redrawing a character as an icon.
+TEXT_OVER_ICON = frozenset({0x2665})            # BLACK HEART SUIT
 
 
 def nf_name(s):
@@ -169,9 +188,14 @@ def graft_symbols(font, symbols):
     # {glyph already redrawn: the codepoint it was redrawn for}. A second
     # codepoint sharing that glyph cannot have it too — it gets its own,
     # appended below, rather than the first one's symbol
-    new, replaced = {}, {}
+    new, replaced, kept = {}, {}, set()
     for cp in sorted(scm):
         if cp in cmap and cp not in POWERLINE:
+            # the face already draws this one as text: font-patcher's
+            # `--careful` rule, not its default, and the docstring says
+            # why. Collected, because which characters an icon may not
+            # take over is a decision and not a side effect
+            kept.add(cp)
             continue
         ink = build._bounds(sgs, scm[cp]) if cp in POWERLINE else None
         xform = icon_transform(cp, ink, ctx)
@@ -200,6 +224,15 @@ def graft_symbols(font, symbols):
         build.append_glyph(font, td, name, pen.getCharString(private=private),
                            fd_index, cell, None, vdon)
         new[cp] = name
+    if kept != set(TEXT_OVER_ICON):
+        raise ValueError(
+            f"the symbols font overlaps this face outside Powerline at "
+            f"{sorted(hex(c) for c in kept)}, not the pinned "
+            f"{sorted(hex(c) for c in TEXT_OVER_ICON)}. Each of these is "
+            f"a character the face draws and Nerd Fonts draws as an icon: "
+            f"decide which one a reader should get, then update "
+            f"TEXT_OVER_ICON (keep the character) or add the codepoint to "
+            f"POWERLINE's treatment (take the icon)")
     build.set_cmap(font, new, add_new=True)
     return len(new) + len(replaced), list(replaced)
 
@@ -248,9 +281,14 @@ def rename(font):
 
 
 def icon_checks(font, symbols=None):
-    """[(ok, message)] over a grafted face's Powerline glyphs — what the
-    sizing rules above are for, checked on the built face:
+    """[(ok, message)] over a grafted face — what the sizing rules above
+    are for, checked on the built face:
 
+      - every codepoint the symbols font has is in the face, grafted or
+        (TEXT_OVER_ICON) already drawn there;
+      - every Powerline glyph in the face draws ink: a blank one leaves
+        a hole in every prompt and has no box for the checks below to
+        fault;
       - every separator tiles: its ink all but spans the cell left to
         right and the line box top to bottom, so no seam shows between
         two cells or two lines. All but, because font-patcher draws a
@@ -265,19 +303,22 @@ def icon_checks(font, symbols=None):
     cell = face_cell(font)
     sgs = symbols.getGlyphSet() if symbols is not None else None
     scm = symbols.getBestCmap() if symbols is not None else {}
-    # every Powerline glyph the symbols font has must have reached the
-    # face: a graft that added none of them would otherwise pass, having
-    # nothing to measure. The face may carry more (a donor's own), never
-    # fewer
-    want = {cp for cp in POWERLINE if cp in scm} if sgs is not None else None
-    seen, short, spill, skew = set(), [], [], []
+    # every codepoint the symbols font has must have reached the face,
+    # grafted or already drawn there: a graft that dropped a whole icon
+    # set would otherwise pass, having nothing left to measure
+    want = set(scm) if sgs is not None else None
+    seen, blank, short, spill, skew = set(), [], [], [], []
     for cp in POWERLINE:
         name = cmap.get(cp)
         if name is None:
             continue
-        seen.add(cp)          # present; only its geometry needs ink
+        seen.add(cp)
         ink = build._bounds(gs, name)
         if ink is None:
+            # no ink at all: a blank separator leaves a hole in every
+            # prompt, and it has no box for the geometry checks below to
+            # find fault with — so it is a failure here, not a skip
+            blank.append(f"U+{cp:04X}")
             continue
         x0, y0, x1, y1 = ink
         if cp in SEPARATORS:
@@ -291,12 +332,15 @@ def icon_checks(font, symbols=None):
             aspect = (src[2] - src[0]) / (src[3] - src[1])
             if abs((x1 - x0) / (y1 - y0) - aspect) > 0.01 * aspect:
                 skew.append(f"U+{cp:04X}")
-    missing = ("not checked, no NF_SYMBOLS" if want is None
-               else f"missing: {sorted(hex(c) for c in want - seen)}")
+    gap = None if want is None else sorted(want - set(cmap))
+    missing = ("not checked, no NF_SYMBOLS" if gap is None
+               else f"{len(gap)} missing: {[hex(c) for c in gap[:8]]}")
     return [
-        (want is None or want <= seen,
-         f"every Powerline glyph the symbols font has is in the face "
-         f"({len(seen)} present, {missing})"),
+        (not gap,
+         f"every codepoint the symbols font has is in the face "
+         f"({len(seen)} of them Powerline, {missing})"),
+        (not blank, f"every Powerline glyph in the face draws ink "
+                    f"(blank: {blank})"),
         (not short, f"every Powerline separator tiles the cell and the line "
                     f"({len(seen)} Powerline glyphs, off: {short})"),
         (not spill, f"every other Powerline glyph fits the cell (off: {spill})"),

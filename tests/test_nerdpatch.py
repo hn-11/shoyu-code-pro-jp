@@ -163,10 +163,15 @@ def test_icon_transform_keeps_the_aspect_of_a_powerline_symbol():
     assert box[0] + box[2] == pytest.approx(600)             # centred in the cell
 
 
-def test_graft_symbols_appends_one_cell_icons_the_face_lacks():
+def test_graft_symbols_appends_one_cell_icons_the_face_lacks(monkeypatch):
+    # the fixtures share 'A', where a real face and the symbols font
+    # share U+2665: pin that instead of editing the fixtures
+    monkeypatch.setattr(nerdpatch, "TEXT_OVER_ICON", frozenset({ord("A")}))
     face = _face()
     assert _bounds(face, "uniE0B0") == (0, -280, 600, 1040)     # Source Code Pro's
+    a_before = _bounds(face, "A")
     grafted, rehint = nerdpatch.graft_symbols(face, _symbols())
+    assert _bounds(face, "A") == a_before        # text, not Nerd Fonts' icon
     assert (grafted, rehint) == (4, ["uniE0B0"])                # not 'A'
     cmap = face.getBestCmap()
     assert cmap[ord("A")] == "A"
@@ -248,3 +253,54 @@ def test_separators_are_font_patchers_own_stretched_set():
     # the four Powerline symbols keep their aspect ('^pa'), as do E0CE-E0D1
     assert not nerdpatch.SEPARATORS & {0xE0A0, 0xE0A1, 0xE0A2, 0xE0A3,
                                        0xE0CE, 0xE0CF, 0xE0D0, 0xE0D1}
+
+
+def test_graft_symbols_will_not_let_an_icon_take_a_character_unpinned():
+    """TEXT_OVER_ICON is the whole of the overlap outside Powerline, and
+    a wider one is a decision for a maintainer: font-patcher's default
+    would redraw the character as an icon, and that has to be chosen,
+    not inherited from an upstream release."""
+    with pytest.raises(ValueError, match=r"outside Powerline at \['0x41'\]"):
+        nerdpatch.graft_symbols(_face(), _symbols())
+
+
+def _checks(font, symbols=None):
+    return dict((msg.split(" (")[0], ok) for ok, msg in nerdpatch.icon_checks(font, symbols))
+
+
+def _grafted(monkeypatch):
+    monkeypatch.setattr(nerdpatch, "TEXT_OVER_ICON", frozenset({ord("A")}))
+    face, symbols = _face(), _symbols()
+    nerdpatch.graft_symbols(face, symbols)
+    return face, symbols
+
+
+def test_icon_checks_passes_a_good_graft(monkeypatch):
+    face, symbols = _grafted(monkeypatch)
+    assert all(ok for ok, _ in nerdpatch.icon_checks(face, symbols))
+    assert all(ok for ok, _ in nerdpatch.icon_checks(face))     # no NF_SYMBOLS
+
+
+def test_icon_checks_faults_a_powerline_glyph_with_no_ink(monkeypatch):
+    """A blank separator draws nothing, so it has no box to be short or
+    to spill — every geometry check below would pass it."""
+    face, symbols = _grafted(monkeypatch)
+    cff = face["CFF "].cff
+    cs = cff[cff.fontNames[0]].CharStrings["uniE0B0"]
+    cs.decompile()
+    cs.program = ["endchar"]                     # keeps its Private, draws nothing
+    ink, tiles = [(ok, msg) for ok, msg in nerdpatch.icon_checks(face, symbols)
+                  if "draws ink" in msg or "tiles the cell" in msg]
+    assert (ink[0], "U+E0B0" in ink[1]) == (False, True)
+    assert tiles[0] is True                      # no box to be short: hence the check
+
+
+def test_icon_checks_faults_an_icon_that_never_reached_the_face(monkeypatch):
+    """Not just the Powerline ones: a graft that dropped a whole icon
+    set would have nothing left to measure and would otherwise pass."""
+    face, symbols = _grafted(monkeypatch)
+    for table in face["cmap"].tables:
+        table.cmap.pop(0xF0001, None)
+    assert _checks(face, symbols)["every codepoint the symbols font has is in the face"] is False
+    # and with no symbols font at hand there is nothing to compare against
+    assert _checks(face)["every codepoint the symbols font has is in the face"] is True

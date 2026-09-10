@@ -936,11 +936,11 @@ def import_scp_variants(base, scp, default_map, marks):
                     continue
                 is_mark = default_map[src] in marks
                 if (dst, is_mark) not in imported:
-                    # the donor's own advance, as graft_halfwidth takes
-                    # it: a variant must not be a different width from
-                    # the default it replaces
+                    # the DEFAULT's advance, not the variant's: a
+                    # variant must not be a different width from the
+                    # glyph it replaces mid-run
                     width, dx = ((0, -CELL) if is_mark
-                                 else (scp["hmtx"][dst][0], 0))
+                                 else (scp["hmtx"][src][0], 0))
                     pen = T2CharStringPen(pen_width(private, width), scp_gs)
                     draw_clean(
                         [(scp_gs, dst, (1, 0, 0, 1, dx, 0))], pen)
@@ -1304,7 +1304,8 @@ def fit_to_grid(font, cell, steps=None):
     """Centre Source Han Sans's proportional leftovers on the grid: every
     glyph whose advance is neither 0 nor a whole number of cells nor of
     full widths — the half-width kana and symbols at 500 (half of the
-    1000 em, on neither grid), Hangul jamo at 920, ﬀ ﬃ ﬄ, the enclosed
+    1000 em, on neither grid; the Halfwidth block's wider glyphs are
+    narrow_halfwidth's, before this), Hangul jamo at 920, ﬀ ﬃ ﬄ, the enclosed
     🄯, and in the italic faces the Greek and Cyrillic Source Code Pro
     Italic has none of — goes to the nearest grid step (grid_step); the
     outline is centred in the new advance. Runs before widen_fullwidth,
@@ -2069,8 +2070,10 @@ def narrow_halfwidth(font, cell):
     advance or in ink — gets a one-cell copy of it, condensed, and
     whatever else shares that glyph keeps the original.
 
-    Runs after fit_to_grid (whose grid step the shared glyph took) and
-    before widen_fullwidth, which must not widen the copies. Returns the
+    Runs before fit_to_grid, so the scale is Source Han Sans's own
+    advance and not the grid step that pass would give it, and before
+    widen_fullwidth, which must not widen the copies. A glyph that
+    already fits the cell is left for fit_to_grid to centre. Returns the
     number made."""
     cmap = font.getBestCmap()
     hmtx = font["hmtx"]
@@ -2085,7 +2088,11 @@ def narrow_halfwidth(font, cell):
             continue
         box = _bounds(gs, name)
         ink = (box[2] - box[0]) if box else 0
-        if adv == cell and ink <= cell:
+        if adv <= cell and ink <= cell:
+            # already fits: fit_to_grid centres it in the cell, and
+            # condensing here would only stretch it (Source Han Sans's
+            # half-width kana are 500 wide, and 600/500 is a 20% widening
+            # of every vertical stroke against untouched horizontals)
             continue
         if name not in made:
             # the copy stays in the source glyph's own FontDict: it is a
@@ -2099,7 +2106,7 @@ def narrow_halfwidth(font, cell):
             # Scaling by the cell over the advance keeps the design's own
             # bearings in proportion, which is what a half-width form is;
             # over the ink instead where even that would not fit
-            sx = cell / max(adv, ink)
+            sx = min(1.0, cell / max(adv, ink))   # condense, never widen
             # centred in the cell, not scaled about the origin: a source
             # glyph whose ink starts left of zero would otherwise bleed
             # into the cell before it
