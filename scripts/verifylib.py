@@ -89,11 +89,12 @@ def hmtx_mismatches(font):
     bearings from the on-curve points, up to a unit right of a curve's
     true extreme (the stale Sumi Moji bearings this catches were tens of
     units off). A blank glyph has no xMin and is left alone. Every glyph
-    is drawn once."""
+    is drawn once, and its box comes back third, so a caller that needs
+    the bounds does not draw them all over again."""
     cff = font["CFF "].cff
     charstrings = cff[cff.fontNames[0]].CharStrings
     hmtx = font["hmtx"].metrics
-    widths, bearings = [], []
+    widths, bearings, bounds = [], [], {}
     for name in font.getGlyphOrder():
         cs = charstrings[name]
         pen = BoundsPen(None)
@@ -101,9 +102,11 @@ def hmtx_mismatches(font):
         adv, lsb = hmtx[name]
         if cs.width != adv:
             widths.append((name, cs.width, adv))
-        if pen.bounds and abs(pen.bounds[0] - lsb) >= 2:
-            bearings.append((name, pen.bounds[0], lsb))
-    return widths, bearings
+        if pen.bounds:
+            bounds[name] = pen.bounds
+            if abs(pen.bounds[0] - lsb) >= 2:
+                bearings.append((name, pen.bounds[0], lsb))
+    return widths, bearings, bounds
 
 
 def static_faces(src_dir, family):

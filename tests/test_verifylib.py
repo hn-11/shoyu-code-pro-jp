@@ -74,9 +74,11 @@ def test_glyph_has_hint_does_not_loop_on_a_recursive_subroutine():
 def test_hmtx_mismatches_reports_widths_and_bearings():
     from test_build import _extents_font
     font, _ = _extents_font()
-    assert verifylib.hmtx_mismatches(font) == ([], [])
+    assert verifylib.hmtx_mismatches(font)[:2] == ([], [])
     font["hmtx"].metrics["A"] = (650, 0)       # width off by 50, lsb off by 20
     font["hmtx"].metrics["space"] = (600, 50)  # blank: no xMin to disagree with
-    widths, bearings = verifylib.hmtx_mismatches(font)
+    widths, bearings, bounds = verifylib.hmtx_mismatches(font)
     assert widths == [("A", 600, 650)]
     assert bearings == [("A", 20, 0)]
+    # the boxes come back too, so a caller need not draw them again
+    assert bounds["A"] == (20, -30, 520, 700) and "space" not in bounds

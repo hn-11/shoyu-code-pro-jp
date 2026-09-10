@@ -667,17 +667,22 @@ def append_context(font, fullwidth=False):
     td = cff[cff.fontNames[0]]
     cmap = font.getBestCmap()
     a = cmap[ord("A")]
-    fd_index = td.FDSelect[font.getGlyphID(a)] if hasattr(td, "FDArray") else None
-    return td, cmap, fd_index, glyph_private(font, td, a), vmtx_donor(font, fullwidth)
+    return (td, cmap, glyph_fd(font, td, a), glyph_private(font, td, a),
+            vmtx_donor(font, fullwidth))
+
+
+def glyph_fd(font, td, name):
+    """The FontDict index `name` lives in, or None in a plain CFF (which
+    has one Private dict and no FDSelect — the tests' fixtures; every
+    face this repo builds is CID-keyed)."""
+    return td.FDSelect[font.getGlyphID(name)] if hasattr(td, "FDArray") else None
 
 
 def glyph_private(font, td, name):
     """The Private dict a charstring for `name` is written against: its
-    own FD's in a CID-keyed face — which every face here is — or the top
-    dict's in a plain CFF (the tests' fixtures)."""
-    if hasattr(td, "FDArray"):   # CID-keyed
-        return td.FDArray[td.FDSelect[font.getGlyphID(name)]].Private
-    return td.Private
+    own FD's, or the top dict's in a plain CFF."""
+    fd = glyph_fd(font, td, name)
+    return td.Private if fd is None else td.FDArray[fd].Private
 
 
 def set_cmap(font, mapping, add_new=False):
@@ -1228,7 +1233,9 @@ def grid_step(adv, ink, cell):
         high = FULLWIDTH if low == cell else low + FULLWIDTH
         step = low if adv - low <= high - adv else high
     while ink > step + cell // 3:
-        step = FULLWIDTH if step == cell else step + FULLWIDTH
+        # the cell first, then whole full widths — and always forward,
+        # even were the cell ever set at or above a full width
+        step = FULLWIDTH if step < FULLWIDTH else step + FULLWIDTH
     return step
 
 
@@ -2068,16 +2075,17 @@ def narrow_halfwidth(font, cell):
             # the copy stays in the source glyph's own FontDict: it is a
             # Hangul jamo, and add_latin_fd would otherwise re-home it
             # with the grafted Latin and hint it against Latin blues
-            fd = td.FDSelect[font.getGlyphID(name)] if hasattr(td, "FDArray") else None
-            private = td.FDArray[fd].Private if fd is not None else td.Private
+            fd = glyph_fd(font, td, name)
+            private = glyph_private(font, td, name)
             shift = (cell - hmtx[name][0]) // 2
             pen = T2CharStringPen(pen_width(private, cell), gs)
             gs[name].draw(TransformPen(pen, (1, 0, 0, 1, shift, 0)))
             made[name] = alloc_glyph_name(font)
             append_glyph(font, td, made[name], pen.getCharString(private=private),
                          fd, cell, None, vdon)
-            # read after the append, which creates the set on first use
-            getattr(font, "_appended", set()).discard(made[name])
+            # append_glyph records it; take it back out, so add_latin_fd
+            # leaves this one in the FontDict it was copied from
+            font._appended.discard(made[name])
         new[cp] = made[name]
     set_cmap(font, new)
     return len(new)

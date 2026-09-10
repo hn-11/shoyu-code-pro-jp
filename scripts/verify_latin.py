@@ -59,7 +59,7 @@ def main():
         if ord(ch) in cmap:
             check(hmtx[cmap[ord(ch)]][0] == CELL, f"{ch!r} is one cell")
     check(hmtx[tf.getGlyphOrder()[0]][0] == CELL, ".notdef is one cell")
-    widths, bearings = hmtx_mismatches(tf)
+    widths, bearings, _bounds = hmtx_mismatches(tf)
     check(not widths, f"CFF charstring widths agree with hmtx ({widths[:3]})")
     check(not bearings, f"hmtx bearings are the outlines' xMin ({len(bearings)} off, "
                         f"e.g. {bearings[:3]})")

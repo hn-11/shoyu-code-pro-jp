@@ -194,17 +194,6 @@ def main():
           f"every advance in the font is on the grid ({len(hmtx.metrics)} glyphs; "
           f"off: {[(n, hmtx[n][0]) for n in off_grid[:5]]})")
 
-    # and nothing paints a whole cell past its own advance: an italic
-    # overhangs by design (up to 138u in the Latin layer), a glyph put on
-    # a step too small for its ink would not (grid_step)
-    from build import glyph_bounds
-    bounds = glyph_bounds(tf)
-    spill = [(name, hmtx[name][0], round(box[2] - box[0]))
-             for name, box in bounds.items()
-             if hmtx[name][0] > 0 and (box[2] - box[0]) > hmtx[name][0] + exp_half]
-    check(not spill, f"no glyph's ink spills a whole cell past its advance "
-                     f"({len(spill)} do, e.g. {spill[:3]})")
-
     # line metrics: Source Code Pro's, hhea and typo alike, USE_TYPO_METRICS
     hhea, os2 = tf["hhea"], tf["OS/2"]
     got = ((hhea.ascent, hhea.descent, hhea.lineGap),
@@ -222,13 +211,21 @@ def main():
     # -- and the left side bearing must be the outline's xMin (a CFF
     # font's lsb is nothing fontTools maintains: the Latin donors used to
     # carry SCP's default-master bearings at every weight)
-    # hmtx_mismatches draws the charstrings themselves (it compares the
-    # width encoded in each, which the bounds above do not carry)
-    widths, bearings = hmtx_mismatches(tf)
+    widths, bearings, bounds = hmtx_mismatches(tf)
     check(not widths, f"CFF charstring widths agree with hmtx "
                       f"({len(tf.getGlyphOrder())} glyphs, {len(widths)} off: {widths[:5]})")
     check(not bearings, f"hmtx bearings are the outlines' xMin "
                         f"({len(bearings)} off: {bearings[:5]})")
+
+    # and nothing paints a whole cell past its own advance: an italic
+    # overhangs by design (up to 138u in the Latin layer), a glyph put on
+    # a step too small for its ink would not (grid_step). The boxes are
+    # the pass above's, not a second one
+    spill = [(name, hmtx[name][0], round(box[2] - box[0]))
+             for name, box in bounds.items()
+             if hmtx[name][0] > 0 and (box[2] - box[0]) > hmtx[name][0] + exp_half]
+    check(not spill, f"no glyph's ink spills a whole cell past its advance "
+                     f"({len(spill)} do, e.g. {spill[:3]})")
 
     angle = tf["post"].italicAngle
     if italic:

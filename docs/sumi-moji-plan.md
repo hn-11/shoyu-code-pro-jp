@@ -152,6 +152,12 @@ Sumi Moji JP の欧文層（Source Code Pro の文字 + Monaspace の記号・�
   整合のため維持）
 - GPOS は SCP 自身のもの（結合文字の `mark` / `mkmk`、`frac`、`size`）を保持。`kern` は無い（等幅）
 
+> **注記（v5）**: 以下 3.3・3.4 と 4 は v4 までの設計。v5 で基準を
+> Source Code Pro に移した結果、行間は SCP の 984 / −273、ウェイトは
+> SCP の名前付きインスタンス 5 つ、`dist/latin/term/` と拡大処理
+> （`rescale` / `narrow_ambiguous` / `latin_onecell`）は無くなっている。
+> 現行の仕様は本ファイル冒頭の v5 節と README を参照。
+
 ### 3.3 メトリクス
 
 - 送り 600、UPM 1000。行間は SCP の hhea 値（984 / -273）で、OS/2 typo を同じ値にして
