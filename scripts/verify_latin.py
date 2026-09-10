@@ -59,10 +59,25 @@ def main():
         if ord(ch) in cmap:
             check(hmtx[cmap[ord(ch)]][0] == CELL, f"{ch!r} is one cell")
     check(hmtx[tf.getGlyphOrder()[0]][0] == CELL, ".notdef is one cell")
-    widths, bearings, _bounds = hmtx_mismatches(tf)
+    widths, bearings, bounds = hmtx_mismatches(tf)
     check(not widths, f"CFF charstring widths agree with hmtx ({widths[:3]})")
     check(not bearings, f"hmtx bearings are the outlines' xMin ({len(bearings)} off, "
                         f"e.g. {bearings[:3]})")
+
+    # WHERE the ink lands, not just how wide it is (verify.py has the same
+    # two): every check above holds on a face whose glyphs are all blank,
+    # or all drawn one cell to the right, so 'e' would sit wholly in its
+    # neighbour's column and the release would ship it. `bounds` holds
+    # only the glyphs that draw — hmtx_mismatches skips a blank one — so
+    # the count below is ink, not cmap entries
+    lean = CELL // 2
+    spill = [(g, hmtx[g][0], round(box[0]), round(box[2]))
+             for g, box in bounds.items()
+             if hmtx[g][0] > 0 and (box[0] < -lean or box[2] > hmtx[g][0] + lean)]
+    check(not spill, f"every glyph's ink is inside its advance, give or take "
+                     f"{lean}u of lean ({len(spill)} are not, e.g. {spill[:3]})")
+    inked = sum(1 for g in cmap.values() if g in bounds)
+    check(inked >= 700, f"{inked} of {len(cmap)} mapped codepoints draw ink")
 
     cff = tf["CFF "].cff
     td = cff[cff.fontNames[0]]
