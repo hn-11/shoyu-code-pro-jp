@@ -48,6 +48,11 @@
     Regular の和文は以前の Source Han Sans Regular から Normal に、Bold は
     同じ面のまま。可変フォントの wght 軸は SCP の wght と一致する恒等写像
     になり、軸の範囲は 200〜700
+  - **グリフをずらしたら GPOS のアンカーも動かす**（`shift_anchors`）。
+    `fit_to_grid` と `widen_fullwidth` は新しい送りの中央に字形を寄せる
+    ので、アンカー（字形上の点）を置き去りにすると結合記号が元のインクの
+    位置に付く。Term で `ㄓ` のインクが 100u 右に動いたのに声調記号
+    `˫` が動かず字の上に重なっていた
   - **CID-keyed の `CIDCount` を修復する**: `cffsubr` は charset の最後の
     エントリから `CIDCount` を決めるが、Source Han Sans の CID 空間は疎で
     追加グリフは若い CID を取るため、25,267 と宣言されて 9,749 グリフが

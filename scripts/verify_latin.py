@@ -23,7 +23,7 @@ from verifylib import (  # noqa: E402
 
 FONT = Path(sys.argv[1]) if len(sys.argv) > 1 else (
     ROOT / "dist" / "latin" / "SumiMoji-Regular.otf")
-CELL = build.SCP_CELL
+CELL = build.CELL
 
 
 def main():

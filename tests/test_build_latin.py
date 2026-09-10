@@ -287,7 +287,7 @@ def test_family_is_the_latin_family_build_reads_back():
 
 def test_cell_is_scp_cell():
     assert build_latin.CELL == 600
-    assert build_latin.CELL == build.SCP_CELL
+    assert build_latin.CELL == build.CELL
 
 
 def test_mona_k_scales_from_scp_cell_to_monaspace_cell():

@@ -91,8 +91,9 @@ from fontTools.varLib import instancer
 from fontTools.varLib.instancer import instantiateVariableFont
 
 ROOT = Path(__file__).resolve().parent.parent
-SCP_CELL = 600      # Source Code Pro advance (upm 1000)
-CELL = SCP_CELL     # the half-width cell: Sumi Moji's, as it is
+# the half-width cell: Source Code Pro's own advance (upm 1000), which
+# Sumi Moji keeps as it is — one number, since v5 rescales nothing
+CELL = 600
 FULLWIDTH = 1000    # full-width advance of the CJK layer (upm 1000)
 MONA_CELL = 1240    # Monaspace advance (upm 2000)
 
@@ -153,6 +154,7 @@ VARIANTS = {
 # ExtraLight 28u / Black 120u have no partner in the other family and are
 # not built.) Monaspace bottoms out at wght 200 (bar ~53u at our scale);
 # Light's surplus is eroded away in the static faces (VFSource.matched).
+
 # the weights every face takes its width decisions from
 # (reference_steps): our Regular's donor for the advance, the heaviest
 # for the ink, which grows with the weight
@@ -783,6 +785,72 @@ def _unwrap(lookup):
     return kind, subs
 
 
+def shift_anchors(font, shifts):
+    """Move each glyph's GPOS anchors with its outline. fit_to_grid and
+    widen_fullwidth re-centre a glyph in a new advance, and an anchor is
+    a point ON the glyph: leave it and a combining mark lands where the
+    ink used to be. Source Han Sans attaches the Bopomofo tone marks
+    this way, and widening ㄓ to two cells moved its ink 100u right while
+    the anchor stayed, putting ˫ over the letter.
+
+    `shifts` is {glyph name: how far its outline moved}. GPOS type 9
+    (Extension) is unwrapped; types 3 (cursive), 4 (mark-to-base), 5
+    (mark-to-ligature) and 6 (mark-to-mark) carry the anchors. Returns
+    the number of anchors moved."""
+    if "GPOS" not in font or not shifts:
+        return 0
+    moved = 0
+    for lookup in font["GPOS"].table.LookupList.Lookup:
+        kind, subtables = _unwrap(lookup)
+        for sub in subtables:
+            moved += _shift_subtable_anchors(kind, sub, shifts)
+    return moved
+
+
+def _shift_subtable_anchors(kind, sub, shifts):
+    def move(anchor, dx):
+        if anchor is None or not dx:
+            return 0
+        anchor.XCoordinate += dx
+        return 1
+
+    def by_coverage(coverage, records, pick):
+        n = 0
+        if coverage is None or records is None:
+            return 0
+        for name, rec in zip(coverage.glyphs, records):
+            dx = shifts.get(name)
+            if dx:
+                for anchor in pick(rec):
+                    n += move(anchor, dx)
+        return n
+
+    if kind == 3:      # cursive attachment
+        return by_coverage(getattr(sub, "Coverage", None),
+                           getattr(sub, "EntryExitRecord", None),
+                           lambda r: (r.EntryAnchor, r.ExitAnchor))
+    if kind in (4, 5, 6):
+        marks = "Mark1" if kind == 6 else "Mark"
+        n = by_coverage(getattr(sub, f"{marks}Coverage", None),
+                        getattr(getattr(sub, f"{marks}Array", None), "MarkRecord", None),
+                        lambda r: (r.MarkAnchor,))
+        if kind == 4:
+            n += by_coverage(getattr(sub, "BaseCoverage", None),
+                             getattr(getattr(sub, "BaseArray", None), "BaseRecord", None),
+                             lambda r: r.BaseAnchor)
+        elif kind == 5:
+            n += by_coverage(
+                getattr(sub, "LigatureCoverage", None),
+                getattr(getattr(sub, "LigatureArray", None), "LigatureAttach", None),
+                lambda r: [a for comp in r.ComponentRecord for a in comp.LigatureAnchor])
+        else:
+            n += by_coverage(getattr(sub, "Mark2Coverage", None),
+                             getattr(getattr(sub, "Mark2Array", None), "Mark2Record", None),
+                             lambda r: r.Mark2Anchor)
+        return n
+    return 0
+
+
 def _subst_pairs(kind, subtables, tag):
     """(src, dst) pairs from a Single (1) or Alternate (3) subst lookup."""
     if kind == 1:
@@ -1190,7 +1258,10 @@ def reference_steps(path, cell, ink_path=None):
             if adv <= 0:
                 continue
             if adv % cell == 0 or adv % FULLWIDTH == 0:
-                steps[name] = adv          # already a step, and the family's
+                # already a step, and the family's. No ink test: the
+                # donor chose this width, and its own full-width glyphs
+                # may overhang it (grid_step only guards a step WE pick)
+                steps[name] = adv
                 continue
             source = heavy_gs if name in heavy_gs else gs
             pen = BoundsPen(source)
@@ -1228,7 +1299,7 @@ def fit_to_grid(font, cell, steps=None, glyph_names=None):
     gs = font.getGlyphSet()
     hmtx = font["hmtx"]
     done = set()
-    drawn = {}
+    drawn, shifted = {}, {}
     moved = 0
     # a glyph this build appended carries a name alloc_glyph_name took
     # from Source Han Sans's own CID space, so it can collide with a
@@ -1260,6 +1331,7 @@ def fit_to_grid(font, cell, steps=None, glyph_names=None):
         gs[name].draw(TransformPen(pen, (1, 0, 0, 1, shift, 0)))
         drawn[name] = pen.getCharString(private=private)
         hmtx.metrics[name] = (new, lsb + shift)
+        shifted[name] = shift
         note_redrawn(font, [name])
         moved += 1
     # swap after drawing everything: the glyph set draws through the same
@@ -1267,6 +1339,7 @@ def fit_to_grid(font, cell, steps=None, glyph_names=None):
     # to a later one that references it (widen_fullwidth defers too)
     for name, cs in drawn.items():
         td.CharStrings[name] = cs
+    shift_anchors(font, shifted)
     return moved
 
 
@@ -1359,7 +1432,7 @@ def widen_fullwidth(font, cell, skip=()):
     td = cff[cff.fontNames[0]]
     gs = font.getGlyphSet()
     hmtx = font["hmtx"]
-    redrawn = {}
+    redrawn, moved_by = {}, {}
     shifted = 0
     skip = set(skip)
     for name in font.getGlyphOrder():
@@ -1376,8 +1449,10 @@ def widen_fullwidth(font, cell, skip=()):
             gs[name].draw(TransformPen(pen, (1, 0, 0, 1, shift, 0)))
             redrawn[name] = pen.getCharString(private=private)
         hmtx.metrics[name] = (full, lsb + shift)
+        moved_by[name] = shift
     for name, cs in redrawn.items():
         td.CharStrings[name] = cs        # a plain CFF has no charStringsIndex
+    shift_anchors(font, moved_by)
     note_redrawn(font, redrawn)
     print(f"  full-width widened to {2 * cell}: {shifted} shifted with their hints, "
           f"{len(redrawn)} redrawn")

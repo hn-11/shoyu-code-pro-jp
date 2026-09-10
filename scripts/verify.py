@@ -35,8 +35,7 @@ FAMILY_METRICS = {
     "Term": (600, 1200),
 }
 DEFAULT_METRICS = (600, 1000)
-# the line metrics of an English terminal font: Source Code Pro's, hhea
-# and typo alike (build.copy_line_metrics)
+
 # Unicode calls these Wide, both donors draw them one cell wide, and
 # neither has anything wider to offer under fwid (README, 幅の方針): six
 # emoji Source Code Pro carries, the two Hangul tone marks and the five
@@ -52,6 +51,8 @@ WIDE_AT_ONE_CELL = {0x2615, 0x302E, 0x302F, 0x31B4, 0x31B5, 0x31B6, 0x31B7,
 ITALIC_FULLWIDTH = {0x39C, 0x416, 0x41C, 0x424, 0x428, 0x429, 0x42A, 0x42B,
                     0x42E, 0x436, 0x444, 0x448, 0x449, 0x44E}
 
+# the line metrics of an English terminal font: Source Code Pro's, hhea
+# and typo alike, with USE_TYPO_METRICS set (build.copy_line_metrics)
 LINE_METRICS = (984, -273, 0)
 
 # a few ligature sequences (rendered text -> glyph to probe) and CJK
@@ -186,7 +187,7 @@ def main():
     # overhangs by design (up to 138u in the Latin layer), a glyph put on
     # a step too small for its ink would not (grid_step)
     from build import glyph_bounds
-    bounds = glyph_bounds(tf)          # one draw pass, shared below
+    bounds = glyph_bounds(tf)
     spill = [(name, hmtx[name][0], round(box[2] - box[0]))
              for name, box in bounds.items()
              if hmtx[name][0] > 0 and (box[2] - box[0]) > hmtx[name][0] + exp_half]
@@ -310,8 +311,8 @@ def main():
     # is sparse (build.restore_cid_count)
     cff = tf["CFF "].cff
     td = cff[cff.fontNames[0]]
-    if hasattr(td, "CIDCount"):
-        top = max(int(n[3:]) for n in td.charset if n.startswith("cid"))
+    if hasattr(td, "ROS"):      # ROS is what makes a CFF CID-keyed
+        top = max((int(n[3:]) for n in td.charset if n.startswith("cid")), default=-1)
         check(td.CIDCount > top,
               f"CFF CIDCount {td.CIDCount} covers every CID (highest {top})")
 

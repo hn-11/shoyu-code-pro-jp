@@ -834,6 +834,47 @@ def test_widen_fullwidth_spares_the_ligatures_it_is_given():
         assert pen.bounds[0] == want_lsb == hmtx[g][1]
 
 
+def test_shift_anchors_moves_a_base_anchor_with_its_outline():
+    """An anchor is a point on the glyph: re-centring the outline in a
+    wider advance has to take it along, or the mark lands where the ink
+    used to be (Source Han Sans's Bopomofo tone marks)."""
+    from fontTools.ttLib.tables import otTables
+
+    def anchor(x):
+        a = otTables.Anchor()
+        a.Format, a.XCoordinate, a.YCoordinate = 1, x, 0
+        return a
+
+    sub = otTables.MarkBasePos()
+    sub.MarkCoverage = otTables.MarkCoverage()
+    sub.MarkCoverage.glyphs = ["mark"]
+    sub.MarkArray = otTables.MarkArray()
+    rec = otTables.MarkRecord()
+    rec.Class, rec.MarkAnchor = 0, anchor(10)
+    sub.MarkArray.MarkRecord = [rec]
+    sub.BaseCoverage = otTables.BaseCoverage()
+    sub.BaseCoverage.glyphs = ["base", "still"]
+    sub.BaseArray = otTables.BaseArray()
+    base, still = otTables.BaseRecord(), otTables.BaseRecord()
+    base.BaseAnchor, still.BaseAnchor = [anchor(640)], [anchor(500)]
+    sub.BaseArray.BaseRecord = [base, still]
+    lookup = otTables.Lookup()
+    lookup.LookupType, lookup.SubTable = 4, [sub]
+
+    font = _cff_font_with_widths({"a": 600})
+    gpos = newTable("GPOS")
+    gpos.table = otTables.GPOS()
+    gpos.table.LookupList = otTables.LookupList()
+    gpos.table.LookupList.Lookup = [lookup]
+    font["GPOS"] = gpos
+
+    assert build.shift_anchors(font, {"base": 100, "mark": -5}) == 2
+    assert base.BaseAnchor[0].XCoordinate == 740
+    assert rec.MarkAnchor.XCoordinate == 5
+    assert still.BaseAnchor[0].XCoordinate == 500      # not shifted, not moved
+    assert build.shift_anchors(font, {}) == 0
+
+
 def test_restore_cid_count_covers_the_highest_cid(tmp_path):
     """cffsubr sets CIDCount from the last charset entry; Source Han
     Sans's CID space is sparse, so the glyphs this build appends sit at

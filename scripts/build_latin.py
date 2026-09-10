@@ -44,7 +44,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import build  # noqa: E402
 from verifylib import static_faces  # noqa: E402
 
-CELL = build.SCP_CELL   # 600
+CELL = build.CELL   # 600
 MONA_K = CELL / build.MONA_CELL
 
 FAMILY, PS_FAMILY = build.LATIN_FAMILY   # "Sumi Moji", "SumiMoji"
