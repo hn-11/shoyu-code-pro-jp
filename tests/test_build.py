@@ -827,6 +827,19 @@ def test_widen_fullwidth_spares_the_ligatures_it_is_given():
         assert pen.bounds[0] == want_lsb == hmtx[g][1]
 
 
+def test_widen_fullwidth_redraws_a_charstring_shift_declines(monkeypatch):
+    """shift_charstring declines a program it does not understand and the
+    glyph is redrawn instead — on a plain CFF as well as a CID-keyed one."""
+    font = _cff_font_with_widths({"full": 1000})
+    monkeypatch.setattr(build, "shift_charstring", lambda *a, **k: False)
+    build.widen_fullwidth(font, 600)
+    assert font["hmtx"].metrics["full"][0] == 1200
+    assert font._redrawn == {"full"}
+    pen = BoundsPen(font.getGlyphSet())
+    font.getGlyphSet()["full"].draw(pen)
+    assert pen.bounds[0] == 100                      # centred in the new advance
+
+
 def test_fit_to_grid_takes_explicit_glyph_names():
     font = _cff_font_with_widths({"a": 500, "b": 500})
     assert build.fit_to_grid(font, 600, glyph_names=["a", "a", None]) == 1

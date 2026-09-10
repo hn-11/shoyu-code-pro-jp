@@ -64,8 +64,15 @@ runs:
       id: paths
       shell: bash
       run: |
-        echo "nf_symbols=$(find upstreams/nf -name 'SymbolsNerdFontMono-Regular.ttf' | head -1)" >> "$GITHUB_OUTPUT"
-        echo "nf_license=$(find upstreams/nf -name 'LICENSE' | head -1)" >> "$GITHUB_OUTPUT"
+        # the Nerd Fonts zip's layout is not ours to rely on: say so here,
+        # not with `cp ""` in the package job an hour later
+        nf_symbols=$(find upstreams/nf -name 'SymbolsNerdFontMono-Regular.ttf' | head -1)
+        nf_license=$(find upstreams/nf -name 'LICENSE' | head -1)
+        for v in nf_symbols nf_license; do
+          [ -n "${!v}" ] || { echo "::error::$v not found in NerdFontsSymbolsOnly.zip ($NF_TAG)"; exit 1; }
+        done
+        echo "nf_symbols=$nf_symbols" >> "$GITHUB_OUTPUT"
+        echo "nf_license=$nf_license" >> "$GITHUB_OUTPUT"
         echo "shs_dir=$(dirname "$(find upstreams/shs -name 'SourceHanSansJP-Regular.otf' | head -1)")" >> "$GITHUB_OUTPUT"
         echo "scp_vf_u=$(find upstreams/scp -name 'SourceCodeVF-Upright.otf' | head -1)" >> "$GITHUB_OUTPUT"
         echo "scp_vf_i=$(find upstreams/scp -name 'SourceCodeVF-Italic.otf' | head -1)" >> "$GITHUB_OUTPUT"

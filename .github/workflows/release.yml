@@ -91,11 +91,12 @@ jobs:
           [ -n "$faces" ] || { echo "no Sumi Moji faces for LATIN_NF='$LATIN_NF'"; exit 1; }
           python scripts/nerdpatch.py $faces > nerd-latin.log 2>&1 &
           latin=$!
-          python scripts/build.py "${{ matrix.weights }} ${{ matrix.family }}"
-          # the foreground graft's failure must not take the step down
-          # before the background one is waited on: its log lives only here
+          # neither the JP build nor the foreground graft may take the
+          # step down before the background one is waited on: its log
+          # lives only here
           jp=0
-          python scripts/nerdpatch.py dist/*.otf || jp=$?
+          python scripts/build.py "${{ matrix.weights }} ${{ matrix.family }}" \
+            && python scripts/nerdpatch.py dist/*.otf || jp=$?
           wait $latin || { cat nerd-latin.log; exit 1; }
           cat nerd-latin.log
           [ "$jp" = 0 ] || exit "$jp"

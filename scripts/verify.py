@@ -157,7 +157,7 @@ def main():
     # feature on by default (locl, ccmp) can put a glyph on the page
     # that no codepoint reaches (fit_to_grid)
     off_grid = sorted(name for name, (adv, _lsb) in hmtx.metrics.items()
-                      if adv > 0 and adv % exp_half and adv % 1000)
+                      if adv > 0 and adv % exp_half and adv % exp_full)
     assert not off_grid, (
         f"{FONT}: {len(off_grid)} glyphs off the grid, e.g. "
         f"{[(n, hmtx[n][0]) for n in off_grid[:5]]}")
@@ -422,7 +422,7 @@ def main():
     scp_path = os.environ.get("SCP_VF_I" if italic else "SCP_VF_U")
     if weight not in WEIGHT_CLASS:
         print(f"skip  '=' bar vs Source Code Pro (unknown weight {weight!r})")
-    elif scp_path is None:
+    elif not (scp_path and Path(scp_path).is_file()):
         print("skip  '=' bar vs Source Code Pro (SCP_VF_U / SCP_VF_I unset)")
     else:
         scp = TTFont(scp_path)
@@ -440,7 +440,7 @@ def main():
         # face's own '=' that much more room where it is not
         ref, against, budget = got, "'='", 5
         upright = os.environ.get("SCP_VF_U")
-        if italic and weight in WEIGHT_CLASS and upright:
+        if italic and weight in WEIGHT_CLASS and upright and Path(upright).is_file():
             u = TTFont(upright)
             ref = bar_thickness(u.getGlyphSet(location={"wght": WEIGHT_CLASS[weight]}),
                                 u.getBestCmap()[ord("=")])

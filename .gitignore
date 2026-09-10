@@ -1,8 +1,7 @@
 dist/
-# Downloaded upstream font sources: build.py's default SHCJ path uses the
-# singular "upstream/", CI's fetch-upstreams action uses plural "upstreams/".
+# Downloaded upstream font sources: a local build may use the singular
+# "upstream/", CI's fetch-upstreams action uses plural "upstreams/".
 # Ignore font binaries under both spellings, at any depth.
-upstream/*.ttc
 upstream/**/*.otf
 upstream/**/*.ttf
 upstreams/

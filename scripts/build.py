@@ -730,7 +730,10 @@ def graft_halfwidth(base, latin):
         # shared by a mark and a spacing codepoint gets both renderings
         key = (src, is_mark)
         if key not in made:
-            width = 0 if is_mark else CELL
+            # the donor's own advance, not an assumed cell: every glyph
+            # Sumi Moji cmaps is one cell today, and a two-cell one it
+            # ever adds must be grafted two cells wide, not overprinted
+            width = 0 if is_mark else latin["hmtx"][src][0]
             pen = T2CharStringPen(pen_width(private, width), scp_gs)
             draw_clean([(scp_gs, src, (1, 0, 0, 1, -CELL if is_mark else 0, 0))], pen)
             name = alloc_glyph_name(base)
@@ -1212,10 +1215,14 @@ def fit_to_grid(font, cell, steps=None, glyph_names=None):
             continue
         done.add(name)
         adv, lsb = hmtx.metrics[name]
-        if adv <= 0 or adv % cell == 0 or adv % FULLWIDTH == 0:
+        if adv <= 0:
             continue
+        # the family's answer first: a glyph can land on a step in one
+        # weight and off it in the next, and both must end up the same
         new = (steps or {}).get(name)
         if new is None:
+            if adv % cell == 0 or adv % FULLWIDTH == 0:
+                continue
             bounds = BoundsPen(gs)
             gs[name].draw(bounds)
             new = grid_step(adv, (bounds.bounds[2] - bounds.bounds[0]) if bounds.bounds else 0,
@@ -1340,7 +1347,7 @@ def widen_fullwidth(font, cell, skip=()):
             redrawn[name] = pen.getCharString(private=private)
         hmtx.metrics[name] = (full, lsb + shift)
     for name, cs in redrawn.items():
-        td.CharStrings.charStringsIndex[td.CharStrings.charStrings[name]] = cs
+        td.CharStrings[name] = cs        # a plain CFF has no charStringsIndex
     note_redrawn(font, redrawn)
     print(f"  full-width widened to {2 * cell}: {shifted} shifted with their hints, "
           f"{len(redrawn)} redrawn")
@@ -2260,8 +2267,11 @@ def subroutinize_face(path):
 def autohint_face(path, glyph_names):
     """Hint `glyph_names` with AFDKO's otfautohint, in place. The JP
     faces pass the glyphs they (re)drew (note_redrawn): Source Han Sans's
-    own hints on untouched glyphs are kept as shipped, and the run stays
-    seconds for the base family (grafted Latin only) instead of minutes.
+    own hints on untouched glyphs are kept as shipped, so the run is
+    seconds rather than the minutes hinting 19,000 glyphs takes. That is
+    the grafted Latin, the ligatures, and whatever fit_to_grid and
+    widen_fullwidth moved — a few hundred more in the italic faces,
+    where Source Han Sans's Greek and Cyrillic survive.
     The Latin faces pass every glyph — the instancer drops SCP's hints.
     SUMI_SKIP_AUTOHINT=1 skips it for quick local iterations."""
     if os.environ.get("SUMI_SKIP_AUTOHINT"):
