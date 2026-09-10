@@ -48,6 +48,12 @@
     Regular の和文は以前の Source Han Sans Regular から Normal に、Bold は
     同じ面のまま。可変フォントの wght 軸は SCP の wght と一致する恒等写像
     になり、軸の範囲は 200〜700
+  - **Unicode の半角ブロックは 1 セル**（`narrow_halfwidth`）。Source Han
+    Sans は半角ハングル字母（U+FFA1〜FFDC）を全角の互換字母と同じグリフに
+    割り当てているので、グリッドに乗せると 51 字が 2 桁になっていた
+    （v4 の `fit_halfwidth_forms` が守っていた不変条件）。共有グリフの
+    1 セル版を作って半角側だけ差し替える。`verify.py` が
+    「東アジア文字幅 H はすべて 1 セル」を検査する
   - **グリフをずらしたら GPOS のアンカーも動かす**（`shift_anchors`）。
     `fit_to_grid` と `widen_fullwidth` は新しい送りの中央に字形を寄せる
     ので、アンカー（字形上の点）を置き去りにすると結合記号が元のインクの

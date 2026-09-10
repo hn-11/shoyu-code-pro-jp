@@ -94,6 +94,9 @@ ROOT = Path(__file__).resolve().parent.parent
 # the half-width cell: Source Code Pro's own advance (upm 1000), which
 # Sumi Moji keeps as it is — one number, since v5 rescales nothing
 CELL = 600
+# Unicode's Halfwidth block: one column in every terminal's width table
+# (East_Asian_Width H), whatever Source Han Sans draws them at
+HALFWIDTH = tuple(range(0xFF61, 0xFFE0)) + tuple(range(0xFFE8, 0xFFEF))
 FULLWIDTH = 1000    # full-width advance of the CJK layer (upm 1000)
 MONA_CELL = 1240    # Monaspace advance (upm 2000)
 
@@ -2022,6 +2025,40 @@ def add_gsub(font, added, alts, ligatures, variant_maps=None,
     sort_feature_list(gsub)
 
 
+def narrow_halfwidth(font, cell):
+    """Unicode's Halfwidth block is one cell by definition, and every
+    terminal's width table gives it one column. Source Han Sans aliases
+    the halfwidth Hangul letters (U+FFA1-FFDC) to the wide compatibility
+    jamo they came from — one 920-unit glyph for U+3131 and U+FFA1
+    alike — so putting that glyph on the grid puts both on a full width.
+    Each halfwidth codepoint that shares a wider glyph gets a one-cell
+    copy of it, centred, and the wide codepoint keeps the original.
+
+    Runs after fit_to_grid (whose grid step the shared glyph took) and
+    before widen_fullwidth, which must not widen the copies. Returns the
+    number made."""
+    cmap = font.getBestCmap()
+    hmtx = font["hmtx"]
+    gs = font.getGlyphSet()
+    td, _cmap, fd_index, private, vdon = append_context(font)
+    made, new = {}, {}
+    for cp in HALFWIDTH:
+        name = cmap.get(cp)
+        if name is None or hmtx[name][0] == cell:
+            continue
+        if name not in made:
+            adv = hmtx[name][0]
+            shift = (cell - adv) // 2
+            pen = T2CharStringPen(pen_width(private, cell), gs)
+            gs[name].draw(TransformPen(pen, (1, 0, 0, 1, shift, 0)))
+            made[name] = alloc_glyph_name(font)
+            append_glyph(font, td, made[name], pen.getCharString(private=private),
+                         fd_index, cell, None, vdon)
+        new[cp] = made[name]
+    set_cmap(font, new)
+    return len(new)
+
+
 def fullwidth_forms(font, replaced):
     """{codepoint: Source Han Sans's two-cell glyph} for the codepoints
     graft_halfwidth replaced: the glyph Source Han Sans's own fwid
@@ -2385,6 +2422,12 @@ def subroutinize_face(path):
     font.save(path)
 
 
+def highest_cid(td):
+    """The largest CID in a CID-keyed TopDict's charset, or -1."""
+    return max((int(n[3:]) for n in td.charset
+                if n.startswith("cid") and n[3:].isdigit()), default=-1)
+
+
 def restore_cid_count(font):
     """A CID-keyed TopDict's CIDCount must cover every CID in the font.
     cffsubr sets it from the LAST charset entry, and Source Han Sans's
@@ -2399,8 +2442,7 @@ def restore_cid_count(font):
     td = cff[cff.fontNames[0]]
     if not hasattr(td, "ROS"):      # ROS is what makes a CFF CID-keyed;
         return None                 # CIDCount has a spec default either way
-    top = max((int(n[3:]) for n in td.charset if n.startswith("cid")), default=-1)
-    td.CIDCount = max(td.CIDCount, top + 1)
+    td.CIDCount = max(td.CIDCount, highest_cid(td) + 1)
     return td.CIDCount
 
 
@@ -2606,6 +2648,7 @@ def build_face(job):
     # (→ ─ ≠), or its fwid form where the replaced glyph was proportional
     # (A é: Source Han Sans's own fwid maps those to Ａ é). Greek has
     # neither in Source Han Sans JP and stays one cell under fwid too
+    n_half = narrow_halfwidth(base, CELL)
     fullwidth = fullwidth_forms(base, replaced)
     arrows = stretch_arrows(base, added, fullwidth,
                             ref_angle if ref_angle is not None else 0.0)
@@ -2641,7 +2684,7 @@ def build_face(job):
     out = Path(out_dir) / f"{ps}.otf"
     write_face(base, out, getattr(base, "_redrawn", set()))
     return (f"{face_label}{f' [{suffix}]' if suffix else ''}: "
-            f"latin={n_scp} fwid={len(fullwidth)} fitted={n_fit} "
+            f"latin={n_scp} fwid={len(fullwidth)} fitted={n_fit} half={n_half} "
             f"ligs={len(added)} -> {out.name}")
 
 

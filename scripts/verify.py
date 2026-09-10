@@ -174,6 +174,16 @@ def main():
               f"(the documented exception; added {sorted(hex(c) for c in added)}, "
               f"gone {sorted(hex(c) for c in gone)})")
 
+    # and the other direction: Unicode's Halfwidth block is one column in
+    # every terminal's width table, whatever the donor draws it at
+    # (build.narrow_halfwidth)
+    wide_half = sorted(cp for cp, g in cmap.items()
+                       if unicodedata.east_asian_width(chr(cp)) == "H"
+                       and hmtx[g][0] != exp_half)
+    check(not wide_half,
+          f"every Halfwidth character is one cell "
+          f"({len(wide_half)} off: {[hex(c) for c in wide_half[:5]]})")
+
     # nothing anywhere in the font is off the grid, cmap'd or not: a
     # feature on by default (locl, ccmp) can put a glyph on the page
     # that no codepoint reaches (fit_to_grid)
@@ -312,7 +322,8 @@ def main():
     cff = tf["CFF "].cff
     td = cff[cff.fontNames[0]]
     if hasattr(td, "ROS"):      # ROS is what makes a CFF CID-keyed
-        top = max((int(n[3:]) for n in td.charset if n.startswith("cid")), default=-1)
+        from build import highest_cid
+        top = highest_cid(td)
         check(td.CIDCount > top,
               f"CFF CIDCount {td.CIDCount} covers every CID (highest {top})")
 

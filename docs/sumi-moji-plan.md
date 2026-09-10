@@ -41,6 +41,13 @@ SHCJ は上流から外れた。
   声調記号 2 字、注音の入声 5 字）は 1 セルのまま**。両ドナーがそう描いて
   いて、これより広い字形を持たないため。ターミナルは 2 桁分を空けるので
   左寄りに見える。2 セルに広げるかは未決（README の「幅の方針」に明記）。
+- **東アジア文字幅が Neutral の 146 字が全角のまま**（`␣` U+2423、`⌘`
+  `⚠` `⏎` `➡` `✚` `ﬃ` `ﬄ` など、Source Han Sans しか持たない記号）。
+  ターミナルは 1 桁しか空けないので隣に食い込む。曖昧幅（A）と違い
+  ターミナル側の設定では直せない。v4 では Source Han Code JP が 1 セルの
+  `␣` を持っていたが、Source Code Pro には無い。1 セルに詰めるには縮小が
+  要り（v5 で廃止した）、方針（「Source Han Sans にしかない文字は全角の
+  まま」）とも衝突するので、要判断。
 - **`Sumi Moji JP Term Nerd Font Mono` は 32 文字**で、GDI の
   `LOGFONT.lfFaceName`（31 文字）に収まらない。DirectWrite の
   Windows Terminal や macOS / Linux では問題ないが、旧 conhost では
