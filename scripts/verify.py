@@ -44,6 +44,14 @@ DEFAULT_METRICS = (600, 1000)
 WIDE_AT_ONE_CELL = {0x2615, 0x302E, 0x302F, 0x31B4, 0x31B5, 0x31B6, 0x31B7,
                     0x31BB, 0x1F3B5, 0x1F3B6, 0x1F4A9, 0x1F512, 0x1F916}
 
+# Source Code Pro Italic has no Greek or Cyrillic, so the italic faces
+# keep Source Han Sans's own. Most land on the cell (grid_step), but
+# these are drawn 1005-1064 wide with 844-919 of ink — a full width is
+# the nearest step and the only one their ink fits, so the italic faces
+# give them two columns where the upright ones give one (README, 幅の方針)
+ITALIC_FULLWIDTH = {0x39C, 0x416, 0x41C, 0x424, 0x428, 0x429, 0x42A, 0x42B,
+                    0x42E, 0x436, 0x444, 0x448, 0x449, 0x44E}
+
 LINE_METRICS = (984, -273, 0)
 
 # a few ligature sequences (rendered text -> glyph to probe) and CJK
@@ -125,6 +133,16 @@ def main():
         check(got == want, f"U+{ord(ch):04X} {ch!r} advance {got}, want {want}")
     print(f"ok   width policy ({len(policy)} probes)")
 
+    # and the Greek and Cyrillic the italic faces keep from Source Han
+    # Sans: one cell but for the dozen whose ink needs a full width
+    greek_cyrillic = {cp: hmtx[g][0] for cp, g in cmap.items()
+                      if 0x370 <= cp <= 0x4FF}
+    full = {cp for cp, adv in greek_cyrillic.items() if adv != exp_half}
+    check(full == (ITALIC_FULLWIDTH if italic else set()),
+          f"Greek and Cyrillic are one cell but for the pinned "
+          f"{len(ITALIC_FULLWIDTH) if italic else 0} in the italic faces "
+          f"(off: {sorted(hex(c) for c in full ^ (ITALIC_FULLWIDTH if italic else set()))})")
+
     # the exception to the policy: characters both donors draw one cell
     # wide although Unicode calls them Wide, so a terminal reserves two
     # columns and the glyph sits in the left one. There is no wider form
@@ -167,16 +185,10 @@ def main():
     # and nothing paints a whole cell past its own advance: an italic
     # overhangs by design (up to 138u in the Latin layer), a glyph put on
     # a step too small for its ink would not (grid_step)
-    from fontTools.pens.boundsPen import BoundsPen as _BP
-    gs_all = tf.getGlyphSet()
-    spill = []
-    for name, (adv, _lsb) in hmtx.metrics.items():
-        if adv <= 0:
-            continue
-        pen = _BP(gs_all)
-        gs_all[name].draw(pen)
-        if pen.bounds and (pen.bounds[2] - pen.bounds[0]) > adv + exp_half:
-            spill.append((name, adv, round(pen.bounds[2] - pen.bounds[0])))
+    from build import glyph_bounds
+    spill = [(name, hmtx[name][0], round(box[2] - box[0]))
+             for name, box in glyph_bounds(tf).items()
+             if hmtx[name][0] > 0 and (box[2] - box[0]) > hmtx[name][0] + exp_half]
     check(not spill, f"no glyph's ink spills a whole cell past its advance "
                      f"({len(spill)} do, e.g. {spill[:3]})")
 
@@ -184,10 +196,9 @@ def main():
     hhea, os2 = tf["hhea"], tf["OS/2"]
     got = ((hhea.ascent, hhea.descent, hhea.lineGap),
            (os2.sTypoAscender, os2.sTypoDescender, os2.sTypoLineGap))
-    assert got == (LINE_METRICS, LINE_METRICS), (
-        f"{FONT}: line metrics hhea/typo {got}, want {LINE_METRICS}")
-    assert os2.fsSelection & (1 << 7), f"{FONT}: USE_TYPO_METRICS not set"
-    print(f"ok   line metrics {LINE_METRICS} (hhea = typo, USE_TYPO_METRICS)")
+    check(got == (LINE_METRICS, LINE_METRICS),
+          f"line metrics {LINE_METRICS} (hhea = typo), got {got}")
+    check(bool(os2.fsSelection & (1 << 7)), "USE_TYPO_METRICS set")
 
     # every charstring's own width (encoded against its FD's nominalWidthX)
     # must agree with hmtx: a glyph appended under one FD and re-homed to
@@ -199,18 +210,16 @@ def main():
     # font's lsb is nothing fontTools maintains: the Latin donors used to
     # carry SCP's default-master bearings at every weight)
     widths, bearings = hmtx_mismatches(tf)
-    assert not widths, (f"{FONT}: CFF width != hmtx for {len(widths)} glyphs, "
-                        f"e.g. {widths[:5]}")
-    assert not bearings, (f"{FONT}: hmtx lsb != outline xMin for {len(bearings)} glyphs, "
-                          f"e.g. {bearings[:5]}")
-    print(f"ok   CFF charstring widths and bearings agree with hmtx "
-          f"({len(tf.getGlyphOrder())} glyphs)")
+    check(not widths, f"CFF charstring widths agree with hmtx "
+                      f"({len(tf.getGlyphOrder())} glyphs, {len(widths)} off: {widths[:5]})")
+    check(not bearings, f"hmtx bearings are the outlines' xMin "
+                        f"({len(bearings)} off: {bearings[:5]})")
 
     angle = tf["post"].italicAngle
     if italic:
-        assert angle != 0, f"{FONT}: italic face but post.italicAngle == 0"
+        check(angle != 0, "italic face, post.italicAngle non-zero")
     else:
-        assert angle == 0, f"{FONT}: upright face but post.italicAngle == {angle}"
+        check(angle == 0, f"upright face, post.italicAngle == 0 (got {angle})")
 
     # fsSelection/macStyle must agree with nameID 2 (RIBBI subfamily) — the
     # Windows family model keys off these bits, not the name text.
@@ -245,8 +254,8 @@ def main():
     for ch in fwid_probes:
         infos, positions = shape_infos(ch, {"fwid": True})
         got = positions[0].x_advance if positions else None
-        assert got == exp_full, (
-            f"{FONT}: U+{ord(ch):04X} {ch!r} under fwid advances {got}, want {exp_full}")
+        check(got == exp_full,
+              f"U+{ord(ch):04X} {ch!r} under fwid advances {got}, want {exp_full}")
     print(f"ok   fwid restores the full-width forms ({len(fwid_probes)} probes)")
 
 

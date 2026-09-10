@@ -157,9 +157,11 @@ VARIANTS = {
 # ExtraLight 28u / Black 120u have no partner in the other family and are
 # not built.) Monaspace bottoms out at wght 200 (bar ~53u at our scale);
 # Light's surplus is eroded away in the static faces (VFSource.matched).
-# the weight every face takes its width decisions from (reference_steps):
-# our Regular's donor
+# the weights every face takes its width decisions from
+# (reference_steps): our Regular's donor for the advance, the heaviest
+# for the ink, which grows with the weight
 REFERENCE_SHS = "SourceHanSansJP-Normal.otf"
+INK_SHS = "SourceHanSansJP-Bold.otf"
 
 FACES = [
     ("Light", "SourceHanSansJP-ExtraLight.otf"),
@@ -1159,7 +1161,7 @@ def grid_step(adv, ink, cell):
 _REFERENCE_STEPS = {}
 
 
-def reference_steps(path, cell):
+def reference_steps(path, cell, ink_path=None):
     """{glyph name: grid step} decided once, on one weight, for the whole
     family. A glyph's advance grows with the weight — Source Han Sans's
     Φ runs 757..850 across the five donors, straddling the midpoint
@@ -1170,16 +1172,22 @@ def reference_steps(path, cell):
     codepoint. Every glyph gets an entry, the ones already on a step
     included: a glyph can be on the grid in the reference and off it in
     a heavier weight, and both have to end up the same. The reference is
-    the donor of our Regular (FACES), read once per process."""
-    key = (str(path), cell)
+    the donor of our Regular (FACES); `ink_path` is the heaviest donor,
+    whose ink is the widest the step has to hold (Source Han Sans's ж
+    overhangs a 600 cell by 138u at Normal and 223u at Bold). Read once
+    per process."""
+    key = (str(path), str(ink_path), cell)
     if key not in _REFERENCE_STEPS:
-        if not Path(path).exists():
-            raise FileNotFoundError(
-                f"{path}: the weight every face takes its width decisions from "
-                f"(REFERENCE_SHS). Even a one-face build needs it in SHS_DIR, so "
-                f"that face's widths match the rest of the family")
+        for needed in (path, ink_path):
+            if needed is not None and not Path(needed).exists():
+                raise FileNotFoundError(
+                    f"{needed}: a weight every face takes its width decisions from "
+                    f"(REFERENCE_SHS / INK_SHS). Even a one-face build needs both in "
+                    f"SHS_DIR, so that face's widths match the rest of the family")
         ref = TTFont(path)
         gs, hmtx = ref.getGlyphSet(), ref["hmtx"]
+        heavy = TTFont(ink_path) if ink_path is not None else None
+        heavy_gs = heavy.getGlyphSet() if heavy is not None else gs
         steps = {}
         for name in ref.getGlyphOrder():
             adv = hmtx[name][0]
@@ -1188,12 +1196,15 @@ def reference_steps(path, cell):
             if adv % cell == 0 or adv % FULLWIDTH == 0:
                 steps[name] = adv          # already a step, and the family's
                 continue
-            pen = BoundsPen(gs)
-            gs[name].draw(pen)
+            source = heavy_gs if name in heavy_gs else gs
+            pen = BoundsPen(source)
+            source[name].draw(pen)
             steps[name] = grid_step(adv, (pen.bounds[2] - pen.bounds[0]) if pen.bounds else 0,
                                     cell)
         _REFERENCE_STEPS[key] = steps
         ref.close()
+        if heavy is not None:
+            heavy.close()
     return _REFERENCE_STEPS[key]
 
 
@@ -2485,7 +2496,8 @@ def build_face(job):
     # 500-advance alternates included (walked BEFORE dropping any
     # features that might touch it); pwid / palt have no meaning in a
     # fixed-cell font
-    steps = reference_steps(Path(env["SHS_DIR"]) / REFERENCE_SHS, CELL)
+    steps = reference_steps(Path(env["SHS_DIR"]) / REFERENCE_SHS, CELL,
+                            Path(env["SHS_DIR"]) / INK_SHS)
     n_fit = fit_to_grid(base, CELL, steps=steps)
     # kern would pull Japanese pairs off the cell in any shaper that
     # lays out a run (VS Code, a browser); halt and palt are alternate

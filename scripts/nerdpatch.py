@@ -132,8 +132,9 @@ def graft_symbols(font, symbols):
     scm, sgs = symbols.getBestCmap(), symbols.getGlyphSet()
     ctx = icon_context(font, symbols)
     td, cmap, fd_index, private, vdon = build.append_context(font)
-    # the supplementary-plane icons need a format 12 subtable; a face
-    # from Source Code Pro alone has only BMP ones
+    # the supplementary-plane icons need a format 12 subtable. Every face
+    # here inherits one from Source Code Pro's variable font; this is for
+    # a caller handed a face that has only BMP subtables
     if not any(t.format == 12 for t in font["cmap"].tables if t.isUnicode()):
         bmp = next(t for t in font["cmap"].tables if t.isUnicode())
         t12 = CmapSubtable.newSubtable(12)
@@ -147,6 +148,8 @@ def graft_symbols(font, symbols):
         xform = icon_transform(
             cp, build._bounds(sgs, scm[cp]) if cp in POWERLINE else None, ctx)
         if cp in cmap:
+            if cmap[cp] in replaced:      # two codepoints, one glyph
+                continue
             # Source Code Pro draws its own Powerline glyphs (U+E0A0-E0A2,
             # E0B0-E0B3) taller than its line box (-280..1040/1060 against
             # -273..984) and E0B1/E0B2 wider than the cell; the symbols
