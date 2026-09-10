@@ -642,10 +642,18 @@ def append_glyph(font, td, name, cs, fd_index, width, lsb=None, vdonor=None):
     if "vmtx" in font and vdonor is not None:
         font["vmtx"].metrics[name] = font["vmtx"].metrics[vdonor]
     note_redrawn(font, [name])
-    appended = getattr(font, "_appended", None)
-    if appended is None:
-        appended = font._appended = set()
-    appended.add(name)
+    # two sets, because they answer two questions. _built is every glyph
+    # this build made, and nothing ever leaves it: their names come from
+    # Source Han Sans's own CID space, so a pass that looks a glyph up by
+    # name in a reference font (fit_to_grid) must know not to. _appended
+    # is the subset add_latin_fd re-homes into the Latin FontDict, which
+    # an appender can opt out of (narrow_halfwidth does).
+    for attr in ("_built", "_appended"):
+        have = getattr(font, attr, None)
+        if have is None:
+            have = set()
+            setattr(font, attr, have)
+        have.add(name)
     font.setGlyphOrder(order)
     if hasattr(font, "_reverseGlyphOrderDict"):
         del font._reverseGlyphOrderDict
@@ -1326,18 +1334,20 @@ def fit_to_grid(font, cell, steps=None):
     hmtx = font["hmtx"]
     drawn, shifted = {}, {}
     moved = 0
-    # a glyph this build appended carries a name alloc_glyph_name took
-    # from Source Han Sans's own CID space, so it can collide with a
-    # reference name that means something else entirely. Ours are on the
-    # grid by construction and take the fallback path
-    appended = getattr(font, "_appended", frozenset())
+    # a glyph this build made carries a name alloc_glyph_name took from
+    # Source Han Sans's own CID space, so it can collide with a reference
+    # name that means something else entirely — and _built, not
+    # _appended, is the whole of them: narrow_halfwidth's condensed
+    # copies opt out of the Latin FontDict but are just as much ours.
+    # Ours are on the grid by construction and take the fallback path
+    built = getattr(font, "_built", frozenset())
     for name in font.getGlyphOrder():
         adv, lsb = hmtx.metrics[name]
         if adv <= 0:
             continue
         # the family's answer first: a glyph can land on a step in one
         # weight and off it in the next, and both must end up the same
-        new = None if name in appended else (steps or {}).get(name)
+        new = None if name in built else (steps or {}).get(name)
         if new is None:
             if adv % cell == 0 or adv % FULLWIDTH == 0:
                 continue
@@ -2116,8 +2126,10 @@ def narrow_halfwidth(font, cell):
             made[name] = alloc_glyph_name(font)
             append_glyph(font, td, made[name], pen.getCharString(private=private),
                          fd, cell, None, vdon)
-            # append_glyph records it; take it back out, so add_latin_fd
-            # leaves this one in the FontDict it was copied from
+            # append_glyph records it in both sets; take it out of the
+            # Latin-FontDict one only, so add_latin_fd leaves this copy
+            # in the FontDict it came from. It stays in _built, which is
+            # what fit_to_grid reads to know a name is ours
             font._appended.discard(made[name])
         new[cp] = made[name]
     set_cmap(font, new)

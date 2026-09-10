@@ -854,6 +854,42 @@ def test_narrow_halfwidth_condenses_a_shared_glyph_into_the_cell():
     assert pen.bounds[2] - pen.bounds[0] == pytest.approx(100 * 600 / 920, abs=1)
 
 
+def test_narrow_halfwidth_copies_are_out_of_reach_of_the_reference_steps():
+    """The copy's name comes from Source Han Sans's own CID space, where
+    the reference font it is looked up in has 10,000 glyphs of its own —
+    a name collision would re-advance a half-width form to whatever that
+    reference glyph measures. It opts out of the Latin FontDict, not out
+    of being ours, so fit_to_grid still takes the fallback path for it."""
+    font = _cff_font_with_widths({"jamo": 920})
+    font["cmap"].tables[0].cmap = {0x3131: "jamo", 0xFFA1: "jamo"}
+    assert build.narrow_halfwidth(font, 600) == 1
+    copy = font.getBestCmap()[0xFFA1]
+    assert copy in font._built and copy not in font._appended
+    # a reference that claims this very name is a full width
+    assert build.fit_to_grid(font, 600, steps={copy: 1000, "jamo": 1000}) == 1
+    assert font["hmtx"].metrics[copy][0] == 600        # still one cell
+    assert font["hmtx"].metrics["jamo"][0] == 1000     # the reference did apply
+
+
+def test_narrow_halfwidth_never_widens_a_glyph_that_already_fits():
+    """Source Han Sans's half-width kana and punctuation are 500 wide —
+    inside the cell, so there is nothing to condense. Scaling them by
+    cell/advance would stretch every vertical stroke 20% against
+    untouched horizontals; fit_to_grid centres them at 600 instead."""
+    font = _cff_font_with_widths({"kana": 500, "sym": 500})
+    font["cmap"].tables[0].cmap = {0xFF71: "kana", 0xFFE9: "sym"}
+    def box():
+        pen = BoundsPen(font.getGlyphSet())
+        font.getGlyphSet()["kana"].draw(pen)
+        return pen.bounds
+
+    before = box()
+    assert build.narrow_halfwidth(font, 600) == 0
+    assert font.getBestCmap()[0xFF71] == "kana"
+    assert font["hmtx"].metrics["kana"] == (500, before[0])   # left for fit_to_grid
+    assert box() == before
+
+
 def test_narrow_halfwidth_leaves_a_blank_glyph_alone():
     """A Halfwidth codepoint drawn as a 0-advance combining mark has no
     advance to scale by."""
