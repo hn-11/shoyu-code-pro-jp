@@ -222,3 +222,18 @@ def test_powerline_range_is_the_two_powerline_blocks():
     assert 0xE0A0 in nerdpatch.POWERLINE and 0xE0D7 in nerdpatch.POWERLINE
     assert 0xE0D8 not in nerdpatch.POWERLINE and 0xE09F not in nerdpatch.POWERLINE
     assert build.CELL == 600
+
+
+def test_separators_are_font_patchers_own_stretched_set():
+    """SEPARATORS is transcribed from font-patcher v3.4.0's
+    SYM_ATTR_POWERLINE — every entry whose 'stretch' is '^xy' or '^xy2'.
+    Pinned here so a change to it is a deliberate one: icon_checks can
+    only tell whether a glyph got the treatment its group asks for, not
+    whether the group is right."""
+    assert (
+        set(range(0xE0B0, 0xE0C9)) | {0xE0CA, 0xE0CC, 0xE0CD,
+                                      0xE0D2, 0xE0D4, 0xE0D6, 0xE0D7}) == nerdpatch.SEPARATORS
+    assert len(nerdpatch.SEPARATORS) == 32
+    # the four Powerline symbols keep their aspect ('^pa'), as do E0CE-E0D1
+    assert not nerdpatch.SEPARATORS & {0xE0A0, 0xE0A1, 0xE0A2, 0xE0A3,
+                                       0xE0CE, 0xE0CF, 0xE0D0, 0xE0D1}

@@ -53,7 +53,6 @@ import sys
 import time
 from pathlib import Path
 
-from fontTools.pens.boundsPen import BoundsPen
 from fontTools.pens.t2CharStringPen import T2CharStringPen
 from fontTools.pens.transformPen import TransformPen
 from fontTools.ttLib import TTFont
@@ -124,13 +123,6 @@ def icon_transform(cp, ink, ctx):
     return (k, 0, 0, k, (cell - k * (x0 + x1)) / 2, (asc + desc) / 2 - k * (y0 + y1) / 2)
 
 
-def symbol_ink(gs, name):
-    """The symbol's bounding box, or None where it has no ink."""
-    pen = BoundsPen(gs)
-    gs[name].draw(pen)
-    return pen.bounds
-
-
 def graft_symbols(font, symbols):
     """Append every symbol codepoint the face lacks as a one-cell glyph
     drawn from the symbols font (quadratic outlines become cubic on the
@@ -153,7 +145,7 @@ def graft_symbols(font, symbols):
         if cp in cmap and cp not in POWERLINE:
             continue
         xform = icon_transform(
-            cp, symbol_ink(sgs, scm[cp]) if cp in POWERLINE else None, ctx)
+            cp, build._bounds(sgs, scm[cp]) if cp in POWERLINE else None, ctx)
         if cp in cmap:
             # Source Code Pro draws its own Powerline glyphs (U+E0A0-E0A2,
             # E0B0-E0B3) taller than its line box (-280..1040/1060 against
@@ -239,10 +231,14 @@ def icon_checks(font, symbols=None):
     cell = build.CELL
     sgs = symbols.getGlyphSet() if symbols is not None else None
     scm = symbols.getBestCmap() if symbols is not None else {}
+    # every Powerline glyph the symbols font has must have reached the
+    # face: a graft that added none of them would otherwise pass, having
+    # nothing to measure
+    want = sum(cp in scm for cp in POWERLINE) if sgs is not None else None
     seen, short, spill, skew = 0, [], [], []
     for cp in POWERLINE:
         name = cmap.get(cp)
-        ink = symbol_ink(gs, name) if name else None
+        ink = build._bounds(gs, name) if name else None
         if ink is None:
             continue
         seen += 1
@@ -253,12 +249,15 @@ def icon_checks(font, symbols=None):
             continue
         if x1 - x0 > cell + 1 or y1 - y0 > asc - desc + 1:
             spill.append(f"U+{cp:04X}")
-        src = symbol_ink(sgs, scm[cp]) if cp in scm else None
+        src = build._bounds(sgs, scm[cp]) if cp in scm else None
         if src is not None and src[3] > src[1] and y1 > y0:
-            want = (src[2] - src[0]) / (src[3] - src[1])
-            if abs((x1 - x0) / (y1 - y0) - want) > 0.01 * want:
+            aspect = (src[2] - src[0]) / (src[3] - src[1])
+            if abs((x1 - x0) / (y1 - y0) - aspect) > 0.01 * aspect:
                 skew.append(f"U+{cp:04X}")
     return [
+        (want is None or seen == want,
+         f"every Powerline glyph the symbols font has is in the face "
+         f"({seen}, want {'not checked, no NF_SYMBOLS' if want is None else want})"),
         (not short, f"every Powerline separator tiles the cell and the line "
                     f"({seen} Powerline glyphs, off: {short})"),
         (not spill, f"every other Powerline glyph fits the cell (off: {spill})"),

@@ -91,6 +91,7 @@ def expected_metrics(tf):
 
 def main():
     from fontTools.ttLib import TTFont
+    check = Checker()          # every check reports; none aborts the rest
     tf = TTFont(str(FONT))
     cmap = tf.getBestCmap()
     hmtx = tf["hmtx"]
@@ -121,7 +122,7 @@ def main():
     policy["\uff71"] = policy["\uffe9"] = exp_half
     for ch, want in policy.items():
         got = hmtx[cmap[ord(ch)]][0]
-        assert got == want, f"{FONT}: U+{ord(ch):04X} {ch!r} advance {got}, want {want}"
+        check(got == want, f"U+{ord(ch):04X} {ch!r} advance {got}, want {want}")
     print(f"ok   width policy ({len(policy)} probes)")
 
     # the exception to the policy: characters both donors draw one cell
@@ -131,8 +132,7 @@ def main():
     # upstream release that adds one has to be looked at, not absorbed
     import unicodedata
     wide_one_cell = {cp for cp, g in cmap.items()
-                     if hmtx[g][0] == exp_half and cp >= 0x2000
-                     and not 0xE000 <= cp <= 0xF8FF
+                     if hmtx[g][0] == exp_half and not 0xE000 <= cp <= 0xF8FF
                      and unicodedata.east_asian_width(chr(cp)) in ("W", "F")}
     grafted = set()
     if "Nerd Font" in fam:
@@ -150,23 +150,35 @@ def main():
         # cell), never take from it
         added = wide_one_cell - WIDE_AT_ONE_CELL - grafted
         gone = WIDE_AT_ONE_CELL - wide_one_cell
-        assert not added and not gone, (
-            f"{FONT}: East-Asian-Wide characters at one cell changed: "
-            f"added {sorted(hex(c) for c in added)}, "
-            f"gone {sorted(hex(c) for c in gone)}")
-        print(f"ok   {len(WIDE_AT_ONE_CELL)} East-Asian-Wide characters at one cell "
-              f"(the documented exception)")
+        check(not added and not gone,
+              f"{len(WIDE_AT_ONE_CELL)} East-Asian-Wide characters at one cell "
+              f"(the documented exception; added {sorted(hex(c) for c in added)}, "
+              f"gone {sorted(hex(c) for c in gone)})")
 
     # nothing anywhere in the font is off the grid, cmap'd or not: a
     # feature on by default (locl, ccmp) can put a glyph on the page
     # that no codepoint reaches (fit_to_grid)
     off_grid = sorted(name for name, (adv, _lsb) in hmtx.metrics.items()
                       if adv > 0 and adv % exp_half and adv % exp_full)
-    assert not off_grid, (
-        f"{FONT}: {len(off_grid)} glyphs off the grid, e.g. "
-        f"{[(n, hmtx[n][0]) for n in off_grid[:5]]}")
-    print(f"ok   every advance in the font is on the grid "
-          f"({len(hmtx.metrics)} glyphs)")
+    check(not off_grid,
+          f"every advance in the font is on the grid ({len(hmtx.metrics)} glyphs; "
+          f"off: {[(n, hmtx[n][0]) for n in off_grid[:5]]})")
+
+    # and nothing paints a whole cell past its own advance: an italic
+    # overhangs by design (up to 138u in the Latin layer), a glyph put on
+    # a step too small for its ink would not (grid_step)
+    from fontTools.pens.boundsPen import BoundsPen as _BP
+    gs_all = tf.getGlyphSet()
+    spill = []
+    for name, (adv, _lsb) in hmtx.metrics.items():
+        if adv <= 0:
+            continue
+        pen = _BP(gs_all)
+        gs_all[name].draw(pen)
+        if pen.bounds and (pen.bounds[2] - pen.bounds[0]) > adv + exp_half:
+            spill.append((name, adv, round(pen.bounds[2] - pen.bounds[0])))
+    check(not spill, f"no glyph's ink spills a whole cell past its advance "
+                     f"({len(spill)} do, e.g. {spill[:3]})")
 
     # line metrics: Source Code Pro's, hhea and typo alike, USE_TYPO_METRICS
     hhea, os2 = tf["hhea"], tf["OS/2"]
@@ -202,7 +214,6 @@ def main():
 
     # fsSelection/macStyle must agree with nameID 2 (RIBBI subfamily) — the
     # Windows family model keys off these bits, not the name text.
-    check = Checker()
     fsel = tf["OS/2"].fsSelection
     mac = tf["head"].macStyle
     sub = subfamily_name(tf)

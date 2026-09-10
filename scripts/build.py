@@ -658,9 +658,11 @@ def append_context(font, fullwidth=False):
     and a width encoded against any other FD's nominalWidthX would then
     be wrong (the ligatures were, by 510u); the Latin faces have one FD.
 
-    A plain CFF (Sumi Moji, the faces nerdpatch.py grafts into) has no
-    FDSelect at all: the index is None and the Private dict the top
-    dict's own. A face with no vmtx has no donor either."""
+    A plain CFF has no FDSelect at all: the index is None and the Private
+    dict the top dict's own. Every face this repo builds is CID-keyed,
+    Sumi Moji included; the branch is for a caller handed something else
+    (the unit tests' fixtures). A face with no vmtx has no donor
+    either."""
     cff = font["CFF "].cff
     td = cff[cff.fontNames[0]]
     cmap = font.getBestCmap()
@@ -671,8 +673,8 @@ def append_context(font, fullwidth=False):
 
 def glyph_private(font, td, name):
     """The Private dict a charstring for `name` is written against: its
-    own FD's in a CID-keyed face (the JP ones), the top dict's in a plain
-    CFF (Sumi Moji, the tests' fixtures)."""
+    own FD's in a CID-keyed face — which every face here is — or the top
+    dict's in a plain CFF (the tests' fixtures)."""
     if hasattr(td, "FDArray"):   # CID-keyed
         return td.FDArray[td.FDSelect[font.getGlyphID(name)]].Private
     return td.Private
@@ -850,7 +852,11 @@ def import_scp_variants(base, scp, default_map, marks):
                     continue
                 is_mark = default_map[src] in marks
                 if (dst, is_mark) not in imported:
-                    width, dx = (0, -CELL) if is_mark else (CELL, 0)
+                    # the donor's own advance, as graft_halfwidth takes
+                    # it: a variant must not be a different width from
+                    # the default it replaces
+                    width, dx = ((0, -CELL) if is_mark
+                                 else (scp["hmtx"][dst][0], 0))
                     pen = T2CharStringPen(pen_width(private, width), scp_gs)
                     draw_clean(
                         [(scp_gs, dst, (1, 0, 0, 1, dx, 0))], pen)

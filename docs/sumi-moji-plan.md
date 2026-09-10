@@ -45,6 +45,10 @@ SHCJ は上流から外れた。
   `LOGFONT.lfFaceName`（31 文字）に収まらない。DirectWrite の
   Windows Terminal や macOS / Linux では問題ないが、旧 conhost では
   ファミリー名で引けない。Nerd Fonts 本家の命名を優先して現状維持。
+- **`drop_features` は FeatureRecord を消すだけで、参照されなくなった
+  Lookup を残す**。`kern` / `halt` / `palt` の Lookup が JP 各面に 36 KB
+  ぶん残っている（GPOS 41,708 → 5,310 bytes 相当）。索引の張り替えを
+  伴うので、圧縮後の実利（30 面で 0.2 MB 程度）と天秤にかけて未着手。
 - **リリースの faces ジョブは欧文の静的面を 2 回ずつ作っている**
   （base と Term が同じドナーを使うため、10 面ぶんを 20 回）。欧文を
   別ジョブにして artifact で渡せば省けるが、アップロード / ダウンロード
