@@ -840,6 +840,31 @@ def _cff_font_with_widths(widths):
     return fb.font
 
 
+def test_append_glyph_takes_the_donor_s_vertical_origin_not_its_bearing():
+    """A top side bearing is measured DOWN from each glyph's own yMax, so
+    copying the donor's verbatim moves the origin by the difference
+    between the two. Every glyph the graft appended inherited U+FF61's
+    637 against its own yMax of 243, and stood 250-570 units low in a
+    vertical run under any shaper that reads vmtx rather than VORG."""
+    font = _cff_font_with_widths({"donor": 600, "tall": 600})
+    font["vmtx"] = newTable("vmtx")
+    font["vmtx"].metrics = {".notdef": (1000, 0), "donor": (1000, 637),
+                            "tall": (1000, 637)}
+    # the donor is a 100-unit square, so its origin is 100 + 637
+    pen = T2CharStringPen(600, None)
+    pen.moveTo((0, 0))
+    pen.lineTo((100, 0))
+    pen.lineTo((100, 400))
+    pen.closePath()
+    cff = font["CFF "].cff
+    td = cff[cff.fontNames[0]]
+    build.append_glyph(font, td, "new", pen.getCharString(private=td.Private),
+                       None, 600, None, "donor")
+    assert font["vmtx"].metrics["new"] == (1000, 737 - 400)
+    assert font["vmtx"].metrics["donor"] == (1000, 637)      # untouched
+    assert font["hmtx"].metrics["new"] == (600, 0)
+
+
 @pytest.mark.parametrize("us_weight, want", [(300, 4), (400, 5), (500, 6),
                                              (600, 7), (700, 8)])
 def test_panose_weight_matches_source_han_sans_own_mapping(us_weight, want):

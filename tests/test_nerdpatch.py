@@ -10,7 +10,7 @@ from fontTools.fontBuilder import FontBuilder
 from fontTools.pens.boundsPen import BoundsPen
 from fontTools.pens.t2CharStringPen import T2CharStringPen
 from fontTools.pens.ttGlyphPen import TTGlyphPen
-from fontTools.ttLib import TTFont
+from fontTools.ttLib import TTFont, newTable
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -126,10 +126,10 @@ def test_icon_transform_scales_an_icon_by_the_cell_over_the_em():
     assert k * 614 + xform[5] == pytest.approx(355.5)
 
 
-def test_icon_transform_keeps_an_over_wide_icon_inside_the_cell():
-    """Nerd Fonts draws a few icons past its own cell — U+EE01 and U+EE04
-    are 2252 units of a 2048 one — and the em-relative scale would carry
-    30u of that into each neighbouring terminal cell."""
+def test_icon_transform_keeps_an_icon_that_lands_outside_the_cell_inside_it():
+    """Nerd Fonts draws a few icons past its own cell, and the test is
+    where the ink LANDS, not how wide it is: the ends of the progress bar
+    are narrower than the cell and still sit 30u beyond its edge."""
     ctx = nerdpatch.icon_context(_face(), _symbols())
     k = 600 / 2048
     fits = (0, 0, 2048, 2048)
@@ -143,6 +143,27 @@ def test_icon_transform_keeps_an_over_wide_icon_inside_the_cell():
     box = _place(nerdpatch.icon_transform(0xE100, over, ctx), over)
     assert box[2] - box[0] == pytest.approx(600)       # fitted to the cell
     assert box[0] + box[2] == pytest.approx(600)       # and centred in it
+    # 1955 wide — inside the cell — but drawn 102u past its right edge
+    beyond = (195, -410, 2150, 1638)
+    box = _place(nerdpatch.icon_transform(0xE100, beyond, ctx), beyond)
+    assert box[2] <= 600 + 0.5 and box[0] >= -0.5
+
+
+def test_icon_transform_keeps_both_bleeds_on_a_progress_middle():
+    """font-patcher's align 'c' with an overlap: the middle of a progress
+    bar has a neighbour on each side, so both bleeds have to survive the
+    fit or a seam shows at every join."""
+    ctx = nerdpatch.icon_context(_face(), _symbols())
+    mid = (-101, -410, 2151, 1638)                # U+EE01's own box
+    box = _place(nerdpatch.icon_transform(0xEE01, mid, ctx), mid)
+    assert box[0] == pytest.approx(-101 / 2048 * 600, abs=0.5)
+    assert box[2] == pytest.approx(600 + 103 / 2048 * 600, abs=0.5)
+    assert (box[1], box[3]) == pytest.approx((-273, 984))    # the whole line
+    # and an end keeps its one bleed, as a Powerline separator does
+    end = (195, -410, 2150, 1638)                 # U+EE00's, bleeding right
+    box = _place(nerdpatch.icon_transform(0xEE00, end, ctx), end)
+    assert box[0] == pytest.approx(0, abs=0.5)
+    assert box[2] == pytest.approx(600 + 102 / 2048 * 600, abs=0.5)
 
 
 def test_icon_transform_stretches_a_separator_to_the_cell_and_the_line():
@@ -207,6 +228,32 @@ def test_graft_symbols_appends_one_cell_icons_the_face_lacks(monkeypatch):
     # the supplementary-plane icon needed a format 12 subtable
     assert any(t.format == 12 and 0xF0001 in t.cmap for t in face["cmap"].tables)
     assert face["maxp"].numGlyphs == 6
+
+
+def test_graft_symbols_keeps_every_glyph_on_one_vertical_origin(monkeypatch):
+    """A top side bearing is measured DOWN from the glyph's own yMax. The
+    separator drawn over Source Code Pro's own is a different height, and
+    an appended icon has no bearing at all, so both have to be derived
+    from the origin the rest of the face uses — a vertical run laid out
+    from vmtx rather than VORG reads exactly this."""
+    monkeypatch.setattr(nerdpatch, "TEXT_OVER_ICON", frozenset({ord("A")}))
+    face, symbols = _face(), _symbols()
+    tops = {g: (_bounds(face, g) or (0, 0, 0, 0))[3] for g in face.getGlyphOrder()}
+    face["vmtx"] = newTable("vmtx")                # every glyph at 880
+    face["vmtx"].metrics = {g: (1000, 880 - top) for g, top in tops.items()}
+    assert face["vmtx"].metrics["uniE0B0"] == (1000, 880 - 1040)
+
+    nerdpatch.graft_symbols(face, symbols)
+
+    def origin(name):
+        box = _bounds(face, name)
+        return (box[3] if box else 0) + face["vmtx"].metrics[name][1]
+
+    assert origin("uniE0B0") == 880                # redrawn in place
+    cmap = face.getBestCmap()
+    assert origin(cmap[0xE000]) == 880             # appended icon
+    assert origin(cmap[0xF0001]) == 880
+    assert origin("A") == 880                      # untouched
 
 
 def test_rename_splices_the_marker_and_credits_nerd_fonts():

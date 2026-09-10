@@ -588,15 +588,34 @@ def alloc_glyph_name(font):
     return f"cid{n:05d}"
 
 
-def charstring_lsb(cs):
-    """xMin of a freshly built charstring — appended glyphs used to get
-    lsb=0, which lies to anything that trusts hmtx over the outline."""
+def charstring_box(cs):
+    """(xMin, yMin, xMax, yMax) of a freshly built charstring, or None for
+    a blank one — appended glyphs used to get lsb=0, which lies to
+    anything that trusts hmtx over the outline."""
     try:
-        bounds = cs.calcBounds(None)
+        return cs.calcBounds(None)
     except Exception as exc:
-        print(f"  WARNING: calcBounds failed for appended glyph ({exc}); lsb=0")
-        return 0
-    return otRound(bounds[0]) if bounds else 0
+        print(f"  WARNING: calcBounds failed for appended glyph ({exc})")
+        return None
+
+
+def charstring_lsb(cs):
+    """xMin of a freshly built charstring."""
+    box = charstring_box(cs)
+    return otRound(box[0]) if box else 0
+
+
+def vmtx_origin(font, glyph):
+    """The vertical origin of a glyph already in `font` — its own yMax
+    plus its top side bearing, which is what CFF's VORG states directly.
+    Cached, because it needs the glyph set."""
+    cache = getattr(font, "_vorigin", None)
+    if cache is None:
+        cache = font._vorigin = {}
+    if glyph not in cache:
+        box = _bounds(font.getGlyphSet(), glyph)
+        cache[glyph] = font["vmtx"].metrics[glyph][1] + (box[3] if box else 0)
+    return cache[glyph]
 
 
 def vmtx_donor(font, fullwidth=True):
@@ -637,10 +656,21 @@ def append_glyph(font, td, name, cs, fd_index, width, lsb=None, vdonor=None):
         td.CharStrings.charStrings[name] = i
     else:                        # a plain, non-indexed CFF (the fixtures)
         td.CharStrings[name] = cs
+    box = charstring_box(cs)
     font["hmtx"].metrics[name] = (
-        width, charstring_lsb(cs) if lsb is None else lsb)
+        width, (otRound(box[0]) if box else 0) if lsb is None else lsb)
     if "vmtx" in font and vdonor is not None:
-        font["vmtx"].metrics[name] = font["vmtx"].metrics[vdonor]
+        # the donor's vertical ORIGIN, not its top side bearing. tsb is
+        # measured down from each glyph's OWN yMax, so copying it moves
+        # the origin by the difference between the two: every glyph this
+        # build appends inherited U+FF61's 637 against its own yMax of
+        # 243, and stood 250-570 units low in a vertical run under any
+        # shaper that reads vmtx rather than VORG — FreeType's vertical
+        # layout does, and reads no VORG at all. The CFF VORG in the same
+        # file said 880 for all of them, so the two tables disagreed
+        font["vmtx"].metrics[name] = (
+            font["vmtx"].metrics[vdonor][0],
+            otRound(vmtx_origin(font, vdonor) - (box[3] if box else 0)))
     note_redrawn(font, [name])
     # two sets, because they answer two questions. _built is every glyph
     # this build made, and nothing ever leaves it: their names come from

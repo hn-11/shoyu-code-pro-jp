@@ -28,8 +28,9 @@ outputs:
 runs:
   using: composite
   steps:
-    # --- pins live here, and only here ---
-    - shell: bash
+    # --- pins live here, and only here (CONTRIBUTING names this step) ---
+    - name: Pin upstream releases
+      shell: bash
       run: |
         echo "SHS_TAG=2.005R" >> "$GITHUB_ENV"
         echo "SCP_TAG=2.042R-u%2F1.062R-i%2F1.026R-vf" >> "$GITHUB_ENV"

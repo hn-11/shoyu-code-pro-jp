@@ -16,25 +16,34 @@ Sizing follows font-patcher's own rules for each group (icon_transform):
   - an icon: scaled uniformly by our cell over the symbols' em
     (600 / 2048), so it fits one cell and the groups keep the relative
     sizes Nerd Fonts gave them, with the symbols' line box (-410..1638)
-    centred on ours (-273..984) — and never above the scale that keeps
-    its ink inside the cell, which two icons Nerd Fonts draws past its
-    own cell (U+EE01, U+EE04 at 2252 of 2048) need. This is
-    font-patcher's 'pa', with one difference: font-patcher fits a mono
-    icon to cell x iconheight, where iconheight is (2 x capHeight +
-    line)/3 — 600 x 856 for these faces, not 600 x 600. See the sizing
+    centred on ours (-273..984). An icon whose ink would then LAND
+    outside our cell or our line box is fitted into them and centred
+    instead: Nerd Fonts draws a handful past its own cell, and where it
+    put those is no guide. The test is where the ink lands, not how wide
+    it is — an icon narrower than the cell can still sit beyond its
+    edge, which is how the ends of the progress bar first got through.
+    This is font-patcher's 'pa', with one difference: font-patcher fits
+    a mono icon to cell x iconheight, where iconheight is (2 x capHeight
+    + line)/3 — 600 x 856 for these faces, not 600 x 600. See the sizing
     note at the end of this docstring.
-  - a Powerline separator (font-patcher's '^xy' set, SEPARATORS): the
+  - a stretched glyph — font-patcher's two '^xy' tables, the Powerline
+    separators (SEPARATORS) and the progress-bar pieces (PROGRESS,
+    U+EE00-EE05, outside the Powerline range but the same rule): the
     ink stretched to the cell and to the line box, so consecutive cells
     and stacked lines tile without a seam, keeping the bleed or inset
-    the symbols font gives its aligned edge (font-patcher's `overlap`).
+    the symbols font gives its aligned edge (font-patcher's `overlap`) —
+    on both edges where both bleed, which is font-patcher's align 'c'
+    and what the middle of a progress bar needs.
     The symbols font is square (a 2048 cell, a 2048 line box), so its
     own separators are only as wide as font-patcher's xy-ratio cap
     allowed (1447u of 2048 at ratio 0.7); our cell is far taller than it
     is wide (600 x 1257, ratio 0.477), the cap never binds, and the ink
     fills it.
-  - the rest of the Powerline range (the git branch, the padlock, the
-    line- and column-number marks): scaled to fill the line box with its
-    aspect kept, font-patcher's '^pa'.
+  - the rest of the line-box range (the git branch, the padlock, the
+    line- and column-number marks): font-patcher's '^pa' — the aspect
+    kept and the ink fitted to the cell AND the line, whichever binds
+    first. Three of the eight reach the whole 1257u line; the column
+    mark U+E0CE is 600 wide and so only 569 tall.
 
 The Powerline glyphs Source Code Pro draws itself (U+E0A0-E0A2,
 E0B0-E0B3) are replaced by the symbols font's, as font-patcher did.
@@ -88,6 +97,7 @@ import sys
 import time
 from pathlib import Path
 
+from fontTools.misc.roundTools import otRound
 from fontTools.pens.t2CharStringPen import T2CharStringPen
 from fontTools.pens.transformPen import TransformPen
 from fontTools.ttLib import TTFont
@@ -112,6 +122,16 @@ POWERLINE = range(0xE0A0, 0xE0D8)
 # range keeps its aspect ('^pa').
 SEPARATORS = frozenset(range(0xE0B0, 0xE0C9)) | {
     0xE0CA, 0xE0CC, 0xE0CD, 0xE0D2, 0xE0D4, 0xE0D6, 0xE0D7}
+# font-patcher's OTHER '^xy' table, SYM_ATTR_PROGRESS (v3.4.0): six
+# progress-bar pieces, outside the Powerline range but drawn to tile
+# exactly as the separators do — the two ends bleed one way (align 'l' /
+# 'r', overlap 0.05), the two middles both ways (align 'c', overlap 0.10)
+PROGRESS = frozenset(range(0xEE00, 0xEE06))
+# everything drawn against the line box rather than scaled off the em,
+# and of those, everything stretched to the cell
+LINE_BOX = frozenset(POWERLINE) | PROGRESS
+STRETCHED = SEPARATORS | PROGRESS
+
 # Powerline aside, the codepoints Symbols Nerd Font Mono and a Sumi Moji
 # face both draw. The face's glyph wins there (see the divergence in the
 # module docstring), so this is the set of characters an icon does NOT
@@ -171,27 +191,37 @@ def icon_transform(cp, ink, ctx):
     if ink is None or ink[2] <= ink[0] or ink[3] <= ink[1]:
         return flat()
     x0, y0, x1, y1 = ink
-    if cp not in POWERLINE:
+    if cp not in LINE_BOX:
         k = cell / s_cell
-        if k * (x1 - x0) <= cell and k * (y1 - y0) <= asc - desc:
+        placed = (k * x0, k * y0 + (asc + desc) / 2 - k * (s_asc + s_desc) / 2,
+                  k * x1, k * y1 + (asc + desc) / 2 - k * (s_asc + s_desc) / 2)
+        if (placed[0] >= -1 and placed[2] <= cell + 1
+                and placed[1] >= desc - 1 and placed[3] <= asc + 1):
             return flat()
-        # Nerd Fonts draws a few icons past its own cell — U+EE01 and
-        # U+EE04 are 2252 units of a 2048 one — and the em-relative scale
-        # would carry 30u of that into each neighbouring terminal cell.
-        # Those fall through to the fit below: outside the symbols' own
+        # an icon Nerd Fonts draws outside its own cell would land outside
+        # ours at the em-relative scale, painting into a neighbouring
+        # terminal cell. The test is where the ink LANDS, not how big it
+        # is: an icon narrower than the cell can still sit beyond its edge.
+        # Those fall through to the fit below — outside the symbols' own
         # cell, where it put the icon is no guide either, so centre it
-    elif cp in SEPARATORS:                                    # '^xy'
+    elif cp in STRETCHED:                                     # '^xy'
         # the aligned edge is the one the symbols font puts nearest its
         # own cell edge; its offset — a bleed outwards, an inset inwards,
         # font-patcher's overlap — rides along in proportion, while the
         # opposite edge goes to the far edge of our cell
         left, right = x0, s_cell - x1
-        # the aligned edge is the one that bleeds past the symbols' own
-        # cell (font-patcher's overlap, which has to survive the fit);
-        # with neither bleeding, the one drawn nearest its edge
-        align_left = left < 0 if (left < 0) != (right < 0) else abs(left) <= abs(right)
-        tx0, tx1 = ((left / s_cell * cell, float(cell)) if align_left
-                    else (0.0, cell - right / s_cell * cell))
+        if left < 0 and right < 0:
+            # both edges bleed — font-patcher's align 'c' with an overlap,
+            # the middle of a progress bar, which has a neighbour on each
+            # side. Keep both bleeds in proportion
+            tx0, tx1 = left / s_cell * cell, cell - right / s_cell * cell
+        else:
+            # the aligned edge is the one that bleeds past the symbols'
+            # own cell (font-patcher's overlap, which has to survive the
+            # fit); with neither bleeding, the one drawn nearest its edge
+            align_left = left < 0 if (left < 0) != (right < 0) else abs(left) <= abs(right)
+            tx0, tx1 = ((left / s_cell * cell, float(cell)) if align_left
+                        else (0.0, cell - right / s_cell * cell))
         sx = (tx1 - tx0) / (x1 - x0)
         sy = (asc - desc) / (s_asc - s_desc)
         return (sx, 0, 0, sy, tx0 - sx * x0, desc - sy * s_desc)
@@ -226,7 +256,7 @@ def graft_symbols(font, symbols):
     # appended below, rather than the first one's symbol
     new, replaced, kept = {}, {}, set()
     for cp in sorted(scm):
-        if cp in cmap and cp not in POWERLINE:
+        if cp in cmap and cp not in LINE_BOX:
             # the face already draws this one as text: font-patcher's
             # `--careful` rule, not its default, and the docstring says
             # why. Collected, because which characters an icon may not
@@ -239,7 +269,7 @@ def graft_symbols(font, symbols):
         xform = icon_transform(cp, ink, ctx)
         # a symbols glyph with no ink would blank a separator the face
         # draws itself: keep the face's
-        if cp in cmap and ink is None and cp in POWERLINE:
+        if cp in cmap and ink is None and cp in LINE_BOX:
             continue
         if cp in cmap and cmap[cp] not in replaced:
             # Source Code Pro draws its own Powerline glyphs (U+E0A0-E0A2,
@@ -249,11 +279,25 @@ def graft_symbols(font, symbols):
             # separator in a prompt tiles the same cell and the same line
             name = cmap[cp]
             own = build.glyph_private(font, td, name)
+            # its vertical origin, read BEFORE the outline is swapped: a
+            # top side bearing is measured down from the glyph's own
+            # yMax, and the separator we draw over it is far taller than
+            # what Source Code Pro drew — leaving the bearing alone moved
+            # the origin 76u (U+E0A0 to 804 where the rest of the face
+            # says 880), which a vertical run laid out from vmtx would use
+            origin = (build.vmtx_origin(font, name)
+                      if "vmtx" in font and name in font["vmtx"].metrics
+                      else None)
             pen = T2CharStringPen(build.pen_width(own, cell), sgs)
             sgs[scm[cp]].draw(TransformPen(pen, xform))
             cs = pen.getCharString(private=own)
             td.CharStrings[name] = cs
-            font["hmtx"].metrics[name] = (cell, build.charstring_lsb(cs))
+            box = build.charstring_box(cs)
+            font["hmtx"].metrics[name] = (cell, otRound(box[0]) if box else 0)
+            if origin is not None:
+                font["vmtx"].metrics[name] = (
+                    font["vmtx"].metrics[name][0],
+                    otRound(origin - (box[3] if box else 0)))
             replaced[name] = cp
             continue
         pen = T2CharStringPen(build.pen_width(private, cell), sgs)
@@ -270,7 +314,7 @@ def graft_symbols(font, symbols):
             f"a character the face draws and Nerd Fonts draws as an icon: "
             f"decide which one a reader should get, then update "
             f"TEXT_OVER_ICON (keep the character) or add the codepoint to "
-            f"POWERLINE's treatment (take the icon)")
+            f"LINE_BOX's treatment (take the icon)")
     build.set_cmap(font, new, add_new=True)
     return len(new) + len(replaced), list(replaced)
 
@@ -348,7 +392,8 @@ def icon_checks(font, symbols=None):
     # set would otherwise pass, having nothing left to measure
     want = set(scm) if sgs is not None else None
     seen, blank, short, spill, skew = set(), [], [], [], []
-    for cp in POWERLINE:
+    slack = 0.1 * (asc - desc)
+    for cp in sorted(LINE_BOX):
         name = cmap.get(cp)
         if name is None:
             continue
@@ -361,11 +406,16 @@ def icon_checks(font, symbols=None):
             blank.append(f"U+{cp:04X}")
             continue
         x0, y0, x1, y1 = ink
-        if cp in SEPARATORS:
-            if x1 - x0 < 0.9 * cell or y1 - y0 < 0.9 * (asc - desc):
+        if cp in STRETCHED:
+            # where the ink REACHES, not how much of it there is: a
+            # separator shifted a whole cell sideways spans just as much
+            # and tiles nothing. It may bleed outwards (the overlap), so
+            # only the inward direction is faulted
+            if (x0 > 0.1 * cell or x1 < 0.9 * cell
+                    or y0 > desc + slack or y1 < asc - slack):
                 short.append(f"U+{cp:04X}")
             continue
-        if x1 - x0 > cell + 1 or y1 - y0 > asc - desc + 1:
+        if x0 < -1 or x1 > cell + 1 or y0 < desc - 1 or y1 > asc + 1:
             spill.append(f"U+{cp:04X}")
         src = build._bounds(sgs, scm[cp]) if cp in scm else None
         if src is not None and src[3] > src[1] and y1 > y0:
@@ -380,7 +430,7 @@ def icon_checks(font, symbols=None):
     wide, hollow, over = [], [], []
     for cp in sorted(want or ()):
         name = cmap.get(cp)
-        if name is None or cp in POWERLINE or cp in TEXT_OVER_ICON:
+        if name is None or cp in LINE_BOX or cp in TEXT_OVER_ICON:
             continue                      # counted above, or the face's own
         if hmtx[name][0] != cell:
             wide.append(f"U+{cp:04X}")
@@ -389,7 +439,8 @@ def icon_checks(font, symbols=None):
             if build._bounds(sgs, scm[cp]) is not None:
                 hollow.append(f"U+{cp:04X}")
             continue
-        if box[2] - box[0] > cell + 1 or box[3] - box[1] > asc - desc + 1:
+        if (box[0] < -1 or box[2] > cell + 1
+                or box[1] < desc - 1 or box[3] > asc + 1):
             over.append(f"U+{cp:04X}")
 
     def few(bad):
@@ -401,8 +452,8 @@ def icon_checks(font, symbols=None):
     return [
         (not gap,
          f"every codepoint the symbols font has is in the face "
-         f"({len(seen)} of them Powerline, {missing})"),
-        (not blank, f"every Powerline glyph in the face draws ink "
+         f"({len(seen)} of them drawn against the line box, {missing})"),
+        (not blank, f"every line-box glyph in the face draws ink "
                     f"(blank: {blank})"),
         (not wide, f"every icon is one cell wide — a Nerd Font MONO "
                    f"(off: {few(wide)})"),
@@ -410,10 +461,11 @@ def icon_checks(font, symbols=None):
                      f"(blank: {few(hollow)})"),
         (not over, f"every icon fits the cell and the line "
                    f"(over: {few(over)})"),
-        (not short, f"every Powerline separator tiles the cell and the line "
-                    f"({len(seen)} Powerline glyphs, off: {short})"),
-        (not spill, f"every other Powerline glyph fits the cell (off: {spill})"),
-        (not skew, f"every other Powerline glyph keeps Nerd Fonts' aspect "
+        (not short, f"every stretched glyph tiles the cell and the line "
+                    f"({len(seen)} line-box glyphs, off: {short})"),
+        (not spill, f"every other line-box glyph sits inside the cell "
+                    f"(off: {spill})"),
+        (not skew, f"every other line-box glyph keeps Nerd Fonts' aspect "
                    f"({'not checked, no NF_SYMBOLS' if sgs is None else f'off: {skew}'})"),
     ]
 

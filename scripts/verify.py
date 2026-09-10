@@ -45,10 +45,11 @@ FAMILY_METRICS = {
 }
 DEFAULT_METRICS = (600, 1000)
 
-# Unicode calls these Wide, both donors draw them one cell wide, and
-# neither has anything wider to offer under fwid (README, 幅の方針): six
-# emoji Source Code Pro carries, the two Hangul tone marks and the five
-# Bopomofo final letters Source Han Sans draws at 600
+# Unicode calls these Wide, they end up one cell, and neither donor has
+# anything wider to offer under fwid (README, 幅の方針): six emoji only
+# Source Code Pro carries at 600, five Bopomofo final letters only Source
+# Han Sans carries at 600, and two Hangul tone marks Source Han Sans
+# draws 250 wide that fit_to_grid centres in the cell
 WIDE_AT_ONE_CELL = {0x2615, 0x302E, 0x302F, 0x31B4, 0x31B5, 0x31B6, 0x31B7,
                     0x31BB, 0x1F3B5, 0x1F3B6, 0x1F4A9, 0x1F512, 0x1F916}
 
@@ -239,6 +240,25 @@ def main():
              if hmtx[name][0] > 0 and (box[2] - box[0]) > hmtx[name][0] + exp_half]
     check(not spill, f"no glyph's ink spills a whole cell past its advance "
                      f"({len(spill)} do, e.g. {spill[:3]})")
+
+    # the vertical origin, stated twice: CFF gives it outright in VORG,
+    # and vmtx gives it as a bearing DOWN from each glyph's own yMax.
+    # They must agree, or a vertical run sits at one height under a
+    # shaper that reads VORG (HarfBuzz, CoreText, DirectWrite) and
+    # another under one that reads vmtx (FreeType's vertical layout,
+    # which has no VORG at all). Every glyph this build appended used to
+    # inherit its donor's bearing verbatim, and stood 250-570 units low
+    if "vmtx" in tf and "VORG" in tf:
+        vorg = tf["VORG"]
+        vmtx = tf["vmtx"].metrics
+        off = [(name, round(box[3] + vmtx[name][1]),
+                vorg.VOriginRecords.get(name, vorg.defaultVertOriginY))
+               for name, box in bounds.items() if name in vmtx]
+        # within 2 units: yMax here is a BoundsPen reading of the curve,
+        # and the font's own is the rounded design value
+        off = [row for row in off if abs(row[1] - row[2]) > 2]
+        check(not off, f"vmtx and VORG agree on the vertical origin "
+                       f"({len(off)} off, e.g. {off[:3]})")
 
     angle = tf["post"].italicAngle
     if italic:
