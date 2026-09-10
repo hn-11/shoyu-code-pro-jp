@@ -834,6 +834,23 @@ def test_widen_fullwidth_spares_the_ligatures_it_is_given():
         assert pen.bounds[0] == want_lsb == hmtx[g][1]
 
 
+def test_remap_required_moves_a_required_feature_and_keeps_its_none():
+    """ReqFeatureIndex points into the same FeatureList the remap
+    renumbers; 0xFFFF is 'none' and must stay put."""
+    class LangSys:
+        pass
+
+    ls = LangSys()
+    ls.ReqFeatureIndex = 5
+    build.remap_required(ls, {5: 2})
+    assert ls.ReqFeatureIndex == 2
+    build.remap_required(ls, {})            # the required feature was dropped
+    assert ls.ReqFeatureIndex == 0xFFFF
+    build.remap_required(ls, {0: 0})        # already none: left alone
+    assert ls.ReqFeatureIndex == 0xFFFF
+    build.remap_required(LangSys(), {0: 1})  # no attribute at all
+
+
 def test_shift_anchors_moves_a_base_anchor_with_its_outline():
     """An anchor is a point on the glyph: re-centring the outline in a
     wider advance has to take it along, or the mark lands where the ink

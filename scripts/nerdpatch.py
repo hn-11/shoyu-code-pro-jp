@@ -122,7 +122,11 @@ def icon_transform(cp, ink, ctx):
         # font-patcher's overlap — rides along in proportion, while the
         # opposite edge goes to the far edge of our cell
         left, right = x0, upm - x1
-        tx0, tx1 = ((left / upm * cell, float(cell)) if abs(left) <= abs(right)
+        # the aligned edge is the one that bleeds past the symbols' own
+        # cell (font-patcher's overlap, which has to survive the fit);
+        # with neither bleeding, the one drawn nearest its edge
+        align_left = left < 0 if (left < 0) != (right < 0) else abs(left) <= abs(right)
+        tx0, tx1 = ((left / upm * cell, float(cell)) if align_left
                     else (0.0, cell - right / upm * cell))
         sx = (tx1 - tx0) / (x1 - x0)
         sy = (asc - desc) / (s_asc - s_desc)
@@ -153,15 +157,16 @@ def graft_symbols(font, symbols):
         t12.platformID, t12.platEncID, t12.language = 3, 10, 0
         t12.cmap = dict(bmp.cmap)
         font["cmap"].tables.append(t12)
-    new, replaced = {}, []
+    # {glyph already redrawn: the codepoint it was redrawn for}. A second
+    # codepoint sharing that glyph cannot have it too — it gets its own,
+    # appended below, rather than the first one's symbol
+    new, replaced = {}, {}
     for cp in sorted(scm):
         if cp in cmap and cp not in POWERLINE:
             continue
         xform = icon_transform(
             cp, build._bounds(sgs, scm[cp]) if cp in POWERLINE else None, ctx)
-        if cp in cmap:
-            if cmap[cp] in replaced:      # two codepoints, one glyph
-                continue
+        if cp in cmap and cmap[cp] not in replaced:
             # Source Code Pro draws its own Powerline glyphs (U+E0A0-E0A2,
             # E0B0-E0B3) taller than its line box (-280..1040/1060 against
             # -273..984) and E0B1/E0B2 wider than the cell; the symbols
@@ -174,7 +179,7 @@ def graft_symbols(font, symbols):
             cs = pen.getCharString(private=own)
             td.CharStrings[name] = cs
             font["hmtx"].metrics[name] = (cell, build.charstring_lsb(cs))
-            replaced.append(name)
+            replaced[name] = cp
             continue
         pen = T2CharStringPen(build.pen_width(private, cell), sgs)
         sgs[scm[cp]].draw(TransformPen(pen, xform))
@@ -183,7 +188,7 @@ def graft_symbols(font, symbols):
                            fd_index, cell, None, vdon)
         new[cp] = name
     build.set_cmap(font, new, add_new=True)
-    return len(new) + len(replaced), replaced
+    return len(new) + len(replaced), list(replaced)
 
 
 # what the face has to say about its fourth donor once the icons are in:

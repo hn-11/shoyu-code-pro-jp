@@ -141,6 +141,17 @@ def test_icon_transform_stretches_a_separator_to_the_cell_and_the_line():
         pytest.approx((-35.7, -279, 600, 990), abs=0.6)
 
 
+def test_icon_transform_aligns_on_the_edge_that_bleeds():
+    """font-patcher's overlap is a bleed past the symbols' own cell, and
+    the fit has to keep it — even when the other edge sits exactly on
+    its cell edge and is therefore 'nearer'."""
+    ctx = nerdpatch.icon_context(_face(), _symbols())
+    ink = (0, -420, 2170, 1648)              # flush left, bleeding right
+    box = _place(nerdpatch.icon_transform(0xE0B2, ink, ctx), ink)
+    assert box[0] == pytest.approx(0)
+    assert box[2] == pytest.approx(600 + 122 / 2048 * 600, abs=0.5)
+
+
 def test_icon_transform_keeps_the_aspect_of_a_powerline_symbol():
     """U+E0A0-E0A3 are symbols, not separators: they fill the line box
     with their aspect kept, never stretched to the cell."""

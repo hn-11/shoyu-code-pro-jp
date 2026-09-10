@@ -1935,7 +1935,20 @@ def sort_feature_list(gsub):
         ls.FeatureIndex = sorted(remap[i] for i in ls.FeatureIndex
                                  if i in remap)
         ls.FeatureCount = len(ls.FeatureIndex)
+        remap_required(ls, remap)
     return remap
+
+
+NO_REQUIRED_FEATURE = 0xFFFF
+
+
+def remap_required(langsys, remap):
+    """A LangSys's ReqFeatureIndex points into the same FeatureList as
+    its FeatureIndex list, so it has to move with it — and 0xFFFF, its
+    "none", must not be remapped. Source Han Sans sets none today."""
+    req = getattr(langsys, "ReqFeatureIndex", NO_REQUIRED_FEATURE)
+    if req != NO_REQUIRED_FEATURE:
+        langsys.ReqFeatureIndex = remap.get(req, NO_REQUIRED_FEATURE)
 
 
 def drop_features(font, tags):
@@ -1964,6 +1977,7 @@ def drop_features(font, tags):
             ls.FeatureIndex = sorted(remap[i] for i in ls.FeatureIndex
                                      if i in remap)
             ls.FeatureCount = len(ls.FeatureIndex)
+            remap_required(ls, remap)
 
 
 def feature_map(font, tag):
@@ -2051,9 +2065,9 @@ def narrow_halfwidth(font, cell):
     the halfwidth Hangul letters (U+FFA1-FFDC) to the wide compatibility
     jamo they came from — one 920-unit glyph for U+3131 and U+FFA1
     alike — so putting that glyph on the grid puts both on a full width.
-    Each halfwidth codepoint that shares a wider glyph gets a one-cell
-    copy of it, condensed to the cell, and the wide codepoint keeps the
-    original.
+    Each halfwidth codepoint whose glyph is wider than the cell — in
+    advance or in ink — gets a one-cell copy of it, condensed, and
+    whatever else shares that glyph keeps the original.
 
     Runs after fit_to_grid (whose grid step the shared glyph took) and
     before widen_fullwidth, which must not widen the copies. Returns the
@@ -2066,7 +2080,12 @@ def narrow_halfwidth(font, cell):
     vdon = vmtx_donor(font, fullwidth=False)
     made, new = {}, {}
     for cp, name in sorted(cmap.items()):
-        if hmtx[name][0] == cell or unicodedata.east_asian_width(chr(cp)) != "H":
+        adv = hmtx[name][0]
+        if adv <= 0 or unicodedata.east_asian_width(chr(cp)) != "H":
+            continue
+        box = _bounds(gs, name)
+        ink = (box[2] - box[0]) if box else 0
+        if adv == cell and ink <= cell:
             continue
         if name not in made:
             # the copy stays in the source glyph's own FontDict: it is a
@@ -2077,9 +2096,10 @@ def narrow_halfwidth(font, cell):
             # condensed into the cell, not just re-advanced: Source Han
             # Sans's jamo carry 810u of ink in a 920 advance, and moving
             # that into a 600 cell would spill 105u into each neighbour.
-            # Scaling by cell/advance keeps the design's own bearings in
-            # proportion, which is what a half-width form is
-            sx = cell / hmtx[name][0]
+            # Scaling by the cell over the advance keeps the design's own
+            # bearings in proportion, which is what a half-width form is;
+            # over the ink instead where even that would not fit
+            sx = cell / max(adv, ink)
             pen = T2CharStringPen(pen_width(private, cell), gs)
             gs[name].draw(TransformPen(pen, (sx, 0, 0, 1, 0, 0)))
             made[name] = alloc_glyph_name(font)
