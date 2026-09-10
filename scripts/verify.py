@@ -146,10 +146,14 @@ def main():
         else:
             grafted = set(symbols.getBestCmap())
     if wide_one_cell is not None:
-        assert wide_one_cell - grafted == WIDE_AT_ONE_CELL, (
+        # a grafted icon may add to the set (every Nerd Fonts icon is one
+        # cell), never take from it
+        added = wide_one_cell - WIDE_AT_ONE_CELL - grafted
+        gone = WIDE_AT_ONE_CELL - wide_one_cell
+        assert not added and not gone, (
             f"{FONT}: East-Asian-Wide characters at one cell changed: "
-            f"added {sorted(hex(c) for c in wide_one_cell - grafted - WIDE_AT_ONE_CELL)}, "
-            f"gone {sorted(hex(c) for c in WIDE_AT_ONE_CELL - wide_one_cell)}")
+            f"added {sorted(hex(c) for c in added)}, "
+            f"gone {sorted(hex(c) for c in gone)}")
         print(f"ok   {len(WIDE_AT_ONE_CELL)} East-Asian-Wide characters at one cell "
               f"(the documented exception)")
 
@@ -360,6 +364,7 @@ def main():
         _contour_bounds,
         _record_contours,
         bar_thickness,
+        panose_weight,
     )
     glyph_order = tf.getGlyphOrder()
 
@@ -501,7 +506,7 @@ def main():
     panose = tf["OS/2"].panose
     check(panose.bProportion == 9,
           f"OS/2 PANOSE proportion == 9 (monospaced), got {panose.bProportion}")
-    want_pw = tf["OS/2"].usWeightClass // 100 + 1
+    want_pw = panose_weight(tf["OS/2"].usWeightClass)
     check(panose.bWeight == want_pw,
           f"OS/2 PANOSE weight {panose.bWeight} matches usWeightClass "
           f"{tf['OS/2'].usWeightClass} (want {want_pw})")

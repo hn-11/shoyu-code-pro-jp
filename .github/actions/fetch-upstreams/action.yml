@@ -67,7 +67,7 @@ runs:
         # the Nerd Fonts zip's layout is not ours to rely on: say so here,
         # not with `cp ""` in the package job an hour later
         nf_symbols=$(find upstreams/nf -name 'SymbolsNerdFontMono-Regular.ttf' | head -1)
-        nf_license=$(find upstreams/nf -name 'LICENSE' | head -1)
+        nf_license=$(find upstreams/nf -iname 'LICENSE*' | head -1)
         for v in nf_symbols nf_license; do
           [ -n "${!v}" ] || { echo "::error::$v not found in NerdFontsSymbolsOnly.zip ($NF_TAG)"; exit 1; }
         done

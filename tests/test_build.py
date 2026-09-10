@@ -773,8 +773,15 @@ def _cff_font_with_widths(widths):
     return fb.font
 
 
+@pytest.mark.parametrize("us_weight, want", [(300, 4), (400, 5), (500, 6),
+                                             (600, 7), (700, 8)])
+def test_panose_weight_matches_source_han_sans_own_mapping(us_weight, want):
+    assert build.panose_weight(us_weight) == want
+
+
 @pytest.mark.parametrize("adv, ink, want", [
     (500, 400, 600),      # half-width kana: under the cell
+    (500, 1400, 2000),    # ...unless its ink is nowhere near one cell
     (250, 100, 600),      # a Hangul tone mark
     (618, 548, 600),      # Source Han Sans's alpha: nearest the cell
     (663, 612, 600),      # its Bold alpha, ink a little over the cell

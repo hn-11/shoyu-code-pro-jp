@@ -130,7 +130,7 @@ def main():
     os2 = tf["OS/2"]
     check(tf["post"].isFixedPitch == 1 and os2.panose.bProportion == 9,
           "declared monospaced")
-    want_pw = os2.usWeightClass // 100 + 1
+    want_pw = build.panose_weight(os2.usWeightClass)
     check(os2.panose.bWeight == want_pw,
           f"PANOSE weight {os2.panose.bWeight} matches usWeightClass "
           f"{os2.usWeightClass} (want {want_pw})")

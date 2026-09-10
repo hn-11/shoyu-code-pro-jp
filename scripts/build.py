@@ -1140,10 +1140,11 @@ def grid_step(adv, ink, cell):
     always overhangs — but no further: a three-em dash (⸻, 2452 wide)
     takes three full widths rather than spilling out of two."""
     if adv <= cell:
-        return cell
-    low = FULLWIDTH * (adv // FULLWIDTH) or cell
-    high = FULLWIDTH if low == cell else low + FULLWIDTH
-    step = low if adv - low <= high - adv else high
+        step = cell
+    else:
+        low = FULLWIDTH * (adv // FULLWIDTH) or cell
+        high = FULLWIDTH if low == cell else low + FULLWIDTH
+        step = low if adv - low <= high - adv else high
     while ink > step + cell // 3:
         step = FULLWIDTH if step == cell else step + FULLWIDTH
     return step
@@ -1160,8 +1161,10 @@ def reference_steps(path, cell):
     the same letter one column in Light Italic and two in Bold Italic.
     Keyed by name because every Source Han Sans weight shares its CID
     names, and because a glyph reachable only through a feature has no
-    codepoint. The reference is the donor of our Regular (FACES), read
-    once per process."""
+    codepoint. Every glyph gets an entry, the ones already on a step
+    included: a glyph can be on the grid in the reference and off it in
+    a heavier weight, and both have to end up the same. The reference is
+    the donor of our Regular (FACES), read once per process."""
     key = (str(path), cell)
     if key not in _REFERENCE_STEPS:
         if not Path(path).exists():
@@ -1174,7 +1177,10 @@ def reference_steps(path, cell):
         steps = {}
         for name in ref.getGlyphOrder():
             adv = hmtx[name][0]
-            if adv <= 0 or adv % cell == 0 or adv % FULLWIDTH == 0:
+            if adv <= 0:
+                continue
+            if adv % cell == 0 or adv % FULLWIDTH == 0:
+                steps[name] = adv          # already a step, and the family's
                 continue
             pen = BoundsPen(gs)
             gs[name].draw(pen)
@@ -1209,7 +1215,13 @@ def fit_to_grid(font, cell, steps=None, glyph_names=None):
     gs = font.getGlyphSet()
     hmtx = font["hmtx"]
     done = set()
+    drawn = {}
     moved = 0
+    # a glyph this build appended carries a name alloc_glyph_name took
+    # from Source Han Sans's own CID space, so it can collide with a
+    # reference name that means something else entirely. Ours are on the
+    # grid by construction and take the fallback path
+    appended = getattr(font, "_appended", frozenset())
     for name in (font.getGlyphOrder() if glyph_names is None else glyph_names):
         if name is None or name in done:
             continue
@@ -1219,7 +1231,7 @@ def fit_to_grid(font, cell, steps=None, glyph_names=None):
             continue
         # the family's answer first: a glyph can land on a step in one
         # weight and off it in the next, and both must end up the same
-        new = (steps or {}).get(name)
+        new = None if name in appended else (steps or {}).get(name)
         if new is None:
             if adv % cell == 0 or adv % FULLWIDTH == 0:
                 continue
@@ -1233,10 +1245,15 @@ def fit_to_grid(font, cell, steps=None, glyph_names=None):
         private = glyph_private(font, td, name)
         pen = T2CharStringPen(pen_width(private, new), gs)
         gs[name].draw(TransformPen(pen, (1, 0, 0, 1, shift, 0)))
-        td.CharStrings[name] = pen.getCharString(private=private)
+        drawn[name] = pen.getCharString(private=private)
         hmtx.metrics[name] = (new, lsb + shift)
         note_redrawn(font, [name])
         moved += 1
+    # swap after drawing everything: the glyph set draws through the same
+    # CharStrings, so replacing one mid-pass could feed a shifted glyph
+    # to a later one that references it (widen_fullwidth defers too)
+    for name, cs in drawn.items():
+        td.CharStrings[name] = cs
     return moved
 
 
@@ -1448,7 +1465,7 @@ def set_names(font, suffix, weight, italic, italic_angle=-12.0, version=None,
     # carries its default master's — so every face inherited a PANOSE
     # that disagreed with its own usWeightClass (Regular 4 against 400).
     # A GDI-era matcher substitutes on it
-    os2.panose.bWeight = WEIGHT_CLASS[weight] // 100 + 1
+    os2.panose.bWeight = panose_weight(WEIGHT_CLASS[weight])
     if "DSIG" in font:
         del font["DSIG"]
     # a variable font (build_latin_vf.py) carries CFF2, not CFF; CFF2's
@@ -2078,6 +2095,14 @@ def classify_unicode_marks(font):
             defs[g] = 3
             fixed.append(g)
     return fixed
+
+
+def panose_weight(us_weight_class):
+    """PANOSE's weight digit for an OS/2 usWeightClass, the mapping
+    Source Han Sans itself uses (400 -> 5 Book, 700 -> 8 Bold). The
+    verifiers import this rather than repeat it, so a change is one
+    edit and the checks stay checks."""
+    return us_weight_class // 100 + 1
 
 
 def set_monospace_metadata(font):
