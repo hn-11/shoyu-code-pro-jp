@@ -1285,20 +1285,14 @@ def reference_steps(path, cell, ink_path=None):
                 # to the same full width anyway, and 17,000 Japanese
                 # glyphs in the map would ride to every pool worker
                 continue
-            if adv % cell == 0:
-                # a whole number of cells is a step we would have picked,
-                # so it takes the same ink guard (no glyph needs it today)
-                source = heavy_gs if name in heavy_gs else gs
-                pen = BoundsPen(source)
-                source[name].draw(pen)
-                ink = (pen.bounds[2] - pen.bounds[0]) if pen.bounds else 0
-                steps[name] = adv if ink <= adv + cell // 3 else grid_step(adv, ink, cell)
-                continue
             source = heavy_gs if name in heavy_gs else gs
             pen = BoundsPen(source)
             source[name].draw(pen)
-            steps[name] = grid_step(adv, (pen.bounds[2] - pen.bounds[0]) if pen.bounds else 0,
-                                    cell)
+            ink = (pen.bounds[2] - pen.bounds[0]) if pen.bounds else 0
+            # a whole number of cells is a step we would have picked, so
+            # it stands unless the ink says otherwise (none does today)
+            steps[name] = (adv if adv % cell == 0 and ink <= adv + cell // 3
+                           else grid_step(adv, ink, cell))
         _REFERENCE_STEPS[key] = steps
         ref.close()
         if heavy is not None:
@@ -2106,8 +2100,12 @@ def narrow_halfwidth(font, cell):
             # bearings in proportion, which is what a half-width form is;
             # over the ink instead where even that would not fit
             sx = cell / max(adv, ink)
+            # centred in the cell, not scaled about the origin: a source
+            # glyph whose ink starts left of zero would otherwise bleed
+            # into the cell before it
+            dx = (cell - (box[2] - box[0]) * sx) / 2 - box[0] * sx if box else 0
             pen = T2CharStringPen(pen_width(private, cell), gs)
-            gs[name].draw(TransformPen(pen, (sx, 0, 0, 1, 0, 0)))
+            gs[name].draw(TransformPen(pen, (sx, 0, 0, 1, dx, 0)))
             made[name] = alloc_glyph_name(font)
             append_glyph(font, td, made[name], pen.getCharString(private=private),
                          fd, cell, None, vdon)
@@ -2141,6 +2139,35 @@ def fullwidth_forms(font, replaced):
                 out[cp] = g
                 break
     return out
+
+
+def repoint_features(font, replaced, tags=("vert", "vrt2")):
+    """Source Han Sans's own features substitute FROM the glyphs the
+    graft replaced, so once the cmap points at Sumi Moji's they never
+    fire. Re-point each of `tags` at the grafted glyph, the way
+    add_width_alternates does for fwid, so a vertical run still gets the
+    rotated forms of what Sumi Moji took over.
+
+    Only the vertical features: 'locl' is on by default, and re-pointing
+    it would swap Sumi Moji's own design for Source Han Sans's in
+    ordinary horizontal text (its JP locale form of '…' is full width).
+    Returns the number re-pointed."""
+    if "GSUB" not in font:
+        return 0
+    cmap = font.getBestCmap()
+    gsub = font["GSUB"].table
+    added = 0
+    for tag in tags:
+        fmap = feature_map(font, tag)
+        pairs = {cmap[cp]: fmap[old] for cp, old in replaced.items()
+                 if old in fmap and cp in cmap and cmap[cp] != old}
+        if not pairs:
+            continue
+        _add_feature(gsub, tag, [_new_lookup(gsub, otl.buildSingleSubstSubtable(pairs))])
+        added += len(pairs)
+    if added:
+        sort_feature_list(gsub)
+    return added
 
 
 def add_width_alternates(font, fwid):
@@ -2709,6 +2736,7 @@ def build_face(job):
     # (A é: Source Han Sans's own fwid maps those to Ａ é). Greek has
     # neither in Source Han Sans JP and stays one cell under fwid too
     n_half = narrow_halfwidth(base, CELL)
+    n_vert = repoint_features(base, replaced)
     fullwidth = fullwidth_forms(base, replaced)
     arrows = stretch_arrows(base, added, fullwidth,
                             ref_angle if ref_angle is not None else 0.0)
@@ -2746,7 +2774,8 @@ def build_face(job):
     out = Path(out_dir) / f"{ps}.otf"
     write_face(base, out, getattr(base, "_redrawn", set()))
     return (f"{face_label}{f' [{suffix}]' if suffix else ''}: "
-            f"latin={n_scp} fwid={len(fullwidth)} fitted={n_fit} half={n_half} "
+            f"latin={n_scp} fwid={len(fullwidth)} vert={n_vert} "
+            f"fitted={n_fit} half={n_half} "
             f"ligs={len(added)} -> {out.name}")
 
 

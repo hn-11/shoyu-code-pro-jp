@@ -109,8 +109,8 @@ def main():
     fam = family_name(tf)
     italic = is_italic(tf)
     exp_half, exp_full = expected_metrics(tf)
-    print(f"family={fam!r} italic={italic} half={a_adv} full={cjk_adv} "
-          f"ratio={cjk_adv/a_adv:.3f}")
+    ratio = f"{cjk_adv / a_adv:.3f}" if a_adv else "?"
+    print(f"family={fam!r} italic={italic} half={a_adv} full={cjk_adv} ratio={ratio}")
     check((a_adv, cjk_adv) == (exp_half, exp_full),
           f"(half, full) == ({exp_half}, {exp_full}) for family {fam!r}, "
           f"got ({a_adv}, {cjk_adv})")
@@ -334,7 +334,18 @@ def main():
         if "GPOS" in tf else set()
     for tag in ("kern", "halt", "palt"):
         check(tag not in gpos, f"GPOS has no {tag} ({sorted(gpos)})")
-    check("vert" in tags, "GSUB keeps vert (vertical text still shapes)")
+    # vert must still reach the characters that need it: Source Han
+    # Sans's own lookups substitute FROM the glyphs the graft replaced
+    # (build.repoint_features), so a missing re-point looks exactly like
+    # a working feature from the outside
+    vert_off = []
+    for ch in "「、ー…":       # Source Han Sans rotates these; not — or “
+        infos, _p = shape_infos(ch, {})
+        rot, _p = shape_infos(ch, {"vert": True})
+        if not infos or not rot or infos[0].codepoint == rot[0].codepoint:
+            vert_off.append(ch)
+    check("vert" in tags and not vert_off,
+          f"vert reaches the characters that rotate (off: {vert_off})")
     for text, want in (("あて", exp_full), ("いて", exp_full)):
         _infos, positions = shape_infos(text, {})
         check(positions[0].x_advance == want,

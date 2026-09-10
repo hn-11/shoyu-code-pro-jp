@@ -48,6 +48,11 @@
     Regular の和文は以前の Source Han Sans Regular から Normal に、Bold は
     同じ面のまま。可変フォントの wght 軸は SCP の wght と一致する恒等写像
     になり、軸の範囲は 200〜700
+  - **縦組みの字形を接ぎ木に追随させる**（`repoint_features`）。Source Han
+    Sans の `vert` / `vrt2` は差し替えた側のグリフから引くので、cmap を
+    Sumi Moji のものに向けた 12 字（`「` `、` `…` など、欧文レイヤーが
+    取った文字）は縦組みで回転しなくなっていた。`verify.py` は機能の
+    有無ではなく実際に字形が変わるかを検査する
   - **Unicode の半角ブロックは 1 セル**（`narrow_halfwidth`）。Source Han
     Sans は半角ハングル字母（U+FFA1〜FFDC）を全角の互換字母と同じグリフに
     割り当てているので、グリッドに乗せると 51 字が 2 桁になっていた

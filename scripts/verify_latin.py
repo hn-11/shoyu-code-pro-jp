@@ -68,8 +68,10 @@ def main():
     td = cff[cff.fontNames[0]]
     # CID-keyed as built, the Nerd Fonts variants included (the graft
     # leaves the keying alone, where font-patcher used to flatten it)
-    check(len(td.FDArray) == 1,
-          f"one FontDict ({[getattr(fd, 'FontName', '?') for fd in td.FDArray]})")
+    fds = getattr(td, "FDArray", None)
+    check(fds is not None and len(fds) == 1,
+          f"CID-keyed with one FontDict "
+          f"({[getattr(fd, 'FontName', '?') for fd in fds] if fds else 'plain CFF'})")
 
     for ch in "HAx=":
         check(glyph_has_hint(td.CharStrings[cmap[ord(ch)]]), f"{ch!r} carries hints")
