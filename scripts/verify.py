@@ -305,6 +305,16 @@ def main():
     # default in every horizontal shaper and Source Han Sans kerns あ+て
     # 20u tighter than the cell; 'halt' and 'palt' are alternate
     # horizontal metrics (drop_features). The vertical features stay
+    # a CID-keyed font's CIDCount must cover every CID it uses: cffsubr
+    # takes it from the last charset entry, and Source Han Sans's space
+    # is sparse (build.restore_cid_count)
+    cff = tf["CFF "].cff
+    td = cff[cff.fontNames[0]]
+    if hasattr(td, "CIDCount"):
+        top = max(int(n[3:]) for n in td.charset if n.startswith("cid"))
+        check(td.CIDCount > top,
+              f"CFF CIDCount {td.CIDCount} covers every CID (highest {top})")
+
     gpos = {fr.FeatureTag for fr in tf["GPOS"].table.FeatureList.FeatureRecord} \
         if "GPOS" in tf else set()
     for tag in ("kern", "halt", "palt"):

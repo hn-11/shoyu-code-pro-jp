@@ -48,6 +48,12 @@
     Regular の和文は以前の Source Han Sans Regular から Normal に、Bold は
     同じ面のまま。可変フォントの wght 軸は SCP の wght と一致する恒等写像
     になり、軸の範囲は 200〜700
+  - **CID-keyed の `CIDCount` を修復する**: `cffsubr` は charset の最後の
+    エントリから `CIDCount` を決めるが、Source Han Sans の CID 空間は疎で
+    追加グリフは若い CID を取るため、25,267 と宣言されて 9,749 グリフが
+    その外に出ていた（PDF 埋め込みなど CIDCount から CID→GID 表を確保する
+    実装では .notdef になる）。`restore_cid_count` が最大 CID + 1 に戻し、
+    `verify.py` が検査する
   - **グリッドはフォント全体で守る**: `fit_to_grid` は cmap だけでなく
     全グリフを歩く。`locl` や `ccmp` は既定 ON で、どの符号位置からも
     引けないグリフを画面に出す（Source Han Sans の `⋯` の locl 形は

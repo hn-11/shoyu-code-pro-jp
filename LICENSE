@@ -25,9 +25,10 @@ The 'Nerd Font Mono' variants carry, in addition, the icon glyphs of
     Copyright (c) 2014, Ryan L McIntyre and the Nerd Fonts contributors
     https://github.com/ryanoasis/nerd-fonts
 
-which Nerd Fonts assembles from the icon sets it collects, each under
-its own license. Those licenses ship beside the fonts as
-LICENSE-NerdFonts and are not superseded by this file.
+which Nerd Fonts assembles from the icon sets it collects. Nerd Fonts'
+own license ships beside those fonts as LICENSE-NerdFonts and is not
+superseded by this file; each collected icon set keeps its own license,
+listed in the nerd-fonts repository.
 
 In accordance with the Reserved Font Name requirements of the license,
 this derivative is distributed under the names 'Sumi Moji JP' (with the

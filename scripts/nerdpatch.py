@@ -92,9 +92,17 @@ def nf_name(s):
 
 def icon_context(font, symbols):
     """Everything a symbol's transform is derived from: the symbols' em
-    and line box, this face's cell and line box."""
+    and line box, this face's cell and line box. The cell is measured on
+    the face ('A' is one cell in every family here, and is the glyph
+    build.append_context keys off too), not assumed, so a family built
+    on another cell grafts icons that fit it."""
     return (symbols["head"].unitsPerEm, symbols["hhea"].ascent, symbols["hhea"].descent,
-            build.CELL, font["hhea"].ascent, font["hhea"].descent)
+            face_cell(font), font["hhea"].ascent, font["hhea"].descent)
+
+
+def face_cell(font):
+    """This face's half-width cell: what 'A' advances."""
+    return font["hmtx"][font.getBestCmap()[ord("A")]][0]
 
 
 def icon_transform(cp, ink, ctx):
@@ -131,6 +139,7 @@ def graft_symbols(font, symbols):
     the face's own glyphs — the only ones that had hints to lose)."""
     scm, sgs = symbols.getBestCmap(), symbols.getGlyphSet()
     ctx = icon_context(font, symbols)
+    cell = ctx[3]
     td, cmap, fd_index, private, vdon = build.append_context(font)
     # the supplementary-plane icons need a format 12 subtable. Every face
     # here inherits one from Source Code Pro's variable font; this is for
@@ -157,18 +166,18 @@ def graft_symbols(font, symbols):
             # separator in a prompt tiles the same cell and the same line
             name = cmap[cp]
             own = build.glyph_private(font, td, name)
-            pen = T2CharStringPen(build.pen_width(own, build.CELL), sgs)
+            pen = T2CharStringPen(build.pen_width(own, cell), sgs)
             sgs[scm[cp]].draw(TransformPen(pen, xform))
             cs = pen.getCharString(private=own)
             td.CharStrings[name] = cs
-            font["hmtx"].metrics[name] = (build.CELL, build.charstring_lsb(cs))
+            font["hmtx"].metrics[name] = (cell, build.charstring_lsb(cs))
             replaced.append(name)
             continue
-        pen = T2CharStringPen(build.pen_width(private, build.CELL), sgs)
+        pen = T2CharStringPen(build.pen_width(private, cell), sgs)
         sgs[scm[cp]].draw(TransformPen(pen, xform))
         name = build.alloc_glyph_name(font)
         build.append_glyph(font, td, name, pen.getCharString(private=private),
-                           fd_index, build.CELL, None, vdon)
+                           fd_index, cell, None, vdon)
         new[cp] = name
     build.set_cmap(font, new, add_new=True)
     return len(new) + len(replaced), replaced
@@ -178,9 +187,10 @@ def graft_symbols(font, symbols):
 # set_names' rule is that every donor's notice ships inside the font, not
 # only in the LICENSE beside it
 NF_NOTICE = ("Nerd Fonts: the icon glyphs are Nerd Fonts' Symbols Nerd Font Mono "
-             "(https://github.com/ryanoasis/nerd-fonts), assembled by Nerd Fonts "
-             "from the icon sets it collects, each under its own license; see "
-             "LICENSE-NerdFonts.")
+             "(https://github.com/ryanoasis/nerd-fonts), which Nerd Fonts assembles "
+             "from the icon sets it collects. Nerd Fonts' own license ships beside "
+             "this font as LICENSE-NerdFonts; each icon set keeps its own, listed "
+             "in the nerd-fonts repository.")
 NF_DESIGNER = "Nerd Fonts: Ryan L McIntyre and the Nerd Fonts contributors"
 
 
@@ -231,7 +241,7 @@ def icon_checks(font, symbols=None):
     """
     cmap, gs = font.getBestCmap(), font.getGlyphSet()
     asc, desc = font["hhea"].ascent, font["hhea"].descent
-    cell = build.CELL
+    cell = face_cell(font)
     sgs = symbols.getGlyphSet() if symbols is not None else None
     scm = symbols.getBestCmap() if symbols is not None else {}
     # every Powerline glyph the symbols font has must have reached the

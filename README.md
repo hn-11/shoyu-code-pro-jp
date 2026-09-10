@@ -179,8 +179,9 @@ font-patcher の `xy-ratio`（0.7 など）で頭打ちになった幅（2048 �
 しか持たない。こちらのセルは 600 × 1257 と縦長で頭打ちに掛からないため、
 インクはセルいっぱいに広がる。Source Code Pro 自身が持つ Powerline
 （U+E0A0〜E0A2、E0B0〜E0B3）は記号フォントのもので置き換える。
-アイコンはヒント無し（font-patcher の出力も同じ）。記号のライセンス（Nerd Fonts の MIT と各出典）は NF の zip に
-`LICENSE-NerdFonts` として同梱する。
+アイコンはヒント無し（font-patcher の出力も同じ）。Nerd Fonts 自身のライセンス（MIT）は NF の zip に `LICENSE-NerdFonts`
+として同梱する。各アイコンセットのライセンスは Nerd Fonts のリポジトリに
+あり、zip には入らない。
 
 ## Sumi Moji（欧文のみ）
 

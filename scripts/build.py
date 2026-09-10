@@ -77,7 +77,6 @@ import tempfile
 import traceback
 import unicodedata
 from pathlib import Path
-from typing import NamedTuple
 
 import pathops
 from fontTools.misc.roundTools import noRound, otRound
@@ -134,13 +133,10 @@ def latin_face_path(latin_dir, weight, italic):
     return Path(latin_dir) / f"{ps_family}-{weight}{'Italic' if italic else ''}.otf"
 
 
-class Variant(NamedTuple):
-    term: bool   # widen full-width advances to 2 cells (widen_fullwidth)
-
-
+# {family suffix: widen the full-width advances to two cells}
 VARIANTS = {
-    "": Variant(False),      # 3:5 — Sumi Moji plus Japanese at 1000
-    "Term": Variant(True),   # 1:2 terminal grid (600:1200)
+    "": False,      # 3:5 — Sumi Moji plus Japanese at 1000
+    "Term": True,   # 1:2 terminal grid (600:1200), widen_fullwidth
 }
 
 # (output weight name, Source Han Sans static file): the Source Han Sans
@@ -1087,8 +1083,8 @@ def stretch_arrows(font, added, fullwidth, slant=0.0, chars=ARROWS_H + ARROWS_V)
     SHS's ink length. ⇐ mirrors '=>', ↑ ↓ rotate '->' and take SHS's
     height. Italic: the slant is taken out before mirroring / rotating /
     resizing and put back after, so a slanted vertical shaft stays
-    straight. `fullwidth` is {codepoint: SHS's full-width glyph}
-    (graft_halfwidth's `replaced`); the cmap is not touched. Returns
+    straight. `fullwidth` is {codepoint: the two-cell glyph}
+    (fullwidth_forms()'s); the cmap is not touched. Returns
     {codepoint: new glyph name}."""
     td, _cmap, fd_index, private, vdon = append_context(font, fullwidth=True)
     gs = font.getGlyphSet()
@@ -2310,7 +2306,27 @@ def subroutinize_face(path):
     font = TTFont(path)
     font.recalcBBoxes = False   # extents were set by update_bbox; outlines unchanged
     cffsubr.subroutinize(font)
+    restore_cid_count(font)
     font.save(path)
+
+
+def restore_cid_count(font):
+    """A CID-keyed TopDict's CIDCount must cover every CID in the font.
+    cffsubr sets it from the LAST charset entry, and Source Han Sans's
+    CID space is sparse — the glyphs this build appends sit at the end
+    of the order with CIDs from CID_ALLOC_START, well below the 65,497
+    the Japanese glyphs reach — so it came out at 25,267 with 9,749
+    glyphs above it. A consumer that sizes its CID-to-GID table from
+    CIDCount (Adobe's interpreter; a face embedded in a PDF as
+    CIDFontType0) resolves every one of those to .notdef. Returns the
+    count, or None for a plain CFF."""
+    cff = font["CFF "].cff
+    td = cff[cff.fontNames[0]]
+    if not hasattr(td, "ROS"):      # ROS is what makes a CFF CID-keyed;
+        return None                 # CIDCount has a spec default either way
+    top = max((int(n[3:]) for n in td.charset if n.startswith("cid")), default=-1)
+    td.CIDCount = max(td.CIDCount, top + 1)
+    return td.CIDCount
 
 
 def autohint_face(path, glyph_names):
@@ -2588,13 +2604,13 @@ def main():
     steps = reference_steps(Path(env["SHS_DIR"]) / REFERENCE_SHS, CELL,
                             Path(env["SHS_DIR"]) / INK_SHS)
     jobs = []
-    for suffix, var in VARIANTS.items():
+    for suffix, term in VARIANTS.items():
         for weight, shs_file in FACES:
             for italic in (False, True):
                 face_label = f"{weight}{' Italic' if italic else ''}"
                 if not face_matches(only, weight, face_label, suffix):
                     continue
-                jobs.append((suffix, var.term, weight, shs_file, italic,
+                jobs.append((suffix, term, weight, shs_file, italic,
                              env, str(out_dir), steps))
     if not jobs:
         sys.exit(f"no face matches {only!r}")

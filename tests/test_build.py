@@ -834,6 +834,27 @@ def test_widen_fullwidth_spares_the_ligatures_it_is_given():
         assert pen.bounds[0] == want_lsb == hmtx[g][1]
 
 
+def test_restore_cid_count_covers_the_highest_cid(tmp_path):
+    """cffsubr sets CIDCount from the last charset entry; Source Han
+    Sans's CID space is sparse, so the glyphs this build appends sit at
+    the end of the order with lower CIDs than the Japanese ones."""
+    font = _cff_font_with_widths({"a": 600})
+    cff = font["CFF "].cff
+    td = cff[cff.fontNames[0]]
+    td.ROS = ("Adobe", "Japan1", 6)           # what makes a CFF CID-keyed
+    td.charset = [".notdef", "cid65497", "cid23058"]
+    td.CIDCount = 23059                       # what cffsubr would leave
+    assert build.restore_cid_count(font) == 65498
+    td.CIDCount = 70000                       # never narrowed
+    assert build.restore_cid_count(font) == 70000
+
+
+def test_restore_cid_count_leaves_a_plain_cff_alone():
+    """A plain CFF has a CIDCount attribute too (the spec default), so
+    the CID-keyed test is ROS."""
+    assert build.restore_cid_count(_cff_font_with_widths({"a": 600})) is None
+
+
 def test_widen_fullwidth_redraws_a_charstring_shift_declines(monkeypatch):
     """shift_charstring declines a program it does not understand and the
     glyph is redrawn instead — on a plain CFF as well as a CID-keyed one."""
