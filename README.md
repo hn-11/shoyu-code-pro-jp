@@ -37,6 +37,12 @@ Pro の名前付きインスタンスで、和文は `=` のバー厚が合う S
 Source Han Sans の Light（49u）と Heavy（120u）、Source Code Pro の
 ExtraLight（28u）と Black（120u）は相手がいないので作らない。
 
+行の高さは `hhea` = `typo`（984 / −273、1.257 em）で、`USE_TYPO_METRICS`
+を立ててある。`usWinAscent` / `usWinDescent` は Source Han Sans の
+1160 / 288 のまま: これはクリッピング境界でもあり、Source Han Sans の
+インクは 984 を超えるので typo に合わせると GDI 系で欠ける。代わりに
+GDI 系（旧 conhost、メモ帳、Office の GDI 経路）だけは行が 1448u になる。
+
 ## 幅の方針
 
 **Sumi Moji が持つ文字はすべて 1 セル**。Latin、ギリシャ、キリル、

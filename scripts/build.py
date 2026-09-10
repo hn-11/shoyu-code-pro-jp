@@ -869,8 +869,16 @@ def copy_line_metrics(base, latin):
     -273 / 0, hhea and typo alike, USE_TYPO_METRICS set), so a line of
     Sumi Moji JP is as tall as a line of Source Code Pro, not of Source
     Han Sans (1160 / -288, 15% more). Source Han Sans's own kanji body
-    (880 / -120) sits inside. usWinAscent / Descent stay Source Han
-    Sans's (1160 / 288): a GDI-era clipping bound, not a line height."""
+    (880 / -120) sits inside.
+
+    usWinAscent / Descent stay Source Han Sans's (1160 / 288). They are
+    a clipping bound as much as a line height, and Source Han Sans's own
+    ink goes well past 984 — so bringing them down to the typo metrics
+    would clip glyphs in the GDI paths that read them. The cost is that
+    those same paths (legacy conhost, Notepad, Office's GDI text) still
+    lay out a 1448u line where DirectWrite, CoreText and HarfBuzz lay
+    out 1257u; USE_TYPO_METRICS tells everything that reads it which to
+    prefer."""
     for tbl, attrs in (
         ("hhea", ("ascent", "descent", "lineGap")),
         ("OS/2", ("sTypoAscender", "sTypoDescender", "sTypoLineGap")),
@@ -1151,6 +1159,11 @@ def reference_steps(path, cell):
     process."""
     key = (str(path), cell)
     if key not in _REFERENCE_STEPS:
+        if not Path(path).exists():
+            raise FileNotFoundError(
+                f"{path}: the weight every face takes its width decisions from "
+                f"(REFERENCE_SHS). Even a one-face build needs it in SHS_DIR, so "
+                f"that face's widths match the rest of the family")
         ref = TTFont(path)
         gs, hmtx = ref.getGlyphSet(), ref["hmtx"]
         steps = {}
@@ -1799,8 +1812,9 @@ def drop_features(font, tags):
     Used for the features that move a glyph off the fixed cell:
     'pwid'/'palt' (proportional width has no meaning here), 'kern' and
     'halt' (Source Han Sans kerns あ+て 20u tighter than the cell, and
-    'kern' is on by default in every horizontal shaper), and Source Han
-    Sans's vertical GPOS, which a face with no vmtx cannot use."""
+    'kern' is on by default in every horizontal shaper). The vertical
+    features stay: the faces keep vmtx/vhea, and 'vert' is the one
+    HarfBuzz turns on for a vertical run."""
     for tbl_tag in ("GSUB", "GPOS"):
         if tbl_tag not in font:
             continue
@@ -2449,10 +2463,10 @@ def build_face(job):
     n_fit = fit_to_grid(base, CELL, steps=steps)
     n_fit += fit_to_grid(base, CELL, glyph_names=hwid_targets(base))
     # kern would pull Japanese pairs off the cell in any shaper that
-    # lays out a run (VS Code, a browser); halt / the vertical GPOS
-    # likewise move or misplace what a terminal grid must not move
-    drop_features(base, {"pwid", "palt", "kern", "halt",
-                         "vert", "vhal", "vkrn", "vpal"})
+    # lays out a run (VS Code, a browser); halt and palt are alternate
+    # horizontal metrics, which a fixed cell has no use for. The
+    # vertical features are left alone (the faces keep vmtx/vhea)
+    drop_features(base, {"pwid", "palt", "kern", "halt"})
     # the two-cell forms under fwid: the arrows redrawn from the
     # ligatures so they share their head, everything else Source Han
     # Sans's own — the full-width glyph the one-cell default replaced
@@ -2463,8 +2477,17 @@ def build_face(job):
     arrows = stretch_arrows(base, added, fullwidth,
                             ref_angle if ref_angle is not None else 0.0)
     cmap_now = base.getBestCmap()
-    add_width_alternates(base, {cmap_now[cp]: arrows.get(cp, old)
-                                for cp, old in fullwidth.items()})
+    fwid_map = {}
+    for cp, old in fullwidth.items():
+        # several codepoints can share one grafted glyph (graft_halfwidth
+        # makes one per donor glyph), and then only one full-width form
+        # can be reached from it — fine while they agree, a silent loss
+        # if a future donor aliases two characters with different forms
+        src, want = cmap_now[cp], arrows.get(cp, old)
+        if fwid_map.setdefault(src, want) != want:
+            print(f"  warn: fwid for U+{cp:04X} lost, {src} already maps to "
+                  f"{fwid_map[src]} (wanted {want})")
+    add_width_alternates(base, fwid_map)
     if term:
         # the ligatures are the Latin layer's only multi-cell glyphs, so
         # the only ones an advance test cannot tell from a full width

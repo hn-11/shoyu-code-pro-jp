@@ -37,6 +37,13 @@ FAMILY_METRICS = {
 DEFAULT_METRICS = (600, 1000)
 # the line metrics of an English terminal font: Source Code Pro's, hhea
 # and typo alike (build.copy_line_metrics)
+# Unicode calls these Wide, both donors draw them one cell wide, and
+# neither has anything wider to offer under fwid (README, 幅の方針): six
+# emoji Source Code Pro carries, the two Hangul tone marks and the five
+# Bopomofo final letters Source Han Sans draws at 600
+WIDE_AT_ONE_CELL = {0x2615, 0x302E, 0x302F, 0x31B4, 0x31B5, 0x31B6, 0x31B7,
+                    0x31BB, 0x1F3B5, 0x1F3B6, 0x1F4A9, 0x1F512, 0x1F916}
+
 LINE_METRICS = (984, -273, 0)
 
 # a few ligature sequences (rendered text -> glyph to probe) and CJK
@@ -116,6 +123,34 @@ def main():
         got = hmtx[cmap[ord(ch)]][0]
         assert got == want, f"{FONT}: U+{ord(ch):04X} {ch!r} advance {got}, want {want}"
     print(f"ok   width policy ({len(policy)} probes)")
+
+    # the exception to the policy: characters both donors draw one cell
+    # wide although Unicode calls them Wide, so a terminal reserves two
+    # columns and the glyph sits in the left one. There is no wider form
+    # in either donor to offer under fwid, so the set is pinned here — an
+    # upstream release that adds one has to be looked at, not absorbed
+    import unicodedata
+    wide_one_cell = {cp for cp, g in cmap.items()
+                     if hmtx[g][0] == exp_half and cp >= 0x2000
+                     and not 0xE000 <= cp <= 0xF8FF
+                     and unicodedata.east_asian_width(chr(cp)) in ("W", "F")}
+    grafted = set()
+    if "Nerd Font" in fam:
+        # every Nerd Fonts icon is one cell — that is what Mono means —
+        # and a few of them (⚡ U+26A1) live outside the private use area
+        import nerdpatch
+        symbols = nerdpatch.symbols_for_checks()
+        if symbols is None:
+            print("skip  East-Asian-Wide exception (NF face, no NF_SYMBOLS)")
+            wide_one_cell = WIDE_AT_ONE_CELL
+        else:
+            grafted = set(symbols.getBestCmap())
+    assert wide_one_cell - grafted == WIDE_AT_ONE_CELL, (
+        f"{FONT}: East-Asian-Wide characters at one cell changed: "
+        f"added {sorted(hex(c) for c in wide_one_cell - grafted - WIDE_AT_ONE_CELL)}, "
+        f"gone {sorted(hex(c) for c in WIDE_AT_ONE_CELL - wide_one_cell)}")
+    print(f"ok   {len(WIDE_AT_ONE_CELL)} East-Asian-Wide characters at one cell "
+          f"(the documented exception)")
 
     # line metrics: Source Code Pro's, hhea and typo alike, USE_TYPO_METRICS
     hhea, os2 = tf["hhea"], tf["OS/2"]
@@ -227,14 +262,15 @@ def main():
     # the upright faces) must stay a 0-advance mark, not become a spacing
     # glyph that takes a cell when selected
     tags = {fr.FeatureTag for fr in tf["GSUB"].table.FeatureList.FeatureRecord}
-    # nothing may move a glyph off the cell: 'kern' is on by default in
-    # every horizontal shaper and Source Han Sans kerns あ+て 20u tighter
-    # than the cell; 'halt' and the vertical features move or misplace
-    # what a terminal grid must not move (drop_features)
+    # nothing may move a glyph off the horizontal cell: 'kern' is on by
+    # default in every horizontal shaper and Source Han Sans kerns あ+て
+    # 20u tighter than the cell; 'halt' and 'palt' are alternate
+    # horizontal metrics (drop_features). The vertical features stay
     gpos = {fr.FeatureTag for fr in tf["GPOS"].table.FeatureList.FeatureRecord} \
         if "GPOS" in tf else set()
-    for tag in ("kern", "halt", "vert", "vhal", "vkrn", "vpal"):
+    for tag in ("kern", "halt", "palt"):
         check(tag not in gpos, f"GPOS has no {tag} ({sorted(gpos)})")
+    check("vert" in tags, "GSUB keeps vert (vertical text still shapes)")
     for text, want in (("あて", exp_full), ("いて", exp_full)):
         _infos, positions = shape_infos(text, {})
         check(positions[0].x_advance == want,

@@ -281,13 +281,17 @@ def main():
         # over every face of the family in the output directory (see
         # harmonize_win_metrics). A face a failed worker left half
         # written would raise here and replace run_faces' own report of
-        # which faces failed, so this pass never raises
+        # which faces failed, so it is swallowed only while that report
+        # is already on its way out
+        in_flight = sys.exc_info()[1]                  # run_faces' own report?
         try:
             paths = static_faces(out_dir, PS_FAMILY)
             if paths:
                 a, d = harmonize_win_metrics(paths)
                 print(f"win metrics {a}/{d} over {len(paths)} faces")
         except Exception as exc:                       # noqa: BLE001
+            if in_flight is None:
+                raise                                  # this pass IS the failure
             print(f"win metrics skipped: {exc!r}")
 
 

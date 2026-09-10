@@ -49,9 +49,10 @@
     同じ面のまま。可変フォントの wght 軸は SCP の wght と一致する恒等写像
     になり、軸の範囲は 200〜700
   - **グリッドを崩す GPOS を落とす**: Source Han Sans の `kern` は横組みの
-    シェーパで既定 ON で、`あ`+`て` をセルより 20u 詰める。`halt` と縦組み
-    の GPOS（`vert` `vhal` `vkrn` `vpal`。vmtx を持たない面では死に機能）
-    ともども削除し、`verify.py` が GPOS と実シェーピングの両方で検査する
+    シェーパで既定 ON で、`あ`+`て` をセルより 20u 詰める。`halt` `palt`
+    （横組みの代替メトリクス）ともども削除し、`verify.py` が GPOS と実
+    シェーピングの両方で検査する。縦組みの機能（`vert` `vrt2` `vhal`
+    `vkrn` `vpal`）は残す（vmtx / vhea を持つので縦組みは従来どおり）
   - **PANOSE の weight を自分の usWeightClass から決める**: 各面は名前が
     同じ Source Han Sans ではなくバーの太さが合う面を使うので、5 面中 4 面
     が 1 段軽い PANOSE を継いでいた（Regular が usWeightClass 400 に対し
