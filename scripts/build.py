@@ -631,9 +631,12 @@ def append_glyph(font, td, name, cs, fd_index, width, lsb=None, vdonor=None):
         td.charset.append(name)
     if fd_index is not None:     # CID-keyed; a plain CFF has no FDSelect
         td.FDSelect.gidArray.append(fd_index)
-    i = len(td.CharStrings.charStringsIndex.items)
-    td.CharStrings.charStringsIndex.append(cs)
-    td.CharStrings.charStrings[name] = i
+    if hasattr(td.CharStrings, "charStringsIndex"):
+        i = len(td.CharStrings.charStringsIndex.items)
+        td.CharStrings.charStringsIndex.append(cs)
+        td.CharStrings.charStrings[name] = i
+    else:                        # a plain, non-indexed CFF (the fixtures)
+        td.CharStrings[name] = cs
     font["hmtx"].metrics[name] = (
         width, charstring_lsb(cs) if lsb is None else lsb)
     if "vmtx" in font and vdonor is not None:
@@ -1250,9 +1253,11 @@ def reference_steps(path, cell, ink_path=None):
     the same letter one column in Light Italic and two in Bold Italic.
     Keyed by name because every Source Han Sans weight shares its CID
     names, and because a glyph reachable only through a feature has no
-    codepoint. Every glyph gets an entry, the ones already on a step
-    included: a glyph can be on the grid in the reference and off it in
-    a heavier weight, and both have to end up the same. The reference is
+    codepoint. A glyph on a whole number of cells gets an entry too — it
+    can be on the grid in the reference and off it in a heavier weight,
+    and both have to end up the same — but one on a full width does not:
+    the nearest step from just off a full width is that full width. The
+    reference is
     the donor of our Regular (FACES); `ink_path` is the heaviest donor,
     whose ink is the widest the step has to hold (Source Han Sans's ж
     overhangs a 600 cell by 138u at Normal and 223u at Bold). Read once
@@ -1275,9 +1280,10 @@ def reference_steps(path, cell, ink_path=None):
             if adv <= 0:
                 continue
             if adv % FULLWIDTH == 0:
-                # the donor's own full width, and its design: no ink
-                # test, since a full-width glyph may overhang it
-                steps[name] = adv
+                # the donor's own full width, and its design. No entry:
+                # a heavier weight drawn a few units off it rounds back
+                # to the same full width anyway, and 17,000 Japanese
+                # glyphs in the map would ride to every pool worker
                 continue
             if adv % cell == 0:
                 # a whole number of cells is a step we would have picked,

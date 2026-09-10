@@ -104,8 +104,8 @@ def main():
     tf = TTFont(str(FONT))
     cmap = tf.getBestCmap()
     hmtx = tf["hmtx"]
-    a_adv = hmtx[cmap[ord("a")]][0]
-    cjk_adv = hmtx[cmap[0x65E5]][0]
+    a_adv = hmtx[cmap[ord("a")]][0] if ord("a") in cmap else 0
+    cjk_adv = hmtx[cmap[0x65E5]][0] if 0x65E5 in cmap else 0
     fam = family_name(tf)
     italic = is_italic(tf)
     exp_half, exp_full = expected_metrics(tf)
@@ -129,8 +129,12 @@ def main():
     # half-width kana and the half-width symbols (￩ U+FFE9): Source Han
     # Sans's 500 centred in the cell (fit_to_grid)
     policy["\uff71"] = policy["\uffe9"] = exp_half
-    off_policy = {ch: hmtx[cmap[ord(ch)]][0] for ch, want in policy.items()
-                  if hmtx[cmap[ord(ch)]][0] != want}
+    off_policy = {}
+    for ch, want in policy.items():
+        g = cmap.get(ord(ch))
+        got = hmtx[g][0] if g else None           # a donor that dropped it
+        if got != want:
+            off_policy[ch] = got
     check(not off_policy, f"width policy ({len(policy)} probes; off: {off_policy})")
 
     # and the Greek and Cyrillic the italic faces keep from Source Han
@@ -162,9 +166,7 @@ def main():
             print("skip  East-Asian-Wide exception (NF face, NF_SYMBOLS unset)")
             wide_one_cell = None
         else:
-            # the graft skips a codepoint the face already has, so a
-            # pinned one is never the graft's doing and never subtracted
-            grafted = set(symbols.getBestCmap()) - WIDE_AT_ONE_CELL
+            grafted = set(symbols.getBestCmap())
     if wide_one_cell is not None:
         # a grafted icon may add to the set (every Nerd Fonts icon is one
         # cell), never take from it
@@ -469,7 +471,7 @@ def main():
     weight = sub[:-len(" Italic")] if sub.endswith(" Italic") else sub
     if weight == "Italic":   # "Regular Italic" collapses to "Italic"
         weight = "Regular"
-    got = bar_thickness(tf, cmap[ord("=")])
+    got = bar_thickness(tf, cmap[ord("=")]) if ord("=") in cmap else 0
     scp_path = os.environ.get("SCP_VF_I" if italic else "SCP_VF_U")
     if weight not in WEIGHT_CLASS:
         print(f"skip  '=' bar vs Source Code Pro (unknown weight {weight!r})")

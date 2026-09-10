@@ -834,6 +834,34 @@ def test_widen_fullwidth_spares_the_ligatures_it_is_given():
         assert pen.bounds[0] == want_lsb == hmtx[g][1]
 
 
+def test_narrow_halfwidth_condenses_a_shared_glyph_into_the_cell():
+    """A Halfwidth codepoint whose glyph is the wide compatibility one
+    gets its own copy, squeezed into the cell; the wide codepoint keeps
+    the original, and the copy stays out of _appended so add_latin_fd
+    leaves it in the FontDict it came from."""
+    font = _cff_font_with_widths({"jamo": 920, "kana": 600, "wide": 1000})
+    # U+3131 (Wide) and U+FFA1 (Halfwidth) on one glyph, ｱ already a cell
+    font["cmap"].tables[0].cmap = {0x3131: "jamo", 0xFFA1: "jamo",
+                                   0xFF71: "kana", 0x4E00: "wide"}
+    assert build.narrow_halfwidth(font, 600) == 1
+    cmap, hmtx = font.getBestCmap(), font["hmtx"].metrics
+    assert cmap[0x3131] == "jamo" and hmtx["jamo"][0] == 920      # untouched
+    copy = cmap[0xFFA1]
+    assert copy != "jamo" and hmtx[copy][0] == 600
+    assert copy not in font._appended            # keeps its own FontDict
+    pen = BoundsPen(font.getGlyphSet())
+    font.getGlyphSet()[copy].draw(pen)
+    assert pen.bounds[2] - pen.bounds[0] == pytest.approx(100 * 600 / 920, abs=1)
+
+
+def test_narrow_halfwidth_leaves_a_blank_glyph_alone():
+    """A Halfwidth codepoint drawn as a 0-advance combining mark has no
+    advance to scale by."""
+    font = _cff_font_with_widths({"mark": 0})
+    font["cmap"].tables[0].cmap = {0xFF9E: "mark"}
+    assert build.narrow_halfwidth(font, 600) == 0
+
+
 def test_remap_required_moves_a_required_feature_and_keeps_its_none():
     """ReqFeatureIndex points into the same FeatureList the remap
     renumbers; 0xFFFF is 'none' and must stay put."""

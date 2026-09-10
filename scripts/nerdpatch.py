@@ -91,13 +91,22 @@ def nf_name(s):
 
 
 def icon_context(font, symbols):
-    """Everything a symbol's transform is derived from: the symbols' em
+    """Everything a symbol's transform is derived from: the symbols' cell
     and line box, this face's cell and line box. The cell is measured on
     the face ('A' is one cell in every family here, and is the glyph
     build.append_context keys off too), not assumed, so a family built
     on another cell grafts icons that fit it."""
-    return (symbols["head"].unitsPerEm, symbols["hhea"].ascent, symbols["hhea"].descent,
+    return (symbols_cell(symbols), symbols["hhea"].ascent, symbols["hhea"].descent,
             face_cell(font), font["hhea"].ascent, font["hhea"].descent)
+
+
+def symbols_cell(symbols):
+    """The symbols font's own cell: what its icons advance (every glyph
+    in Symbols Nerd Font Mono is one 2048-unit cell, its em). Measured
+    rather than taken from unitsPerEm, for the same reason ours is."""
+    hmtx = symbols["hmtx"].metrics
+    icon = symbols.getBestCmap().get(0xE0B0) or symbols.getGlyphOrder()[-1]
+    return hmtx[icon][0] or symbols["head"].unitsPerEm
 
 
 def face_cell(font):
@@ -109,11 +118,11 @@ def icon_transform(cp, ink, ctx):
     """The affine transform taking one symbol's outline onto our cell,
     by the rule for the group `cp` is in (see the module docstring).
     `ink` is the symbol's bounding box, needed only inside POWERLINE."""
-    upm, s_asc, s_desc, cell, asc, desc = ctx
+    s_cell, s_asc, s_desc, cell, asc, desc = ctx
     # a degenerate box (a blank glyph, a hairline) has no aspect to keep
     # and nothing to stretch: it takes the plain scale like an icon
     if cp not in POWERLINE or ink is None or ink[2] <= ink[0] or ink[3] <= ink[1]:
-        k = cell / upm                                        # 'pa': an icon
+        k = cell / s_cell                                     # 'pa': an icon
         return (k, 0, 0, k, 0, (asc + desc) / 2 - k * (s_asc + s_desc) / 2)
     x0, y0, x1, y1 = ink
     if cp in SEPARATORS:                                      # '^xy'
@@ -121,13 +130,13 @@ def icon_transform(cp, ink, ctx):
         # own cell edge; its offset — a bleed outwards, an inset inwards,
         # font-patcher's overlap — rides along in proportion, while the
         # opposite edge goes to the far edge of our cell
-        left, right = x0, upm - x1
+        left, right = x0, s_cell - x1
         # the aligned edge is the one that bleeds past the symbols' own
         # cell (font-patcher's overlap, which has to survive the fit);
         # with neither bleeding, the one drawn nearest its edge
         align_left = left < 0 if (left < 0) != (right < 0) else abs(left) <= abs(right)
-        tx0, tx1 = ((left / upm * cell, float(cell)) if align_left
-                    else (0.0, cell - right / upm * cell))
+        tx0, tx1 = ((left / s_cell * cell, float(cell)) if align_left
+                    else (0.0, cell - right / s_cell * cell))
         sx = (tx1 - tx0) / (x1 - x0)
         sy = (asc - desc) / (s_asc - s_desc)
         return (sx, 0, 0, sy, tx0 - sx * x0, desc - sy * s_desc)
@@ -164,8 +173,12 @@ def graft_symbols(font, symbols):
     for cp in sorted(scm):
         if cp in cmap and cp not in POWERLINE:
             continue
-        xform = icon_transform(
-            cp, build._bounds(sgs, scm[cp]) if cp in POWERLINE else None, ctx)
+        ink = build._bounds(sgs, scm[cp]) if cp in POWERLINE else None
+        xform = icon_transform(cp, ink, ctx)
+        # a symbols glyph with no ink would blank a separator the face
+        # draws itself: keep the face's
+        if cp in cmap and ink is None and cp in POWERLINE:
+            continue
         if cp in cmap and cmap[cp] not in replaced:
             # Source Code Pro draws its own Powerline glyphs (U+E0A0-E0A2,
             # E0B0-E0B3) taller than its line box (-280..1040/1060 against
