@@ -1489,6 +1489,31 @@ def shift_charstring(cs, dx, width, private):
     return True
 
 
+def extend_edges(path, gap):
+    """Lengthen an outline that reaches both edges of its advance by
+    `gap` units at each side, by extruding the 2-unit cross-section it
+    has THERE. Not at its midpoint, which is where stretch_path cuts and
+    where a box-drawing cross has its vertical stem: scaling that slab
+    would smear the stem into a bar. At the edges a rule, a cross and a
+    tee all present the same thing — the horizontal arm — so all three
+    come out longer and no stroke changes weight."""
+    big = 1e5
+    x0, y0, x1, y1 = path.bounds
+
+    def edge(a, b, anchor, width):
+        slab = pathops.op(path, _rect_path(a, -big, b, big),
+                          pathops.PathOp.INTERSECTION)
+        scale = width / (b - a)
+        return _xform_path(slab, (scale, 0, 0, 1, anchor * (1 - scale), 0))
+
+    out = pathops.op(path, edge(x0, x0 + 2, x0 + 2, gap + 2),
+                     pathops.PathOp.UNION)
+    out = pathops.op(out, edge(x1 - 2, x1, x1 - 2, gap + 2),
+                     pathops.PathOp.UNION)
+    out.simplify()
+    return out
+
+
 def widen_fullwidth(font, cell, skip=()):
     """Term variant: widen every full-width glyph's advance to two cells
     (2 x cell; an n-full-width glyph such as ⸻ to 2n cells) and center
@@ -1502,7 +1527,12 @@ def widen_fullwidth(font, cell, skip=()):
     (stretch_arrows' arrows, fullwidth_forms' Source Han Sans glyphs)
     are full-width and widen with the rest.
 
-    The outlines are moved inside their charstrings (shift_charstring),
+    A glyph whose ink reaches both edges of its own advance is drawn to
+    tile — ＿ ￣ 〰 ◢ and, under fwid, most of the box drawing and block
+    elements. Centring one of those would leave white at every cell
+    join, so it is lengthened at its edges instead (extend_edges).
+
+    The other outlines are moved inside their charstrings (shift_charstring),
     so Source Han Sans's own hints survive on the 17,000 glyphs this
     touches — redrawing them cost autohint 100 seconds per face; a
     glyph shift_charstring declines is redrawn and re-hinted."""
@@ -1512,7 +1542,7 @@ def widen_fullwidth(font, cell, skip=()):
     gs = font.getGlyphSet()
     hmtx = font["hmtx"]
     redrawn, moved_by = {}, {}
-    shifted = 0
+    shifted = tiled = 0
     skip = set(skip)
     for name in font.getGlyphOrder():
         adv, lsb = hmtx.metrics[name]
@@ -1521,6 +1551,24 @@ def widen_fullwidth(font, cell, skip=()):
         full = (adv // FULLWIDTH) * 2 * cell
         shift = (full - adv) // 2
         private = glyph_private(font, td, name)
+        box = _bounds(gs, name)
+        if box is not None and box[0] <= 2 and box[2] >= adv - 2:
+            # a glyph drawn edge to edge is drawn to TILE: ＿ ￣ 〰 ◢ and,
+            # under fwid, most of U+2500-U+259F. Centring it in the wider
+            # advance leaves `shift` units of white at every cell join, so
+            # a rule of ＿ or ─ comes out dashed and █ striped. Lengthen
+            # it instead
+            pen = T2CharStringPen(pen_width(private, full), gs)
+            path = pathops.Path()
+            gs[name].draw(TransformPen(path.getPen(), (1, 0, 0, 1, shift, 0)))
+            extend_edges(path, shift).draw(pen)
+            cs = redrawn[name] = pen.getCharString(private=private)
+            tiled += 1
+            # the ink grew as well as moved, so the bearing is the new
+            # outline's own xMin and not the old one plus the shift
+            hmtx.metrics[name] = (full, charstring_lsb(cs))
+            moved_by[name] = shift
+            continue
         if shift_charstring(td.CharStrings[name], shift, full, private):
             shifted += 1
         else:
@@ -1534,7 +1582,7 @@ def widen_fullwidth(font, cell, skip=()):
     shift_anchors(font, moved_by)
     note_redrawn(font, redrawn)
     print(f"  full-width widened to {2 * cell}: {shifted} shifted with their hints, "
-          f"{len(redrawn)} redrawn")
+          f"{len(redrawn)} redrawn ({tiled} of them lengthened to keep tiling)")
 
 
 # name IDs we drop before writing our own (every platform/encoding, so no

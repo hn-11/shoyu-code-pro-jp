@@ -39,6 +39,11 @@ CASES = [
 # copy_line_metrics for every JP face; see the check that reads it
 WIN_METRICS = (1160, 288)
 
+# drawn to tile, so a run of them must show no seam: the full-width low
+# line and overline, the wave dash, a quadrant, and the box-drawing and
+# block elements a terminal draws frames and bars with
+TILING = "\uFF3F\uFFE3\u3030\u25E2\u2500\u2501\u253C\u252C\u2588\u2584"
+
 # suffix in the base family name -> expected (half-width, full-width) advances
 FAMILY_METRICS = {
     "Term": (600, 1200),
@@ -546,6 +551,26 @@ def main():
             off_centre[ch] = (round(box[0]), round(box[2]), adv)
     check(not off_centre, f"every fwid arrow is centred inside its advance "
                           f"({len(ARROWS_H + ARROWS_V)} probes; off: {off_centre})")
+
+    # characters drawn to TILE: a run of them must show no seam, in
+    # either family and at either width. Term widens a full width from
+    # 1000 to 1200, and centring the outline there left 100u of white at
+    # every cell join — a rule of ＿ came out dashed and █ striped
+    # (build.widen_fullwidth lengthens them instead)
+    seam = {}
+    for ch in TILING:
+        for feats in ({}, {"fwid": True}):
+            infos, _ = shape_infos(ch, feats)
+            name = glyph_order[infos[0].codepoint]
+            adv = tf["hmtx"][name][0]
+            pen = BoundsPen(arrow_gs)
+            arrow_gs[name].draw(pen)
+            box = pen.bounds
+            if box is None or box[0] > 2 or box[2] < adv - 2:
+                seam[ch, bool(feats)] = None if box is None else (
+                    round(box[0]), round(box[2]), adv)
+    check(not seam, f"every tiling character spans its whole advance "
+                    f"({2 * len(TILING)} probes; off: {seam})")
 
     # stroke weight: the Latin is Source Code Pro's named instance for
     # this weight, so its '=' bar must measure the VF's at that wght

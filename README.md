@@ -308,12 +308,14 @@ python scripts/golden.py <前の dist> dist                  # 2つのビルド�
 NF_SYMBOLS=... python scripts/nerdpatch.py                 # Nerd Fonts 版
 ```
 
-`SCP_VF_U` / `SCP_VF_I` / `MONA_VF` は `build_latin.py` だけが使い、
-それぞれ Source Code Pro VF / Monaspace VF の Releases から取得する。
+`SCP_VF_U` / `SCP_VF_I` / `MONA_VF` は欧文を組む 2 つのスクリプト
+（`build_latin.py` と `build_latin_vf.py`）が使い、それぞれ
+Source Code Pro VF / Monaspace VF の Releases から取得する。
 `build.py` は Source Code Pro / Monaspace の VF に直接触らず、代わりに
 `SHS_DIR`（Source Han Sans JP）と `LATIN_DIR`（既定 `dist/latin`、
-`build_latin.py` の出力先）を見る。`verify.py` は `SCP_VF_U` / `SCP_VF_I`
-があれば `=` のバーを Source Code Pro のインスタンスと突き合わせる。
+`build_latin.py` の出力先）を見る。`verify.py` と `verify_latin_vf.py` は
+`SCP_VF_U` / `SCP_VF_I` があれば `=` のバーを Source Code Pro の
+インスタンスと突き合わせる。
 `SUMI_VERSION`（例 `5.0.0`）を立てると name テーブルにその版番号を刻む
 （リリースワークフローがタグから渡す。未設定なら上流のリビジョンをそのまま
 残す）。

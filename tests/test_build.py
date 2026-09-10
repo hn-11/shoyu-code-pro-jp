@@ -909,6 +909,35 @@ def test_fit_to_grid_centres_proportional_advances_on_the_grid():
     assert font._redrawn == {"kana", "jamo", "dash"}
 
 
+def test_widen_fullwidth_lengthens_a_glyph_drawn_to_tile():
+    """A glyph whose ink reaches both edges of its advance is drawn to
+    tile (＿ ￣ 〰 ◢, and under fwid most of the box drawing). Centring it
+    in the wider Term advance leaves white at every cell join, so a rule
+    of ＿ comes out dashed and █ striped."""
+    font = _cff_font_with_widths({"rule": 1000, "kanji": 1000})
+    cff = font["CFF "].cff
+    td = cff[cff.fontNames[0]]
+    pen = T2CharStringPen(1000, None)          # a bar spanning the advance
+    pen.moveTo((0, 40))
+    pen.lineTo((1000, 40))
+    pen.lineTo((1000, 100))
+    pen.lineTo((0, 100))
+    pen.closePath()
+    td.CharStrings["rule"] = pen.getCharString(private=td.Private)
+    build.widen_fullwidth(font, 600)
+    hmtx = font["hmtx"].metrics
+    assert hmtx["rule"][0] == hmtx["kanji"][0] == 1200
+    pen = BoundsPen(font.getGlyphSet())
+    font.getGlyphSet()["rule"].draw(pen)
+    x0, y0, x1, y1 = pen.bounds
+    assert (round(x0), round(x1)) == (0, 1200)     # still edge to edge
+    assert (round(y0), round(y1)) == (40, 100)     # and no thicker
+    # the ordinary glyph is still centred, not stretched
+    pen = BoundsPen(font.getGlyphSet())
+    font.getGlyphSet()["kanji"].draw(pen)
+    assert round(pen.bounds[2] - pen.bounds[0]) == 100
+
+
 def test_widen_fullwidth_spares_the_ligatures_it_is_given():
     """Term: a full width goes to two cells, three full widths to six,
     but a named 5-cell ligature — 3000 too — stays on the cell grid; a

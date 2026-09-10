@@ -148,6 +148,24 @@ def main():
     # instanced, and HarfBuzz shapes the VF itself at each location
     union = rsb = None
     metrics = tf["hmtx"].metrics     # no HVAR: advances are the same everywhere
+
+    # the three things verify_latin.py checks on a static face and this
+    # never did: the repertoire, the grid, and the feature surface. The
+    # two variable fonts are the whole of SumiMoji.zip, and this is their
+    # only gate — a VF that lost every codepoint above U+024F, or every
+    # stylistic set, passed here while the same loss on a static face
+    # failed three checks
+    vf_cmap = tf.getBestCmap()
+    check(len(vf_cmap) >= 800, f"{len(vf_cmap)} codepoints mapped")
+    off_grid = sorted({adv for adv, _ in metrics.values()}
+                      - {0} - {build.CELL * n for n in range(1, 5)})
+    check(not off_grid, f"every advance is 0 or a whole number of "
+                        f"{build.CELL} cells (offenders: {off_grid})")
+    tags = {fr.FeatureTag for fr in tf["GSUB"].table.FeatureList.FeatureRecord}
+    missing = [t for t in ("calt", "liga", "ss01", "ss08", "cv99",
+                           "zero", "cv01", "ss11") if t not in tags]
+    check(not missing, f"GSUB carries the feature surface the statics do "
+                       f"(missing: {missing})")
     for w in (axis.minValue, axis.defaultValue, axis.maxValue):
         gs = tf.getGlyphSet(location={"wght": w})
         for g in tf.getGlyphOrder():
