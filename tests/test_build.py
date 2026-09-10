@@ -926,6 +926,68 @@ def test_widen_fullwidth_spares_the_ligatures_it_is_given():
         assert pen.bounds[0] == want_lsb == hmtx[g][1]
 
 
+def test_narrow_letters_puts_a_wide_cyrillic_on_the_cell():
+    """Source Code Pro Italic has no Cyrillic, so the italic faces keep
+    Source Han Sans's own, and grid_step rounded the widest of them up to
+    a full width — two terminal columns for a script every terminal
+    allots one. The advance goes to the cell for all of them; only the
+    outline whose ink does not fit is scaled."""
+    font = _cff_font_with_widths({"zhe": 918, "a": 602, "kanji": 1000})
+    font["cmap"].tables[0].cmap = {0x416: "zhe", 0x430: "a", 0x4E00: "kanji"}
+    gs = font.getGlyphSet()
+
+    def width(g):
+        pen = BoundsPen(gs)
+        gs[g].draw(pen)
+        return pen.bounds[2] - pen.bounds[0]
+
+    assert build.narrow_letters(font, 600) == 2
+    hmtx = font["hmtx"].metrics
+    assert hmtx["zhe"][0] == hmtx["a"][0] == 600
+    assert hmtx["kanji"][0] == 1000                  # not a letter
+    gs = font.getGlyphSet()
+    # scaled by the cell over the donor's advance, so the bearings keep
+    # their proportion: nothing is pushed flush to a cell edge
+    assert width("zhe") == pytest.approx(100 * 600 / 918, abs=1)
+    assert width("a") == pytest.approx(100 * 600 / 602, abs=1)
+    # and fit_to_grid leaves them there, though the reference says 1000
+    assert build.fit_to_grid(font, 600, steps={"zhe": 1000, "a": 1000}) == 0
+    assert font["hmtx"].metrics["zhe"][0] == 600
+
+
+def test_narrow_letters_keeps_the_bearings_in_proportion():
+    """By the cell over the ADVANCE where that is wider: scaling by the
+    ink alone would push every condensed letter flush to both cell
+    edges, touching its neighbours (М is drawn 804 wide with exactly 600
+    of ink, so the ink alone would have said 'it fits')."""
+    font = _cff_font_with_widths({"wide": 918})
+    cff = font["CFF "].cff
+    td = cff[cff.fontNames[0]]
+    pen = T2CharStringPen(918, None)
+    pen.moveTo((9, 0))            # 900 of ink in a 918 advance
+    pen.lineTo((909, 0))
+    pen.lineTo((909, 100))
+    pen.closePath()
+    td.CharStrings["wide"] = pen.getCharString(private=td.Private)
+    font["cmap"].tables[0].cmap = {0x416: "wide"}
+    assert build.narrow_letters(font, 600) == 1
+    assert font["hmtx"].metrics["wide"][0] == 600
+    pen = BoundsPen(font.getGlyphSet())
+    font.getGlyphSet()["wide"].draw(pen)
+    x0, x1 = pen.bounds[0], pen.bounds[2]
+    assert x1 - x0 == pytest.approx(900 * 600 / 918, abs=1)
+    assert x0 + x1 == pytest.approx(600, abs=1)        # centred in the cell
+    assert x0 > 5                                       # bearings kept
+
+
+def test_narrow_letters_leaves_a_shared_glyph_alone():
+    """In place, so condensing would narrow whatever else reaches it."""
+    font = _cff_font_with_widths({"shared": 918})
+    font["cmap"].tables[0].cmap = {0x416: "shared", 0x4E00: "shared"}
+    assert build.narrow_letters(font, 600) == 0
+    assert font["hmtx"].metrics["shared"][0] == 918
+
+
 def test_narrow_halfwidth_condenses_a_shared_glyph_into_the_cell():
     """A Halfwidth codepoint whose glyph is the wide compatibility one
     gets its own copy, squeezed into the cell; the wide codepoint keeps

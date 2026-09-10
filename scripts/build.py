@@ -1384,13 +1384,17 @@ def fit_to_grid(font, cell, steps=None):
     # copies opt out of the Latin FontDict but are just as much ours.
     # Ours are on the grid by construction and take the fallback path
     built = getattr(font, "_built", frozenset())
+    pinned = getattr(font, "_pinned_cell", frozenset())
     for name in font.getGlyphOrder():
         adv, lsb = hmtx.metrics[name]
         if adv <= 0:
             continue
         # the family's answer first: a glyph can land on a step in one
         # weight and off it in the next, and both must end up the same
-        new = None if name in built else (steps or {}).get(name)
+        # ... and not one narrow_letters already put on the cell: the
+        # reference map still has the donor's own full width for it
+        new = (None if name in built or name in pinned
+               else (steps or {}).get(name))
         if new is None:
             if adv % cell == 0 or adv % FULLWIDTH == 0:
                 continue
@@ -2128,6 +2132,79 @@ def add_gsub(font, added, alts, ligatures, variant_maps=None,
     sort_feature_list(gsub)
 
 
+# Greek and Coptic, and Cyrillic: the width policy says every character
+# Sumi Moji covers is one cell (README, 幅の方針), and these two scripts
+# are in it. Source Code Pro Italic draws neither, so the italic faces
+# fall through to Source Han Sans's own proportional letters.
+LETTER_BLOCKS = ((0x0370, 0x04FF),)
+
+
+def narrow_letters(font, cell, blocks=LETTER_BLOCKS):
+    """Condense an alphabetic glyph Source Han Sans draws wider than the
+    cell into it, in place.
+
+    grid_step rounds to the NEAREST step, so the fourteen widest of these
+    (Ж М Ф Ш Щ Ъ Ы Ю ж ф ш щ ю Μ, drawn 755-1005) landed on a full
+    width: two terminal columns for scripts every terminal allots one
+    (Cyrillic and Greek are East_Asian_Width A), so an italic МОСКВА
+    painted its М over its О while the upright face of the same family
+    was right. The advance goes to the cell for all of them; the outline
+    is scaled only where its ink does not fit, which is what a monospace
+    face does with a wide letter — Source Code Pro's own M is 600 too.
+
+    Runs before fit_to_grid, on Source Han Sans's own advance, and the
+    names it touches are recorded so that pass leaves them alone.
+    Modifies the glyph rather than copying it: each is reached from one
+    codepoint. One that is not is left alone and said so, since
+    condensing it would narrow whatever else shares it. Returns the
+    number condensed."""
+    cmap = font.getBestCmap()
+    hmtx = font["hmtx"]
+    gs = font.getGlyphSet()
+    cff = font["CFF "].cff
+    td = cff[cff.fontNames[0]]
+    wanted = {cp for lo, hi in blocks for cp in range(lo, hi + 1)}
+    reached = {}
+    for cp, name in cmap.items():
+        reached.setdefault(name, set()).add(cp)
+    drawn = {}
+    for cp in sorted(wanted & set(cmap)):
+        name = cmap[cp]
+        adv = hmtx[name][0]
+        if adv <= 0 or name in drawn:
+            continue
+        box = _bounds(gs, name)
+        ink = (box[2] - box[0]) if box else 0
+        if adv == cell and ink <= cell:
+            continue
+        if not reached[name] <= wanted:
+            print(f"  skip U+{cp:04X}: its glyph also draws "
+                  f"{sorted(hex(c) for c in reached[name] - wanted)}")
+            continue
+        private = glyph_private(font, td, name)
+        # by the cell over the wider of advance and ink, as
+        # narrow_halfwidth condenses the Hangul jamo: the design's own
+        # side bearings stay in proportion. Scaling by the ink alone
+        # would push every condensed letter flush to both cell edges —
+        # М is drawn 804 wide with exactly 600 of ink, and would have
+        # touched its neighbours on each side. Most of these two
+        # alphabets are 602 wide and lose 0.3%, which is the rounding
+        sx = min(1.0, cell / max(adv, ink))
+        dx = (cell - (box[2] - box[0]) * sx) / 2 - box[0] * sx if box else 0
+        pen = T2CharStringPen(pen_width(private, cell), gs)
+        gs[name].draw(TransformPen(pen, (sx, 0, 0, 1, dx, 0)))
+        drawn[name] = pen.getCharString(private=private)
+    for name, cs in drawn.items():
+        td.CharStrings[name] = cs
+        hmtx.metrics[name] = (cell, charstring_lsb(cs))
+    note_redrawn(font, drawn)
+    pinned = getattr(font, "_pinned_cell", None)
+    if pinned is None:
+        pinned = font._pinned_cell = set()
+    pinned.update(drawn)
+    return len(drawn)
+
+
 def narrow_halfwidth(font, cell):
     """A character Unicode calls Halfwidth (East_Asian_Width H, taken
     from unicodedata so this and verify.py cannot disagree) is one cell,
@@ -2809,6 +2886,10 @@ def build_face(job):
     # condensed from Source Han Sans's own advance and not from the one
     # the grid pass would give it
     n_half = narrow_halfwidth(base, CELL)
+    # and the Greek and Cyrillic the italic faces keep from Source Han
+    # Sans, for the same reason: on the donor's own advance, before the
+    # grid pass rounds the widest of them up to two columns
+    n_letters = narrow_letters(base, CELL)
     # then Source Han Sans's proportional leftovers onto the grid — every
     # glyph, so hwid's own 500-advance alternates and the locl forms no
     # codepoint reaches come along. It reads no features, so nothing
@@ -2864,7 +2945,7 @@ def build_face(job):
     write_face(base, out, getattr(base, "_redrawn", set()))
     return (f"{face_label}{f' [{suffix}]' if suffix else ''}: "
             f"latin={n_scp} fwid={len(fullwidth)} vert={n_vert} "
-            f"fitted={n_fit} half={n_half} "
+            f"fitted={n_fit} half={n_half} letters={n_letters} "
             f"ligs={len(added)} -> {out.name}")
 
 

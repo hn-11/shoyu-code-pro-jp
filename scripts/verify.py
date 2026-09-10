@@ -53,16 +53,6 @@ DEFAULT_METRICS = (600, 1000)
 WIDE_AT_ONE_CELL = {0x2615, 0x302E, 0x302F, 0x31B4, 0x31B5, 0x31B6, 0x31B7,
                     0x31BB, 0x1F3B5, 0x1F3B6, 0x1F4A9, 0x1F512, 0x1F916}
 
-# Source Code Pro Italic has no Greek or Cyrillic, so the italic faces
-# keep Source Han Sans's own. Most land on the cell (grid_step), but
-# these fourteen are drawn 755-1005 wide in the reference weight, with
-# 672-972 of ink in the heaviest — over the cell in ink, or near enough
-# the full width in advance, that a full width is the step grid_step
-# picks, so the italic faces give them two columns where the upright
-# ones give one (README, 幅の方針)
-ITALIC_FULLWIDTH = {0x39C, 0x416, 0x41C, 0x424, 0x428, 0x429, 0x42A, 0x42B,
-                    0x42E, 0x436, 0x444, 0x448, 0x449, 0x44E}
-
 # the line metrics of an English terminal font: Source Code Pro's, hhea
 # and typo alike, with USE_TYPO_METRICS set (build.copy_line_metrics)
 LINE_METRICS = (984, -273, 0)
@@ -127,6 +117,19 @@ def main():
           f"(half, full) == ({exp_half}, {exp_full}) for family {fam!r}, "
           f"got ({a_adv}, {cjk_adv})")
 
+    # the repertoire, not a handful of probes: nothing here counted what
+    # the face covers, so one that lost 25,000 cmap entries and rendered
+    # almost all Japanese as .notdef was a well-formed, correctly named,
+    # correctly sized asset that passed every gate. Source Han Sans JP
+    # gives 17,355 codepoints, 12,746 of them kanji; the floors are well
+    # under that, because a subset that shrank on purpose is a decision
+    # and a subset that shrank by accident is this
+    kanji = sum(1 for cp in cmap if 0x4E00 <= cp <= 0x9FFF)
+    kana = sum(1 for cp in cmap if 0x3040 <= cp <= 0x30FF)
+    check(len(cmap) >= 15000 and kanji >= 10000 and kana >= 150,
+          f"the Japanese repertoire is there ({len(cmap)} codepoints, "
+          f"{kanji} kanji, {kana} kana)")
+
     # every codepoint Sumi Moji has is one cell in both families — the
     # ligature-paired arrows and operators, Greek, box drawing, SCP-only
     # Latin (ł ğ ₽), '−' — and Source Han Sans's own full-width symbols
@@ -150,14 +153,15 @@ def main():
     check(not off_policy, f"width policy ({len(policy)} probes; off: {off_policy})")
 
     # and the Greek and Cyrillic the italic faces keep from Source Han
-    # Sans: one cell but for the dozen whose ink needs a full width
+    # Sans, which build.narrow_letters condenses into the cell: both
+    # scripts are East_Asian_Width A, so every terminal allots them one
+    # column, and a full width would paint over the next character
     greek_cyrillic = {cp: hmtx[g][0] for cp, g in cmap.items()
                       if 0x370 <= cp <= 0x4FF}
     full = {cp for cp, adv in greek_cyrillic.items() if adv != exp_half}
-    check(full == (ITALIC_FULLWIDTH if italic else set()),
-          f"Greek and Cyrillic are one cell but for the pinned "
-          f"{len(ITALIC_FULLWIDTH) if italic else 0} in the italic faces "
-          f"(off: {sorted(hex(c) for c in full ^ (ITALIC_FULLWIDTH if italic else set()))})")
+    check(not full, f"every Greek and Cyrillic letter is one cell "
+                    f"({len(greek_cyrillic)} of them; off: "
+                    f"{sorted(hex(c) for c in full)})")
 
     # the exception to the policy: characters both donors draw one cell
     # wide although Unicode calls them Wide, so a terminal reserves two
@@ -235,11 +239,18 @@ def main():
     # overhangs by design (up to 138u in the Latin layer), a glyph put on
     # a step too small for its ink would not (grid_step). The boxes are
     # the pass above's, not a second one
-    spill = [(name, hmtx[name][0], round(box[2] - box[0]))
+    # WHERE the ink lands, not just how wide it is: a width test says
+    # nothing about position, and translating every kanji a whole column
+    # to the right left it reporting a clean face. The bound is half a
+    # cell either side, which the widest italic lean uses 221 of
+    lean = exp_half // 2
+    spill = [(name, hmtx[name][0], round(box[0]), round(box[2]))
              for name, box in bounds.items()
-             if hmtx[name][0] > 0 and (box[2] - box[0]) > hmtx[name][0] + exp_half]
-    check(not spill, f"no glyph's ink spills a whole cell past its advance "
-                     f"({len(spill)} do, e.g. {spill[:3]})")
+             if hmtx[name][0] > 0
+             and (box[0] < -lean or box[2] > hmtx[name][0] + lean)]
+    check(not spill, f"every glyph's ink is inside its advance, give or "
+                     f"take {lean}u of lean ({len(spill)} are not, "
+                     f"e.g. {spill[:3]})")
 
     # the vertical origin, stated twice: CFF gives it outright in VORG,
     # and vmtx gives it as a bearing DOWN from each glyph's own yMax.
