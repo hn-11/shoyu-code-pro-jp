@@ -182,7 +182,7 @@ def main():
     # (build.narrow_halfwidth)
     wide_half = sorted(cp for cp, g in cmap.items()
                        if unicodedata.east_asian_width(chr(cp)) == "H"
-                       and hmtx[g][0] != exp_half)
+                       and hmtx[g][0] not in (0, exp_half))   # 0: a combining one
     check(not wide_half,
           f"every Halfwidth character is one cell "
           f"({len(wide_half)} off: {[hex(c) for c in wide_half[:5]]})")

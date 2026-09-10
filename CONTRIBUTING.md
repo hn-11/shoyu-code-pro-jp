@@ -70,7 +70,7 @@ python scripts/verify.py dist/SumiMojiJP-Regular.otf
 Fonts の接ぎ木も検証）、可変フォントと Sumi Moji への接ぎ木を 1 ジョブ、
 並列に組んで 1 分程度。リリース
 `release.yml` はファミリー × ウェイト群の 6 ジョブのあと `package`
-ジョブが可変フォントを組み、`harmonize_latin.py` → zip →
+ジョブが `harmonize_latin.py` → zip →
 GitHub Release を作り、5 分程度。所要時間を測るだけなら Run workflow の dry-run に
 チェックを入れるか、コミットメッセージに `[release-dry]` と書いたコミットを
 ブランチに push する。どちらもビルドと梱包まで走って Release は作らない）。複数の面をまとめて検証するときは

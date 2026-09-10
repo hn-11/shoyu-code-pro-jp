@@ -273,10 +273,12 @@ def icon_checks(font, symbols=None):
     seen, short, spill, skew = set(), [], [], []
     for cp in POWERLINE:
         name = cmap.get(cp)
-        ink = build._bounds(gs, name) if name else None
+        if name is None:
+            continue
+        seen.add(cp)          # present; only its geometry needs ink
+        ink = build._bounds(gs, name)
         if ink is None:
             continue
-        seen.add(cp)
         x0, y0, x1, y1 = ink
         if cp in SEPARATORS:
             if x1 - x0 < 0.9 * cell or y1 - y0 < 0.9 * (asc - desc):

@@ -2159,8 +2159,15 @@ def repoint_features(font, replaced, tags=("vert", "vrt2")):
     added = 0
     for tag in tags:
         fmap = feature_map(font, tag)
-        pairs = {cmap[cp]: fmap[old] for cp, old in replaced.items()
-                 if old in fmap and cp in cmap and cmap[cp] != old}
+        pairs = {}
+        for cp, old in replaced.items():
+            if old not in fmap or cp not in cmap or cmap[cp] == old:
+                continue
+            src, want = cmap[cp], fmap[old]
+            if pairs.setdefault(src, want) != want:
+                raise ValueError(
+                    f"{tag} for U+{cp:04X} cannot be wired: {src} is shared with "
+                    f"another codepoint and already maps to {pairs[src]}, not {want}")
         if not pairs:
             continue
         _add_feature(gsub, tag, [_new_lookup(gsub, otl.buildSingleSubstSubtable(pairs))])
@@ -2719,7 +2726,11 @@ def build_face(job):
     alts = {}
     added = latin_ligatures(base, latin, latin_path, alts, LIGATURES)
     add_gsub(base, added, alts, LIGATURES, variant_maps, variant_names)
-    # Source Han Sans's proportional leftovers onto the grid — every
+    # the Halfwidth block into one cell first, so its copies are
+    # condensed from Source Han Sans's own advance and not from the one
+    # the grid pass would give it
+    n_half = narrow_halfwidth(base, CELL)
+    # then Source Han Sans's proportional leftovers onto the grid — every
     # glyph, so hwid's own 500-advance alternates and the locl forms no
     # codepoint reaches come along. It reads no features, so nothing
     # ties it to drop_features below
@@ -2735,7 +2746,6 @@ def build_face(job):
     # (→ ─ ≠), or its fwid form where the replaced glyph was proportional
     # (A é: Source Han Sans's own fwid maps those to Ａ é). Greek has
     # neither in Source Han Sans JP and stays one cell under fwid too
-    n_half = narrow_halfwidth(base, CELL)
     n_vert = repoint_features(base, replaced)
     fullwidth = fullwidth_forms(base, replaced)
     arrows = stretch_arrows(base, added, fullwidth,
