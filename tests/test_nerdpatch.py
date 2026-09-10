@@ -9,6 +9,7 @@ import pytest
 from fontTools.fontBuilder import FontBuilder
 from fontTools.pens.boundsPen import BoundsPen
 from fontTools.pens.t2CharStringPen import T2CharStringPen
+from fontTools.pens.transformPen import TransformPen
 from fontTools.pens.ttGlyphPen import TTGlyphPen
 from fontTools.ttLib import TTFont, newTable
 
@@ -380,6 +381,33 @@ def test_icon_checks_faults_a_two_cell_or_blank_icon(monkeypatch):
     got = _checks(face, symbols)
     assert got["every icon the symbols font draws draws in the face"] is False
     assert got["every icon fits the cell and the line"] is True   # no box to fault
+
+
+def test_icon_checks_faults_an_icon_drawn_at_the_wrong_size(monkeypatch):
+    """Every other check bounds a glyph from one side, so an icon at half
+    its size satisfied all of them. This one measures it against the
+    symbols glyph it was drawn from."""
+    face, symbols = _grafted(monkeypatch)
+    name = face.getBestCmap()[0xE000]
+    cff = face["CFF "].cff
+    td = cff[cff.fontNames[0]]
+    gs = face.getGlyphSet()
+    private = build.glyph_private(face, td, name)
+    pen = T2CharStringPen(build.pen_width(private, 600), gs)
+    gs[name].draw(TransformPen(pen, (0.5, 0, 0, 0.5, 150, 150)))
+    td.CharStrings[name] = pen.getCharString(private=private)
+    got = _checks(face, symbols)
+    assert got["every grafted glyph is where icon_transform puts it"] is False
+    assert got["every icon fits the cell and the line"] is True   # still inside
+
+
+def test_icon_checks_says_so_when_it_cannot_measure(monkeypatch):
+    """Without the symbols font there is nothing to compare against, and
+    the icon checks are empty loops. They must say that rather than
+    print a pass a reader would take for a measurement."""
+    face, _symbols = _grafted(monkeypatch)
+    msgs = [m for ok, m in nerdpatch.icon_checks(face) if "icon" in m or "grafted" in m]
+    assert msgs and all("not checked, no NF_SYMBOLS" in m for m in msgs)
 
 
 def test_icon_checks_faults_an_icon_that_never_reached_the_face(monkeypatch):

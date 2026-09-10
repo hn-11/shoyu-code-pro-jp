@@ -158,8 +158,23 @@ jobs:
           (cd latin && zip -q ../SumiMoji.zip 'SumiMoji[wght].otf' 'SumiMoji-Italic[wght].otf' LICENSE)
           (cd nerd/latin && zip -q ../../SumiMoji-NerdFont.zip *.otf LICENSE LICENSE-NerdFonts)
       # every asset, on a dry run too (a missing one is a failure here, not
-      # a warning from the release step)
-      - run: ls -l dist/*.zip
+      # a warning from the release step). By name and by content: `zip`
+      # exits 0 when its *.otf argument matches nothing, because LICENSE
+      # always matches, so `ls` alone would have shipped a zip holding
+      # two licence files and no font
+      - name: Every release asset exists and carries its fonts
+        run: |
+          want="SumiMojiJP:10 SumiMojiJPTerm:10 SumiMoji:2
+                SumiMojiJP-NerdFont:10 SumiMojiJPTerm-NerdFont:10
+                SumiMoji-NerdFont:10"
+          for spec in $want; do
+            zip="dist/${spec%%:*}.zip"
+            n="${spec##*:}"
+            [ -f "$zip" ] || { echo "::error::$zip missing"; exit 1; }
+            got=$(unzip -Z1 "$zip" | grep -c '\.otf$' || true)
+            [ "$got" = "$n" ] || { echo "::error::$zip has $got fonts, want $n"; exit 1; }
+          done
+          ls -l dist/*.zip
       - name: Extract changelog section for this tag
         run: |
           awk -v tag="## ${SUMI_VERSION_TAG}" '

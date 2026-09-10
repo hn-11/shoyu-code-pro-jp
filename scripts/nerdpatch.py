@@ -370,6 +370,11 @@ def icon_checks(font, symbols=None):
         (TEXT_OVER_ICON) already drawn there — and every icon among them
         is one cell wide, draws ink where the symbols font does, and
         stays inside the cell and the line box;
+      - every grafted glyph lands exactly where icon_transform puts it,
+        measured against the symbols glyph it came from. The checks
+        around it each bound a glyph from one side only, so an icon
+        drawn at half its size satisfied all of them; this one does not
+        (it needs the symbols font, and says so when it is not there);
       - every Powerline glyph in the face draws ink: a blank one leaves
         a hole in every prompt and has no box for the checks below to
         fault;
@@ -426,6 +431,28 @@ def icon_checks(font, symbols=None):
     # the line. Ten thousand glyphs that nothing here used to measure —
     # blanking every one of them, or re-encoding them all two cells wide,
     # passed the whole suite
+    # and the strongest one: every grafted glyph lands exactly where
+    # icon_transform puts it, measured against the symbols glyph it came
+    # from. Everything above bounds a glyph from ONE side, so an icon
+    # drawn at half its size passed all of them; this compares the box
+    # against the source, which a wrong scale, a wrong em, a wrong cell
+    # and a shift all move
+    ctx = icon_context(font, symbols) if symbols is not None else None
+    misplaced = []
+    for cp in sorted(want or ()):
+        name = cmap.get(cp)
+        if name is None or cp in TEXT_OVER_ICON:
+            continue
+        src = build._bounds(sgs, scm[cp])
+        got = build._bounds(gs, name)
+        if src is None or got is None:
+            continue                      # blankness is `blank`/`hollow`'s
+        xf = icon_transform(cp, src, ctx)     # always a diagonal matrix
+        box = (xf[0] * src[0] + xf[4], xf[3] * src[1] + xf[5],
+               xf[0] * src[2] + xf[4], xf[3] * src[3] + xf[5])
+        if max(abs(a - b) for a, b in zip(got, box)) > 4:
+            misplaced.append(f"U+{cp:04X}")
+
     hmtx = font["hmtx"].metrics
     wide, hollow, over = [], [], []
     for cp in sorted(want or ()):
@@ -444,6 +471,8 @@ def icon_checks(font, symbols=None):
             over.append(f"U+{cp:04X}")
 
     def few(bad):
+        if sgs is None:
+            return "not checked, no NF_SYMBOLS"
         return f"{len(bad)}: {bad[:6]}" if bad else "0"
 
     gap = None if want is None else sorted(want - set(cmap))
@@ -455,6 +484,8 @@ def icon_checks(font, symbols=None):
          f"({len(seen)} of them drawn against the line box, {missing})"),
         (not blank, f"every line-box glyph in the face draws ink "
                     f"(blank: {blank})"),
+        (not misplaced, f"every grafted glyph is where icon_transform puts "
+                        f"it ({few(misplaced)})"),
         (not wide, f"every icon is one cell wide — a Nerd Font MONO "
                    f"(off: {few(wide)})"),
         (not hollow, f"every icon the symbols font draws draws in the face "
