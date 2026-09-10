@@ -74,9 +74,10 @@ JIS 流の全角字形は `fwid` で戻せる。矢印 7 種は合字グリフ�
 "editor.fontLigatures": "'fwid'"
 ```
 
-幅を動かす機能は入れていない。Source Han Sans の `kern`（横組みでは
-既定 ON。`あ`+`て` をセルより 20u 詰める）、`halt`、縦組みの GPOS は
-ビルド時に落としてある。
+横方向の送りを動かす機能は入れていない。Source Han Sans の `kern`
+（横組みでは既定 ON。`あ`+`て` をセルより 20u 詰める）と、代替メトリクスの
+`halt` / `palt` / `pwid` はビルド時に落としてある。縦組みの機能
+（`vert` `vrt2` `vkrn` `vhal` `vpal`）は残してあり、縦書きは従来どおり。
 
 曖昧幅（EAW=A）を 2 セルとして数えるターミナルでは `①` が右隣に食み出す。
 これは HackGen と同じ挙動で、Windows Terminal なら

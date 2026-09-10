@@ -141,16 +141,28 @@ def main():
         import nerdpatch
         symbols = nerdpatch.symbols_for_checks()
         if symbols is None:
-            print("skip  East-Asian-Wide exception (NF face, no NF_SYMBOLS)")
-            wide_one_cell = WIDE_AT_ONE_CELL
+            print("skip  East-Asian-Wide exception (NF face, NF_SYMBOLS unset)")
+            wide_one_cell = None
         else:
             grafted = set(symbols.getBestCmap())
-    assert wide_one_cell - grafted == WIDE_AT_ONE_CELL, (
-        f"{FONT}: East-Asian-Wide characters at one cell changed: "
-        f"added {sorted(hex(c) for c in wide_one_cell - grafted - WIDE_AT_ONE_CELL)}, "
-        f"gone {sorted(hex(c) for c in WIDE_AT_ONE_CELL - wide_one_cell)}")
-    print(f"ok   {len(WIDE_AT_ONE_CELL)} East-Asian-Wide characters at one cell "
-          f"(the documented exception)")
+    if wide_one_cell is not None:
+        assert wide_one_cell - grafted == WIDE_AT_ONE_CELL, (
+            f"{FONT}: East-Asian-Wide characters at one cell changed: "
+            f"added {sorted(hex(c) for c in wide_one_cell - grafted - WIDE_AT_ONE_CELL)}, "
+            f"gone {sorted(hex(c) for c in WIDE_AT_ONE_CELL - wide_one_cell)}")
+        print(f"ok   {len(WIDE_AT_ONE_CELL)} East-Asian-Wide characters at one cell "
+              f"(the documented exception)")
+
+    # nothing anywhere in the font is off the grid, cmap'd or not: a
+    # feature on by default (locl, ccmp) can put a glyph on the page
+    # that no codepoint reaches (fit_to_grid)
+    off_grid = sorted(name for name, (adv, _lsb) in hmtx.metrics.items()
+                      if adv > 0 and adv % exp_half and adv % 1000)
+    assert not off_grid, (
+        f"{FONT}: {len(off_grid)} glyphs off the grid, e.g. "
+        f"{[(n, hmtx[n][0]) for n in off_grid[:5]]}")
+    print(f"ok   every advance in the font is on the grid "
+          f"({len(hmtx.metrics)} glyphs)")
 
     # line metrics: Source Code Pro's, hhea and typo alike, USE_TYPO_METRICS
     hhea, os2 = tf["hhea"], tf["OS/2"]

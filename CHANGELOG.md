@@ -48,6 +48,11 @@
     Regular の和文は以前の Source Han Sans Regular から Normal に、Bold は
     同じ面のまま。可変フォントの wght 軸は SCP の wght と一致する恒等写像
     になり、軸の範囲は 200〜700
+  - **グリッドはフォント全体で守る**: `fit_to_grid` は cmap だけでなく
+    全グリフを歩く。`locl` や `ccmp` は既定 ON で、どの符号位置からも
+    引けないグリフを画面に出す（Source Han Sans の `⋯` の locl 形は
+    1052u で、Term では行が 148u ずれていた）。`verify.py` は「フォント内の
+    すべての送りがグリッド上」を検査する
   - **グリッドを崩す GPOS を落とす**: Source Han Sans の `kern` は横組みの
     シェーパで既定 ON で、`あ`+`て` をセルより 20u 詰める。`halt` `palt`
     （横組みの代替メトリクス）ともども削除し、`verify.py` が GPOS と実

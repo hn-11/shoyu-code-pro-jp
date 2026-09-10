@@ -191,8 +191,8 @@ NF_DESIGNER = "Nerd Fonts: Ryan L McIntyre and the Nerd Fonts contributors"
 
 def rename(font):
     """Every name record naming the family takes the Nerd Fonts name,
-    and the copyright and designer records credit Nerd Fonts for the
-    icons. Returns the new PostScript name."""
+    the CFF's own names follow, and the copyright and designer records
+    credit Nerd Fonts for the icons. Returns the new PostScript name."""
     name = font["name"]
     for rec in name.names:
         s = rec.toUnicode()
@@ -209,7 +209,15 @@ def rename(font):
                 name.setName(s + sep + credit, nid, rec.platformID,
                              rec.platEncID, rec.langID)
     ps = name.getDebugName(6)
-    font["CFF "].cff.fontNames[0] = ps
+    cff = font["CFF "].cff
+    cff.fontNames[0] = ps
+    # set_names keeps the CFF TopDict's own names in step with the name
+    # table; a consumer that reads them (PDF embedding, tx, otfinfo)
+    # would otherwise file this face under the plain family
+    td = cff[ps]
+    for attr, nid in (("FamilyName", 16), ("FullName", 4)):
+        if hasattr(td, attr):
+            setattr(td, attr, name.getDebugName(nid) or name.getDebugName(1))
     return ps
 
 

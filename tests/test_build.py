@@ -834,17 +834,28 @@ def test_fit_to_grid_takes_explicit_glyph_names():
 
 
 def test_fit_to_grid_follows_the_reference_steps_over_this_face():
-    """The family decides a character's width once, on one weight
+    """The family decides a glyph's width once, on one weight
     (reference_steps): a heavier face whose own advance would round the
-    other way follows it, and a codepoint the reference does not name
-    falls back to this face's advance."""
+    other way follows it, and a glyph the reference does not name falls
+    back to this face's advance."""
     font = _cff_font_with_widths({"phi": 824, "psi": 900})
-    cmap = {0xE000: "phi", 0xE001: "psi"}       # _cff_font_with_widths' cmap
-    assert font.getBestCmap() == cmap
-    assert build.fit_to_grid(font, 600, steps={0xE000: 600}) == 2
+    assert build.fit_to_grid(font, 600, steps={"phi": 600}) == 2
     hmtx = font["hmtx"].metrics
     assert hmtx["phi"][0] == 600                # the reference's answer
     assert hmtx["psi"][0] == 1000               # its own: nearest a full width
+
+
+def test_fit_to_grid_reaches_a_glyph_no_codepoint_does():
+    """'locl' and 'ccmp' put glyphs on the page without being asked, so
+    the pass walks the whole font, not the cmap."""
+    font = _cff_font_with_widths({"a": 500})
+    order = list(font.getGlyphOrder())
+    font["hmtx"].metrics["hidden"] = (1052, 0)   # a locl form, uncmap'd
+    font.setGlyphOrder(order + ["hidden"])
+    font["CFF "].cff.topDictIndex[0].CharStrings["hidden"] = \
+        font["CFF "].cff.topDictIndex[0].CharStrings["a"]
+    assert build.fit_to_grid(font, 600) == 2
+    assert font["hmtx"].metrics["hidden"][0] == 1000
 
 
 def test_set_names():

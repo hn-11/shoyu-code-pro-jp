@@ -185,7 +185,9 @@ def test_rename_splices_the_marker_and_credits_nerd_fonts():
     assert name.getDebugName(1) == "Sumi Moji JP Nerd Font Mono"
     assert name.getDebugName(3) == "5.0.0;SUMI;SumiMojiJPNFM-Regular"
     assert name.getDebugName(6) == "SumiMojiJPNFM-Regular"
-    assert face["CFF "].cff.fontNames[0] == "SumiMojiJPNFM-Regular"
+    cff = face["CFF "].cff
+    assert cff.fontNames[0] == "SumiMojiJPNFM-Regular"
+    assert cff["SumiMojiJPNFM-Regular"].FullName == "Sumi Moji JP Nerd Font Mono"
 
 
 def test_sources_for_paths_names_and_everything(tmp_path, monkeypatch):

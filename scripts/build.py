@@ -1150,13 +1150,15 @@ _REFERENCE_STEPS = {}
 
 
 def reference_steps(path, cell):
-    """{codepoint: grid step} decided once, on one weight, for the whole
-    family. A letter's advance grows with the weight — Source Han Sans's
+    """{glyph name: grid step} decided once, on one weight, for the whole
+    family. A glyph's advance grows with the weight — Source Han Sans's
     Φ runs 757..850 across the five donors, straddling the midpoint
     between the cell and a full width — so deciding per face would make
     the same letter one column in Light Italic and two in Bold Italic.
-    The reference is the donor of our Regular (FACES), read once per
-    process."""
+    Keyed by name because every Source Han Sans weight shares its CID
+    names, and because a glyph reachable only through a feature has no
+    codepoint. The reference is the donor of our Regular (FACES), read
+    once per process."""
     key = (str(path), cell)
     if key not in _REFERENCE_STEPS:
         if not Path(path).exists():
@@ -1167,14 +1169,14 @@ def reference_steps(path, cell):
         ref = TTFont(path)
         gs, hmtx = ref.getGlyphSet(), ref["hmtx"]
         steps = {}
-        for cp, name in ref.getBestCmap().items():
+        for name in ref.getGlyphOrder():
             adv = hmtx[name][0]
             if adv <= 0 or adv % cell == 0 or adv % FULLWIDTH == 0:
                 continue
             pen = BoundsPen(gs)
             gs[name].draw(pen)
-            steps[cp] = grid_step(adv, (pen.bounds[2] - pen.bounds[0]) if pen.bounds else 0,
-                                  cell)
+            steps[name] = grid_step(adv, (pen.bounds[2] - pen.bounds[0]) if pen.bounds else 0,
+                                    cell)
         _REFERENCE_STEPS[key] = steps
         ref.close()
     return _REFERENCE_STEPS[key]
@@ -1182,39 +1184,37 @@ def reference_steps(path, cell):
 
 def fit_to_grid(font, cell, steps=None, glyph_names=None):
     """Centre Source Han Sans's proportional leftovers on the grid: every
-    cmap'd glyph whose advance is neither 0 nor a whole number of cells
-    nor of full widths — the half-width kana and symbols at 500 (half of
-    the 1000 em, on neither grid), Hangul jamo at 920, ﬀ ﬃ ﬄ, the
-    enclosed 🄯, and in the italic faces the Greek and Cyrillic Source
-    Code Pro Italic has none of — goes to the nearest grid step
-    (grid_step); the outline is centred in the new advance. Runs before
-    widen_fullwidth, which then takes the full-width ones along.
+    glyph whose advance is neither 0 nor a whole number of cells nor of
+    full widths — the half-width kana and symbols at 500 (half of the
+    1000 em, on neither grid), Hangul jamo at 920, ﬀ ﬃ ﬄ, the enclosed
+    🄯, and in the italic faces the Greek and Cyrillic Source Code Pro
+    Italic has none of — goes to the nearest grid step (grid_step); the
+    outline is centred in the new advance. Runs before widen_fullwidth,
+    which then takes the full-width ones along.
 
-    `steps` (when given) is reference_steps()' {codepoint: step}, so
-    every weight of the family agrees on a character's width; a
-    codepoint it does not name falls back to this face's own advance.
+    Every glyph, not only the cmap'd ones: a feature puts glyphs on the
+    page that no codepoint reaches, and 'locl' and 'ccmp' do it without
+    being asked (Source Han Sans's locl form of ⋯ is 1052 units wide),
+    as do hwid's own 500-advance alternates.
 
-    `glyph_names` (when given) replaces the cmap scan with an explicit
-    iterable of glyph names — used to also centre hwid's own 500-advance
-    alternates (see hwid_targets()), which have no codepoint of their
-    own and are half-width in every weight. Returns the number of glyphs
-    moved."""
+    `steps` (when given) is reference_steps()' {glyph name: step}, so
+    every weight of the family agrees on a glyph's width; a name it does
+    not have falls back to this face's own advance. `glyph_names`
+    replaces the whole-font scan. Returns the number of glyphs moved."""
     cff = font["CFF "].cff
     td = cff[cff.fontNames[0]]
     gs = font.getGlyphSet()
     hmtx = font["hmtx"]
     done = set()
     moved = 0
-    pairs = ((None, n) for n in glyph_names) if glyph_names is not None \
-        else font.getBestCmap().items()
-    for cp, name in pairs:
+    for name in (font.getGlyphOrder() if glyph_names is None else glyph_names):
         if name is None or name in done:
             continue
         done.add(name)
         adv, lsb = hmtx.metrics[name]
         if adv <= 0 or adv % cell == 0 or adv % FULLWIDTH == 0:
             continue
-        new = (steps or {}).get(cp)
+        new = (steps or {}).get(name)
         if new is None:
             bounds = BoundsPen(gs)
             gs[name].draw(bounds)
@@ -1836,18 +1836,11 @@ def drop_features(font, tags):
 def feature_map(font, tag):
     """{glyph: substitute} over every Single / Alternate subst reachable
     under `tag` — Source Han Sans's own hwid / fwid forms. The first
-    substitute wins where a glyph has more than one (feature_targets
-    keeps them all)."""
+    substitute wins where a glyph has more than one."""
     out = {}
     for src, dst in _feature_pairs(font, tag):
         out.setdefault(src, dst)
     return out
-
-
-def feature_targets(font, tag):
-    """Every glyph `tag` can substitute IN, first or not: what has to be
-    fitted to the grid, since any of them can reach the page."""
-    return {dst for _src, dst in _feature_pairs(font, tag)}
 
 
 def _feature_pairs(font, tag):
@@ -1862,14 +1855,6 @@ def _feature_pairs(font, tag):
         for li in fr.Feature.LookupListIndex:
             kind, subs = _unwrap(gsub.LookupList.Lookup[li])
             yield from _subst_pairs(kind, subs, tag)
-
-
-def hwid_targets(font):
-    """Glyph names reachable via the 'hwid' feature — SHS's own half-width
-    alternates, drawn at its native 500-unit half cell (half of the 1000
-    em), not our 600-unit one. Used to center them onto the terminal grid
-    (see fit_to_grid())."""
-    return feature_targets(font, "hwid")
 
 
 def add_gsub(font, added, alts, ligatures, variant_maps=None,
@@ -2461,7 +2446,6 @@ def build_face(job):
     # fixed-cell font
     steps = reference_steps(Path(env["SHS_DIR"]) / REFERENCE_SHS, CELL)
     n_fit = fit_to_grid(base, CELL, steps=steps)
-    n_fit += fit_to_grid(base, CELL, glyph_names=hwid_targets(base))
     # kern would pull Japanese pairs off the cell in any shaper that
     # lays out a run (VS Code, a browser); halt and palt are alternate
     # horizontal metrics, which a fixed cell has no use for. The
