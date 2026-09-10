@@ -145,7 +145,10 @@ def graft_symbols(font, symbols):
     # here inherits one from Source Code Pro's variable font; this is for
     # a caller handed a face that has only BMP subtables
     if not any(t.format == 12 for t in font["cmap"].tables if t.isUnicode()):
-        bmp = next(t for t in font["cmap"].tables if t.isUnicode())
+        # format 14 (variation selectors) is a Unicode subtable too, and
+        # its .cmap is an empty stub — seed from a real one
+        bmp = next(t for t in font["cmap"].tables
+                   if t.isUnicode() and t.format in (0, 4, 6))
         t12 = CmapSubtable.newSubtable(12)
         t12.platformID, t12.platEncID, t12.language = 3, 10, 0
         t12.cmap = dict(bmp.cmap)

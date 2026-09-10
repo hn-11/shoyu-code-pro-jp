@@ -129,10 +129,9 @@ def main():
     # half-width kana and the half-width symbols (￩ U+FFE9): Source Han
     # Sans's 500 centred in the cell (fit_to_grid)
     policy["\uff71"] = policy["\uffe9"] = exp_half
-    for ch, want in policy.items():
-        got = hmtx[cmap[ord(ch)]][0]
-        check(got == want, f"U+{ord(ch):04X} {ch!r} advance {got}, want {want}")
-    print(f"ok   width policy ({len(policy)} probes)")
+    off_policy = {ch: hmtx[cmap[ord(ch)]][0] for ch, want in policy.items()
+                  if hmtx[cmap[ord(ch)]][0] != want}
+    check(not off_policy, f"width policy ({len(policy)} probes; off: {off_policy})")
 
     # and the Greek and Cyrillic the italic faces keep from Source Han
     # Sans: one cell but for the dozen whose ink needs a full width
@@ -163,7 +162,9 @@ def main():
             print("skip  East-Asian-Wide exception (NF face, NF_SYMBOLS unset)")
             wide_one_cell = None
         else:
-            grafted = set(symbols.getBestCmap())
+            # the graft skips a codepoint the face already has, so a
+            # pinned one is never the graft's doing and never subtracted
+            grafted = set(symbols.getBestCmap()) - WIDE_AT_ONE_CELL
     if wide_one_cell is not None:
         # a grafted icon may add to the set (every Nerd Fonts icon is one
         # cell), never take from it
@@ -265,12 +266,14 @@ def main():
     # ≠ and ─ from Source Han Sans, Ａ through Source Han Sans's own fwid
     # form of the proportional A the one-cell A replaced
     fwid_probes = "\u2192\u2260\u2500A"
+    off_fwid = {}
     for ch in fwid_probes:
-        infos, positions = shape_infos(ch, {"fwid": True})
+        _infos, positions = shape_infos(ch, {"fwid": True})
         got = positions[0].x_advance if positions else None
-        check(got == exp_full,
-              f"U+{ord(ch):04X} {ch!r} under fwid advances {got}, want {exp_full}")
-    print(f"ok   fwid restores the full-width forms ({len(fwid_probes)} probes)")
+        if got != exp_full:
+            off_fwid[ch] = got
+    check(not off_fwid, f"fwid restores the full-width forms "
+                        f"({len(fwid_probes)} probes; off: {off_fwid})")
 
 
     def shape_len(text, feats):

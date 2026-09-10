@@ -1267,11 +1267,19 @@ def reference_steps(path, cell, ink_path=None):
             adv = hmtx[name][0]
             if adv <= 0:
                 continue
-            if adv % cell == 0 or adv % FULLWIDTH == 0:
-                # already a step, and the family's. No ink test: the
-                # donor chose this width, and its own full-width glyphs
-                # may overhang it (grid_step only guards a step WE pick)
+            if adv % FULLWIDTH == 0:
+                # the donor's own full width, and its design: no ink
+                # test, since a full-width glyph may overhang it
                 steps[name] = adv
+                continue
+            if adv % cell == 0:
+                # a whole number of cells is a step we would have picked,
+                # so it takes the same ink guard (no glyph needs it today)
+                source = heavy_gs if name in heavy_gs else gs
+                pen = BoundsPen(source)
+                source[name].draw(pen)
+                ink = (pen.bounds[2] - pen.bounds[0]) if pen.bounds else 0
+                steps[name] = adv if ink <= adv + cell // 3 else grid_step(adv, ink, cell)
                 continue
             source = heavy_gs if name in heavy_gs else gs
             pen = BoundsPen(source)
@@ -2046,14 +2054,12 @@ def narrow_halfwidth(font, cell):
     Runs after fit_to_grid (whose grid step the shared glyph took) and
     before widen_fullwidth, which must not widen the copies. Returns the
     number made."""
-    import unicodedata
     cmap = font.getBestCmap()
     hmtx = font["hmtx"]
     gs = font.getGlyphSet()
     cff = font["CFF "].cff
     td = cff[cff.fontNames[0]]
     vdon = vmtx_donor(font, fullwidth=False)
-    appended = getattr(font, "_appended", None)
     made, new = {}, {}
     for cp, name in sorted(cmap.items()):
         if hmtx[name][0] == cell or unicodedata.east_asian_width(chr(cp)) != "H":
@@ -2070,8 +2076,8 @@ def narrow_halfwidth(font, cell):
             made[name] = alloc_glyph_name(font)
             append_glyph(font, td, made[name], pen.getCharString(private=private),
                          fd, cell, None, vdon)
-            if appended is not None:
-                appended.discard(made[name])
+            # read after the append, which creates the set on first use
+            getattr(font, "_appended", set()).discard(made[name])
         new[cp] = made[name]
     set_cmap(font, new)
     return len(new)
@@ -2737,10 +2743,6 @@ def main():
         if stale:
             print(f"removed {len(stale)} stale face(s) from {out_dir}")
 
-    # measured once here, not once per pool worker: two whole Source Han
-    # Sans faces, and every face of the family has to agree on the answer
-    steps = reference_steps(Path(env["SHS_DIR"]) / REFERENCE_SHS, CELL,
-                            Path(env["SHS_DIR"]) / INK_SHS)
     jobs = []
     for suffix, term in VARIANTS.items():
         for weight, shs_file in FACES:
@@ -2748,10 +2750,16 @@ def main():
                 face_label = f"{weight}{' Italic' if italic else ''}"
                 if not face_matches(only, weight, face_label, suffix):
                     continue
-                jobs.append((suffix, term, weight, shs_file, italic,
-                             env, str(out_dir), steps))
+                jobs.append([suffix, term, weight, shs_file, italic,
+                             env, str(out_dir)])
     if not jobs:
         sys.exit(f"no face matches {only!r}")
+    # measured once here, not once per pool worker (two whole Source Han
+    # Sans faces), and after the filter, so a one-face build pays for it
+    # only when there is a face to build
+    steps = reference_steps(Path(env["SHS_DIR"]) / REFERENCE_SHS, CELL,
+                            Path(env["SHS_DIR"]) / INK_SHS)
+    jobs = [tuple(job) + (steps,) for job in jobs]
     run_faces(jobs, build_face,
               label=lambda job: f"{job[2]} [{job[0] or 'base'}]",
               on_result=lambda job, msg: print(msg))
