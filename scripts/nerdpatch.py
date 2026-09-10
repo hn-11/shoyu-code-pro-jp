@@ -16,7 +16,13 @@ Sizing follows font-patcher's own rules for each group (icon_transform):
   - an icon: scaled uniformly by our cell over the symbols' em
     (600 / 2048), so it fits one cell and the groups keep the relative
     sizes Nerd Fonts gave them, with the symbols' line box (-410..1638)
-    centred on ours (-273..984). This is font-patcher's 'pa'.
+    centred on ours (-273..984) — and never above the scale that keeps
+    its ink inside the cell, which two icons Nerd Fonts draws past its
+    own cell (U+EE01, U+EE04 at 2252 of 2048) need. This is
+    font-patcher's 'pa', with one difference: font-patcher fits a mono
+    icon to cell x iconheight, where iconheight is (2 x capHeight +
+    line)/3 — 600 x 856 for these faces, not 600 x 600. See the sizing
+    note at the end of this docstring.
   - a Powerline separator (font-patcher's '^xy' set, SEPARATORS): the
     ink stretched to the cell and to the line box, so consecutive cells
     and stacked lines tile without a seam, keeping the bleed or inset
@@ -45,6 +51,22 @@ Octicon separators; prose wants its own heart. graft_symbols pins that
 one codepoint (TEXT_OVER_ICON) and fails the build when the overlap
 widens, so an upstream release cannot quietly turn a character into an
 icon behind a maintainer's back.
+
+Icon size, the second divergence: font-patcher fits a `--mono` icon
+into cell x iconheight, and iconheight is (2 x capHeight + line) / 3 —
+a box taller than it is wide, 600 x 856 for these faces. Grafting from
+Symbols Nerd Font Mono cannot reproduce that, because the symbols font
+was itself fitted into a square 2048 x 2048 cell and the scale groups
+that hold sets of icons at one size are baked into it: 3,260 of the
+10,369 icons here are taller than they are wide, and each of those is
+up to 1.43x smaller than an official patch would draw it (a group with
+font-patcher's own vertical padding, U+2770 among them, up to 2.1x).
+Re-fitting each icon on its own would break those groups, so the icons
+keep the square cell — the same relative size a reader gets today by
+adding Symbols Nerd Font Mono to a terminal as a fallback font, and the
+side no icon ever spills its cell on. Making it exact needs
+font-patcher's per-group tables, which is the whole complexity this
+module exists without; docs/sumi-moji-plan.md carries the measurement.
 
 Names: "<Family> Nerd Font Mono", PostScript "<PSFamily>NFM-", Nerd
 Fonts' own convention for a font whose icons are one cell wide (nf_name).
@@ -136,15 +158,29 @@ def face_cell(font):
 def icon_transform(cp, ink, ctx):
     """The affine transform taking one symbol's outline onto our cell,
     by the rule for the group `cp` is in (see the module docstring).
-    `ink` is the symbol's bounding box, needed only inside POWERLINE."""
+    `ink` is the symbol's own bounding box: the Powerline rules are
+    written in terms of it, and an icon needs it to be told from the few
+    Nerd Fonts draws past its own cell."""
     s_cell, s_asc, s_desc, cell, asc, desc = ctx
-    # a degenerate box (a blank glyph, a hairline) has no aspect to keep
-    # and nothing to stretch: it takes the plain scale like an icon
-    if cp not in POWERLINE or ink is None or ink[2] <= ink[0] or ink[3] <= ink[1]:
+
+    def flat():
         k = cell / s_cell                                     # 'pa': an icon
         return (k, 0, 0, k, 0, (asc + desc) / 2 - k * (s_asc + s_desc) / 2)
+
+    # a degenerate box (a blank glyph, a hairline) has nothing to fit
+    if ink is None or ink[2] <= ink[0] or ink[3] <= ink[1]:
+        return flat()
     x0, y0, x1, y1 = ink
-    if cp in SEPARATORS:                                      # '^xy'
+    if cp not in POWERLINE:
+        k = cell / s_cell
+        if k * (x1 - x0) <= cell and k * (y1 - y0) <= asc - desc:
+            return flat()
+        # Nerd Fonts draws a few icons past its own cell — U+EE01 and
+        # U+EE04 are 2252 units of a 2048 one — and the em-relative scale
+        # would carry 30u of that into each neighbouring terminal cell.
+        # Those fall through to the fit below: outside the symbols' own
+        # cell, where it put the icon is no guide either, so centre it
+    elif cp in SEPARATORS:                                    # '^xy'
         # the aligned edge is the one the symbols font puts nearest its
         # own cell edge; its offset — a bleed outwards, an inset inwards,
         # font-patcher's overlap — rides along in proportion, while the
@@ -197,7 +233,9 @@ def graft_symbols(font, symbols):
             # take over is a decision and not a side effect
             kept.add(cp)
             continue
-        ink = build._bounds(sgs, scm[cp]) if cp in POWERLINE else None
+        # every icon's box, not only Powerline's: the plain scale needs it
+        # to keep an over-wide icon inside the cell
+        ink = build._bounds(sgs, scm[cp])
         xform = icon_transform(cp, ink, ctx)
         # a symbols glyph with no ink would blank a separator the face
         # draws itself: keep the face's
@@ -285,7 +323,9 @@ def icon_checks(font, symbols=None):
     are for, checked on the built face:
 
       - every codepoint the symbols font has is in the face, grafted or
-        (TEXT_OVER_ICON) already drawn there;
+        (TEXT_OVER_ICON) already drawn there — and every icon among them
+        is one cell wide, draws ink where the symbols font does, and
+        stays inside the cell and the line box;
       - every Powerline glyph in the face draws ink: a blank one leaves
         a hole in every prompt and has no box for the checks below to
         fault;
@@ -332,6 +372,29 @@ def icon_checks(font, symbols=None):
             aspect = (src[2] - src[0]) / (src[3] - src[1])
             if abs((x1 - x0) / (y1 - y0) - aspect) > 0.01 * aspect:
                 skew.append(f"U+{cp:04X}")
+    # and the icons themselves: one cell wide, drawn, inside the cell and
+    # the line. Ten thousand glyphs that nothing here used to measure —
+    # blanking every one of them, or re-encoding them all two cells wide,
+    # passed the whole suite
+    hmtx = font["hmtx"].metrics
+    wide, hollow, over = [], [], []
+    for cp in sorted(want or ()):
+        name = cmap.get(cp)
+        if name is None or cp in POWERLINE or cp in TEXT_OVER_ICON:
+            continue                      # counted above, or the face's own
+        if hmtx[name][0] != cell:
+            wide.append(f"U+{cp:04X}")
+        box = build._bounds(gs, name)
+        if box is None:
+            if build._bounds(sgs, scm[cp]) is not None:
+                hollow.append(f"U+{cp:04X}")
+            continue
+        if box[2] - box[0] > cell + 1 or box[3] - box[1] > asc - desc + 1:
+            over.append(f"U+{cp:04X}")
+
+    def few(bad):
+        return f"{len(bad)}: {bad[:6]}" if bad else "0"
+
     gap = None if want is None else sorted(want - set(cmap))
     missing = ("not checked, no NF_SYMBOLS" if gap is None
                else f"{len(gap)} missing: {[hex(c) for c in gap[:8]]}")
@@ -341,6 +404,12 @@ def icon_checks(font, symbols=None):
          f"({len(seen)} of them Powerline, {missing})"),
         (not blank, f"every Powerline glyph in the face draws ink "
                     f"(blank: {blank})"),
+        (not wide, f"every icon is one cell wide — a Nerd Font MONO "
+                   f"(off: {few(wide)})"),
+        (not hollow, f"every icon the symbols font draws draws in the face "
+                     f"(blank: {few(hollow)})"),
+        (not over, f"every icon fits the cell and the line "
+                   f"(over: {few(over)})"),
         (not short, f"every Powerline separator tiles the cell and the line "
                     f"({len(seen)} Powerline glyphs, off: {short})"),
         (not spill, f"every other Powerline glyph fits the cell (off: {spill})"),

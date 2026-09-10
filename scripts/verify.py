@@ -24,11 +24,20 @@ CASES = [
     ("m >>= g", 5), ("s // c", 5),
     # context guards: an operator run longer than any ligature stays plain
     ("x <|> y", 7), ("a ->> b", 7), ("a ==> b", 7),
+    # every one of these ligated before ligature_guards' prefix guards
+    # were made unconditional — JavaScript's '>>>=' shaped as '>' '>' '≥'
+    ("x >>>= 2", 8), ("a <=== b", 8), ("a ==!= b", 8), ("a <<<= b", 8),
+    ("a <<-> b", 8), ("a <<--> b", 9), ("a <</> b", 8), ("a <~~> b", 8),
+    ("a ==>> b", 8), ("a >>== b", 8),
     # ... while runs that ARE ligatures (added in 3.3) collapse
     ("a &&= b", 5), ("a ~~> b", 5), ("a <!-- b", 5), ("a && b", 5),
     ("a ++ b", 5), ("a =~ b", 5),
     ("日本語 != x", 7),
 ]
+
+# Source Han Sans's own (usWinAscent, usWinDescent), kept by
+# copy_line_metrics for every JP face; see the check that reads it
+WIN_METRICS = (1160, 288)
 
 # suffix in the base family name -> expected (half-width, full-width) advances
 FAMILY_METRICS = {
@@ -45,9 +54,11 @@ WIDE_AT_ONE_CELL = {0x2615, 0x302E, 0x302F, 0x31B4, 0x31B5, 0x31B6, 0x31B7,
 
 # Source Code Pro Italic has no Greek or Cyrillic, so the italic faces
 # keep Source Han Sans's own. Most land on the cell (grid_step), but
-# these are drawn 1005-1064 wide with 844-919 of ink — a full width is
-# the nearest step and the only one their ink fits, so the italic faces
-# give them two columns where the upright ones give one (README, 幅の方針)
+# these fourteen are drawn 755-1005 wide in the reference weight, with
+# 672-972 of ink in the heaviest — over the cell in ink, or near enough
+# the full width in advance, that a full width is the step grid_step
+# picks, so the italic faces give them two columns where the upright
+# ones give one (README, 幅の方針)
 ITALIC_FULLWIDTH = {0x39C, 0x416, 0x41C, 0x424, 0x428, 0x429, 0x42A, 0x42B,
                     0x42E, 0x436, 0x444, 0x448, 0x449, 0x44E}
 
@@ -451,7 +462,7 @@ def main():
     # both families, the full-width form under fwid; the full-width
     # horizontal arrows are cut from the ligature they pair with
     # (ARROW_SOURCE): same vertical extent, within 2u
-    from build import ARROW_SOURCE, ARROWS_H, MONA_AMBIGUOUS
+    from build import ARROW_SOURCE, ARROWS_H, ARROWS_V, MONA_AMBIGUOUS
 
     def advance_of(text, feats):
         _, positions = shape_infos(text, feats)
@@ -474,6 +485,29 @@ def main():
         ok = abs(ymin - lig_ymin) <= 2 and abs(ymax - lig_ymax) <= 2
         check(ok, f"{ch!r} (fwid) y extent {ymin}..{ymax} "
                   f"vs {seq!r} {lig_ymin}..{lig_ymax}")
+
+    # ... and each one sits centred in that advance with its ink inside
+    # it. stretch_arrows used to centre the DE-SLANTED outline, and the
+    # box of a sheared shape is not the shear of its box: in the italic
+    # faces every arrow came out tan(11°) of its own height to the right
+    # — 67u off centre, ⇐ 56u into the next cell, ↑ 72u away from ↓
+    from fontTools.pens.boundsPen import BoundsPen
+    arrow_gs = tf.getGlyphSet()
+    off_centre = {}
+    for ch in ARROWS_H + ARROWS_V:
+        infos, _ = shape_infos(ch, {"fwid": True})
+        name = glyph_order[infos[0].codepoint]
+        adv = tf["hmtx"][name][0]
+        pen = BoundsPen(arrow_gs)
+        arrow_gs[name].draw(pen)
+        box = pen.bounds
+        if box is None:
+            off_centre[ch] = "blank"
+        elif (abs((box[0] + box[2]) / 2 - adv / 2) > 2
+              or box[0] < -1 or box[2] > adv + 1):
+            off_centre[ch] = (round(box[0]), round(box[2]), adv)
+    check(not off_centre, f"every fwid arrow is centred inside its advance "
+                          f"({len(ARROWS_H + ARROWS_V)} probes; off: {off_centre})")
 
     # stroke weight: the Latin is Source Code Pro's named instance for
     # this weight, so its '=' bar must measure the VF's at that wght
@@ -594,11 +628,20 @@ def main():
     check(ok, f"hhea ascent/descent sane "
               f"(ascent={hhea.ascent}, descent={hhea.descent})")
 
-    ok = (os2.sTypoAscender > 0 and os2.sTypoDescender < 0
-          and os2.usWinAscent > 0 and os2.usWinDescent > 0)
-    check(ok, f"OS/2 typo/win metrics sane "
-              f"(typoAsc={os2.sTypoAscender}, typoDesc={os2.sTypoDescender}, "
-              f"winAsc={os2.usWinAscent}, winDesc={os2.usWinDescent})")
+    ok = os2.sTypoAscender > 0 and os2.sTypoDescender < 0
+    check(ok, f"OS/2 typo metrics sane "
+              f"(typoAsc={os2.sTypoAscender}, typoDesc={os2.sTypoDescender})")
+    # pinned, not merely positive: these are Source Han Sans's own, kept
+    # deliberately (copy_line_metrics, README 行の高さ). They are the GDI
+    # line height as much as a clipping bound, and this family's ink
+    # reaches 1808/-1048 — covering it would give a 2856u line, more than
+    # twice the 1257u every renderer that honours USE_TYPO_METRICS uses.
+    # The cost is that the Latin layer's box drawing (-400) and block
+    # elements (-454) sit below the bound; docs/sumi-moji-plan.md carries
+    # the measurement and what raising it would trade
+    check((os2.usWinAscent, os2.usWinDescent) == WIN_METRICS,
+          f"win metrics are Source Han Sans's {WIN_METRICS}, got "
+          f"({os2.usWinAscent}, {os2.usWinDescent})")
 
     if "Nerd Font" in fam:
         import nerdpatch

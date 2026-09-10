@@ -64,16 +64,24 @@ runs:
       id: paths
       shell: bash
       run: |
-        # the Nerd Fonts zip's layout is not ours to rely on: say so here,
-        # not with `cp ""` in the package job an hour later
+        # no zip's layout is ours to rely on: say so here, not with
+        # `cp ""` in the package job an hour later — and shs_dir needs
+        # saying most of all, because `dirname ""` is '.', which exists,
+        # so build.py's env check would wave an empty find straight
+        # through and fail six jobs later on ./SourceHanSansJP-*.otf
         nf_symbols=$(find upstreams/nf -name 'SymbolsNerdFontMono-Regular.ttf' | sort | head -1)
         nf_license=$(find upstreams/nf -iname 'LICENSE*' | sort | head -1)
-        for v in nf_symbols nf_license; do
-          [ -n "${!v}" ] || { echo "::error::$v not found in NerdFontsSymbolsOnly.zip ($NF_TAG)"; exit 1; }
+        shs_regular=$(find upstreams/shs -name 'SourceHanSansJP-Regular.otf' | head -1)
+        scp_vf_u=$(find upstreams/scp -name 'SourceCodeVF-Upright.otf' | head -1)
+        scp_vf_i=$(find upstreams/scp -name 'SourceCodeVF-Italic.otf' | head -1)
+        mona_vf=$(find upstreams/mona -name 'Monaspace Neon Var.ttf' | head -1)
+        for v in nf_symbols nf_license shs_regular scp_vf_u scp_vf_i mona_vf; do
+          tags="SHS $SHS_TAG, SCP $SCP_TAG, Monaspace $MONA_TAG, Nerd Fonts $NF_TAG"
+          [ -n "${!v}" ] || { echo "::error::$v not found in the upstream zips ($tags)"; exit 1; }
         done
         echo "nf_symbols=$nf_symbols" >> "$GITHUB_OUTPUT"
         echo "nf_license=$nf_license" >> "$GITHUB_OUTPUT"
-        echo "shs_dir=$(dirname "$(find upstreams/shs -name 'SourceHanSansJP-Regular.otf' | head -1)")" >> "$GITHUB_OUTPUT"
-        echo "scp_vf_u=$(find upstreams/scp -name 'SourceCodeVF-Upright.otf' | head -1)" >> "$GITHUB_OUTPUT"
-        echo "scp_vf_i=$(find upstreams/scp -name 'SourceCodeVF-Italic.otf' | head -1)" >> "$GITHUB_OUTPUT"
-        echo "mona_vf=$(find upstreams/mona -name 'Monaspace Neon Var.ttf' | head -1)" >> "$GITHUB_OUTPUT"
+        echo "shs_dir=$(dirname "$shs_regular")" >> "$GITHUB_OUTPUT"
+        echo "scp_vf_u=$scp_vf_u" >> "$GITHUB_OUTPUT"
+        echo "scp_vf_i=$scp_vf_i" >> "$GITHUB_OUTPUT"
+        echo "mona_vf=$mona_vf" >> "$GITHUB_OUTPUT"

@@ -126,6 +126,25 @@ def test_icon_transform_scales_an_icon_by_the_cell_over_the_em():
     assert k * 614 + xform[5] == pytest.approx(355.5)
 
 
+def test_icon_transform_keeps_an_over_wide_icon_inside_the_cell():
+    """Nerd Fonts draws a few icons past its own cell — U+EE01 and U+EE04
+    are 2252 units of a 2048 one — and the em-relative scale would carry
+    30u of that into each neighbouring terminal cell."""
+    ctx = nerdpatch.icon_context(_face(), _symbols())
+    k = 600 / 2048
+    fits = (0, 0, 2048, 2048)
+    assert _place(nerdpatch.icon_transform(0xE100, fits, ctx), fits)[2] \
+        == pytest.approx(2048 * k)                    # the flat scale
+    small = (512, 0, 1536, 1024)
+    box = _place(nerdpatch.icon_transform(0xE100, small, ctx), small)
+    assert box[2] - box[0] == pytest.approx(1024 * k)  # small stays small
+    assert box[0] == pytest.approx(512 * k)            # and stays put
+    over = (-102, -410, 2150, 1638)                    # 2252 wide
+    box = _place(nerdpatch.icon_transform(0xE100, over, ctx), over)
+    assert box[2] - box[0] == pytest.approx(600)       # fitted to the cell
+    assert box[0] + box[2] == pytest.approx(600)       # and centred in it
+
+
 def test_icon_transform_stretches_a_separator_to_the_cell_and_the_line():
     ctx = nerdpatch.icon_context(_face(), _symbols())
     # a separator that fills its own cell and line box fills ours
@@ -293,6 +312,27 @@ def test_icon_checks_faults_a_powerline_glyph_with_no_ink(monkeypatch):
                   if "draws ink" in msg or "tiles the cell" in msg]
     assert (ink[0], "U+E0B0" in ink[1]) == (False, True)
     assert tiles[0] is True                      # no box to be short: hence the check
+
+
+def test_icon_checks_faults_a_two_cell_or_blank_icon(monkeypatch):
+    """Ten thousand icons that nothing measured: blanking every one of
+    them, or re-encoding them all two cells wide, passed the whole
+    suite."""
+    face, symbols = _grafted(monkeypatch)
+    icon = face.getBestCmap()[0xE000]
+    face["hmtx"].metrics[icon] = (1200, face["hmtx"].metrics[icon][1])
+    got = _checks(face, symbols)
+    assert got["every icon is one cell wide — a Nerd Font MONO"] is False
+    assert got["every icon the symbols font draws draws in the face"] is True
+
+    face, symbols = _grafted(monkeypatch)
+    cff = face["CFF "].cff
+    cs = cff[cff.fontNames[0]].CharStrings[face.getBestCmap()[0xE000]]
+    cs.decompile()
+    cs.program = ["endchar"]
+    got = _checks(face, symbols)
+    assert got["every icon the symbols font draws draws in the face"] is False
+    assert got["every icon fits the cell and the line"] is True   # no box to fault
 
 
 def test_icon_checks_faults_an_icon_that_never_reached_the_face(monkeypatch):

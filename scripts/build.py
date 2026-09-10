@@ -1207,13 +1207,26 @@ def stretch_arrows(font, added, fullwidth, slant=0.0, chars=ARROWS_H + ARROWS_V)
         b = path.bounds
         have = (b[2] - b[0]) if axis == 0 else (b[3] - b[1])
         want = (shs[2] - shs[0]) if axis == 0 else (shs[3] - shs[1])
+        if axis == 0 and t:
+            # putting the slant back widens the ink by however far the
+            # shape leans across its own height, and SHS's ink extent is
+            # what the finished arrow must match. Take it off the shaft
+            # here: de-slanted is the only state stretch_path can cut in
+            # without breaking a slanted shaft
+            lean = _xform_path(path, (1, 0, t, 1, 0, 0)).bounds
+            want -= (lean[2] - lean[0]) - have
         path = stretch_path(path, axis, want - have)
-        b = path.bounds
+        path = _xform_path(path, (1, 0, t, 1, 0, 0))       # the slant back
         # center on the advance; keep the ligature's baseline alignment for
-        # horizontal arrows, take SHS's own vertical center for ↑ ↓
+        # horizontal arrows, take SHS's own vertical center for ↑ ↓.
+        # Measured on the SLANTED outline: the box of a sheared shape is
+        # not the shear of its box, and centring on the upright one left
+        # every italic arrow tan(11°) of its own height to the right — 67u
+        # off centre, ⇐ 56u into the next cell, and ↑ 72u away from ↓
+        b = path.bounds
         tx = adv / 2 - (b[0] + b[2]) / 2
         ty = 0 if axis == 0 else (shs[1] + shs[3]) / 2 - (b[1] + b[3]) / 2
-        path = _xform_path(path, (1, 0, t, 1, tx + t * ty, ty))
+        path = _xform_path(path, (1, 0, 0, 1, tx, ty))
         pen = T2CharStringPen(pen_width(private, adv), gs)
         path.draw(pen)
         name = alloc_glyph_name(font)
@@ -1815,13 +1828,30 @@ def _guard_subtables(font, gsub, seq_map, lig_lookup):
         seen.add((prefix, glyphs, suffix))
         builder.rules.append(Rule([{g} for g in prefix], [{g} for g in glyphs],
                                   [{g} for g in suffix], [None] * len(glyphs)))
+    # A guard whose backtrack is non-empty (a, c) starts to the RIGHT of
+    # the longer ligature it might pre-empt, so that ligature's own
+    # trigger matches first, at the earlier position, and consumes the
+    # run before this guard is reached: such a guard is always safe, and
+    # skipping it when the longer run is itself a ligature is what let
+    # '>>>=' shape as '>' '>' '≥' — the '>>' guard consumed the first two
+    # glyphs and left '>=' unguarded, and the '>>=' that was supposed to
+    # take them never got the chance.
+    #
+    # A guard whose backtrack is empty (b, d) starts where that longer
+    # ligature starts, and every guard is tried before every trigger, so
+    # it WOULD pre-empt it: '===' shaped as three plain glyphs the moment
+    # '==' was guarded against a following '='. Those two keep the skip.
     for seq in sorted(seqs, key=len, reverse=True):
-        if (seq[0],) + seq not in seqs:
-            ignore((seq[0],), seq, ())                            # a
+        ignore((seq[0],), seq, ())                                # a
         if seq + (seq[-1],) not in seqs:
             ignore((), seq, (seq[-1],))                           # b
         for other in seqs:
-            if other[-1] == seq[0] and other[:-1] + seq not in seqs:
+            # every ligature whose tail is this one, not only those that
+            # overlap it by a single glyph: '=!=' ends with '!=', and
+            # without this '==!=' shaped as '=' '=' '≠'
+            if len(other) > len(seq) and other[-len(seq):] == seq:
+                ignore(other[:-len(seq)], seq, ())                # c
+            if other[-1] == seq[0]:
                 ignore(other[:-1], seq, ())                       # c
             if other[0] == seq[-1] and seq + other[1:] not in seqs:
                 ignore((), seq, other[1:])                        # d

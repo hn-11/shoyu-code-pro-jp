@@ -624,6 +624,73 @@ def test_add_gsub_guard_keeps_longer_run_plain(gsub_font_bytes):
     assert len(_shape(gsub_font_bytes, "<->", features)) == 3
 
 
+def _shift_font_bytes():
+    """The real font's '>' family in miniature: '>=', '>>' and '>>=' are
+    ligatures, '>>>' and '>>>=' are not."""
+    glyph_order = [".notdef", "greater", "equal", "lig_ge", "lig_gg", "lig_gge"]
+    font = _tt_font(glyph_order, {ord(">"): "greater", ord("="): "equal"},
+                    {g: 600 for g in glyph_order})
+    font["GSUB"] = newTable("GSUB")
+    font["GSUB"].table = _empty_gsub_table()
+    ligatures = {">=": {"cells": 2, "glyphs": ["ge"], "group": "ss01"},
+                 ">>": {"cells": 2, "glyphs": ["gg"], "group": "ss01"},
+                 ">>=": {"cells": 3, "glyphs": ["gge"], "group": "ss01"}}
+    added = {">=": "lig_ge", ">>": "lig_gg", ">>=": "lig_gge"}
+    build.add_gsub(font, added, {}, ligatures, {}, {})
+    buf = io.BytesIO()
+    font.save(buf)
+    return buf.getvalue()
+
+
+def test_add_gsub_guard_holds_when_the_longer_ligature_is_itself_blocked():
+    """'>>>=' shaped as '>' '>' '≥': the '>>' guard consumed the first two
+    glyphs, so the '>>=' that was supposed to claim them never matched,
+    and '>=' was left unguarded because that '>>=' existed. A guard with
+    a backtrack is safe unconditionally — the longer ligature's own
+    trigger matches at the earlier position and consumes the run first."""
+    b = _shift_font_bytes()
+    on = {"calt": True, "liga": True}
+    assert len(_shape(b, ">=", on)) == 1        # still ligatures
+    assert len(_shape(b, ">>", on)) == 1
+    assert len(_shape(b, ">>=", on)) == 1
+    assert len(_shape(b, ">>>=", on)) == 4      # the leak
+    assert len(_shape(b, ">>>", on)) == 3
+    assert len(_shape(b, "a >>= b", on)) == 5
+
+
+def test_guard_subtables_keep_the_skip_only_for_lookahead_guards():
+    """A guard whose backtrack is empty starts where the longer ligature
+    starts, and every guard is tried before every trigger, so it would
+    pre-empt it — '===' shaped as three plain glyphs the moment '==' was
+    guarded against a following '='. Those keep the skip; the backtrack
+    ones do not."""
+    glyph_order = [".notdef", "greater", "equal", "lig_ge", "lig_gg",
+                   "lig_gge", "lig_ee", "lig_eee"]
+    font = _tt_font(glyph_order, {ord(">"): "greater", ord("="): "equal"},
+                    {g: 600 for g in glyph_order})
+    subtables = build._guard_subtables(font, None, {
+        ("greater", "equal"): "lig_ge", ("greater", "greater"): "lig_gg",
+        ("greater", "greater", "equal"): "lig_gge",
+        ("equal", "equal"): "lig_ee",
+        ("equal", "equal", "equal"): "lig_eee"}, 0)
+    st = subtables[0]
+    guards = set()
+    for gi, ruleset in enumerate(st.ChainSubRuleSet):
+        if ruleset is None:
+            continue
+        first = st.Coverage.glyphs[gi]
+        for rule in ruleset.ChainSubRule:
+            if not rule.SubstLookupRecord:
+                guards.add((tuple(rule.Backtrack), (first,) + tuple(rule.Input),
+                            tuple(rule.LookAhead)))
+    # '>>=' is a ligature, and '>=' is guarded after a '>' all the same
+    assert (("greater",), ("greater", "equal"), ()) in guards
+    # '===' is a ligature, so '==' is NOT guarded before a '='
+    assert ((), ("equal", "equal"), ("equal",)) not in guards
+    # ... but it is guarded after one
+    assert (("equal",), ("equal", "equal"), ()) in guards
+
+
 def test_add_gsub_calt_liga_off_leaves_ligatures_plain(gsub_font_bytes):
     assert len(_shape(gsub_font_bytes, "->",
                       {"calt": False, "liga": False})) == 2
