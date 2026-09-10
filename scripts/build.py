@@ -94,9 +94,6 @@ ROOT = Path(__file__).resolve().parent.parent
 # the half-width cell: Source Code Pro's own advance (upm 1000), which
 # Sumi Moji keeps as it is — one number, since v5 rescales nothing
 CELL = 600
-# Unicode's Halfwidth block: one column in every terminal's width table
-# (East_Asian_Width H), whatever Source Han Sans draws them at
-HALFWIDTH = tuple(range(0xFF61, 0xFFE0)) + tuple(range(0xFFE8, 0xFFEF))
 FULLWIDTH = 1000    # full-width advance of the CJK layer (upm 1000)
 MONA_CELL = 1240    # Monaspace advance (upm 2000)
 
@@ -797,17 +794,27 @@ def shift_anchors(font, shifts):
     the anchor stayed, putting ˫ over the letter.
 
     `shifts` is {glyph name: how far its outline moved}. GPOS type 9
-    (Extension) is unwrapped; types 3 (cursive), 4 (mark-to-base), 5
-    (mark-to-ligature) and 6 (mark-to-mark) carry the anchors. Returns
-    the number of anchors moved."""
+    (Extension) is unwrapped by _unwrap_pos; types 3 (cursive), 4
+    (mark-to-base), 5 (mark-to-ligature) and 6 (mark-to-mark) carry the
+    anchors. Returns the number of anchors moved."""
     if "GPOS" not in font or not shifts:
         return 0
     moved = 0
     for lookup in font["GPOS"].table.LookupList.Lookup:
-        kind, subtables = _unwrap(lookup)
+        kind, subtables = _unwrap_pos(lookup)
         for sub in subtables:
             moved += _shift_subtable_anchors(kind, sub, shifts)
     return moved
+
+
+def _unwrap_pos(lookup):
+    """(LookupType, [subtables]) for a GPOS lookup, with Extension
+    unwrapped. GPOS numbers Extension 9, where GSUB numbers it 7 (and
+    GPOS's own 7 is contextual positioning), so this is not _unwrap."""
+    if lookup.LookupType != 9:
+        return lookup.LookupType, lookup.SubTable
+    subs = [st.ExtSubTable for st in lookup.SubTable]
+    return (subs[0].LookupType if subs else None), subs
 
 
 def _shift_subtable_anchors(kind, sub, shifts):
@@ -2026,8 +2033,10 @@ def add_gsub(font, added, alts, ligatures, variant_maps=None,
 
 
 def narrow_halfwidth(font, cell):
-    """Unicode's Halfwidth block is one cell by definition, and every
-    terminal's width table gives it one column. Source Han Sans aliases
+    """A character Unicode calls Halfwidth (East_Asian_Width H, taken
+    from unicodedata so this and verify.py cannot disagree) is one cell,
+    and every terminal's width table gives it one column. Source Han Sans
+    aliases
     the halfwidth Hangul letters (U+FFA1-FFDC) to the wide compatibility
     jamo they came from — one 920-unit glyph for U+3131 and U+FFA1
     alike — so putting that glyph on the grid puts both on a full width.
@@ -2037,23 +2046,32 @@ def narrow_halfwidth(font, cell):
     Runs after fit_to_grid (whose grid step the shared glyph took) and
     before widen_fullwidth, which must not widen the copies. Returns the
     number made."""
+    import unicodedata
     cmap = font.getBestCmap()
     hmtx = font["hmtx"]
     gs = font.getGlyphSet()
-    td, _cmap, fd_index, private, vdon = append_context(font)
+    cff = font["CFF "].cff
+    td = cff[cff.fontNames[0]]
+    vdon = vmtx_donor(font, fullwidth=False)
+    appended = getattr(font, "_appended", None)
     made, new = {}, {}
-    for cp in HALFWIDTH:
-        name = cmap.get(cp)
-        if name is None or hmtx[name][0] == cell:
+    for cp, name in sorted(cmap.items()):
+        if hmtx[name][0] == cell or unicodedata.east_asian_width(chr(cp)) != "H":
             continue
         if name not in made:
-            adv = hmtx[name][0]
-            shift = (cell - adv) // 2
+            # the copy stays in the source glyph's own FontDict: it is a
+            # Hangul jamo, and add_latin_fd would otherwise re-home it
+            # with the grafted Latin and hint it against Latin blues
+            fd = td.FDSelect[font.getGlyphID(name)] if hasattr(td, "FDArray") else None
+            private = td.FDArray[fd].Private if fd is not None else td.Private
+            shift = (cell - hmtx[name][0]) // 2
             pen = T2CharStringPen(pen_width(private, cell), gs)
             gs[name].draw(TransformPen(pen, (1, 0, 0, 1, shift, 0)))
             made[name] = alloc_glyph_name(font)
             append_glyph(font, td, made[name], pen.getCharString(private=private),
-                         fd_index, cell, None, vdon)
+                         fd, cell, None, vdon)
+            if appended is not None:
+                appended.discard(made[name])
         new[cp] = made[name]
     set_cmap(font, new)
     return len(new)
@@ -2661,8 +2679,10 @@ def build_face(job):
         # if a future donor aliases two characters with different forms
         src, want = cmap_now[cp], arrows.get(cp, old)
         if fwid_map.setdefault(src, want) != want:
-            print(f"  warn: fwid for U+{cp:04X} lost, {src} already maps to "
-                  f"{fwid_map[src]} (wanted {want})")
+            raise ValueError(
+                f"fwid for U+{cp:04X} cannot be wired: {src} is shared with "
+                f"another codepoint and already maps to {fwid_map[src]}, not "
+                f"{want}. The two need separate glyphs (see graft_halfwidth)")
     add_width_alternates(base, fwid_map)
     if term:
         # the ligatures are the Latin layer's only multi-cell glyphs, so

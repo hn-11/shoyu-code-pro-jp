@@ -874,6 +874,15 @@ def test_shift_anchors_moves_a_base_anchor_with_its_outline():
     assert still.BaseAnchor[0].XCoordinate == 500      # not shifted, not moved
     assert build.shift_anchors(font, {}) == 0
 
+    # and through GPOS's own Extension, which is type 9 (GSUB's is 7)
+    ext = otTables.ExtensionPos()
+    ext.Format, ext.ExtSubTable = 1, sub
+    wrapper = otTables.Lookup()
+    wrapper.LookupType, wrapper.SubTable = 9, [ext]
+    gpos.table.LookupList.Lookup = [wrapper]
+    assert build.shift_anchors(font, {"base": 60}) == 1
+    assert base.BaseAnchor[0].XCoordinate == 800
+
 
 def test_restore_cid_count_covers_the_highest_cid(tmp_path):
     """cffsubr sets CIDCount from the last charset entry; Source Han

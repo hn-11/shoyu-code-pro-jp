@@ -151,7 +151,7 @@ def main():
     # upstream release that adds one has to be looked at, not absorbed
     import unicodedata
     wide_one_cell = {cp for cp, g in cmap.items()
-                     if hmtx[g][0] == exp_half and not 0xE000 <= cp <= 0xF8FF
+                     if hmtx[g][0] == exp_half
                      and unicodedata.east_asian_width(chr(cp)) in ("W", "F")}
     grafted = set()
     if "Nerd Font" in fam:
@@ -312,10 +312,7 @@ def main():
     # the upright faces) must stay a 0-advance mark, not become a spacing
     # glyph that takes a cell when selected
     tags = {fr.FeatureTag for fr in tf["GSUB"].table.FeatureList.FeatureRecord}
-    # nothing may move a glyph off the horizontal cell: 'kern' is on by
-    # default in every horizontal shaper and Source Han Sans kerns あ+て
-    # 20u tighter than the cell; 'halt' and 'palt' are alternate
-    # horizontal metrics (drop_features). The vertical features stay
+
     # a CID-keyed font's CIDCount must cover every CID it uses: cffsubr
     # takes it from the last charset entry, and Source Han Sans's space
     # is sparse (build.restore_cid_count)
@@ -327,6 +324,10 @@ def main():
         check(td.CIDCount > top,
               f"CFF CIDCount {td.CIDCount} covers every CID (highest {top})")
 
+    # nothing may move a glyph off the horizontal cell: 'kern' is on by
+    # default in every horizontal shaper and Source Han Sans kerns あ+て
+    # 20u tighter than the cell; 'halt' and 'palt' are alternate
+    # horizontal metrics (drop_features). The vertical features stay
     gpos = {fr.FeatureTag for fr in tf["GPOS"].table.FeatureList.FeatureRecord} \
         if "GPOS" in tf else set()
     for tag in ("kern", "halt", "palt"):
