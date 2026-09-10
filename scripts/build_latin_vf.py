@@ -478,7 +478,7 @@ def build_style(style, env, out_dir):
 
     # 5. designspace: in-memory sources (no masters written to disk) at
     #    their SCP-linear design coordinate, the user axis map (varLib
-    #    turns it into avar), 6 named instances at the usWeightClass
+    #    turns it into avar), 5 named instances at the usWeightClass
     #    user values (designspace instance locations are DESIGN
     #    coordinates; varLib maps them back through the axis map for fvar)
     doc = DesignSpaceDocument()

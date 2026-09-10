@@ -1953,15 +1953,22 @@ def add_gsub(font, added, alts, ligatures, variant_maps=None,
 
 def fullwidth_forms(font, replaced):
     """{codepoint: Source Han Sans's two-cell glyph} for the codepoints
-    graft_halfwidth replaced: the replaced glyph itself when it is
-    full-width, else the glyph Source Han Sans's own fwid feature maps it
-    to when that one is; the rest (Greek in Source Han Sans JP) have no
-    two-cell form and are left out."""
+    graft_halfwidth replaced: the glyph Source Han Sans's own fwid
+    feature maps the replaced one to, else the replaced glyph itself
+    when it is full-width; the rest (Greek in Source Han Sans JP) have
+    no two-cell form and are left out.
+
+    The fwid form first, because it is the designed two-cell glyph:
+    Source Han Sans draws ％ ＠ Ｍ ｍ ｗ ― differently from the % @ M m w
+    — it also has at a proportional advance, and fit_to_grid may since
+    have re-advanced those to a full width (an em dash's bar sits 100u
+    higher in the two-cell design). Nothing full-width is a fwid source,
+    so the order costs the natively two-cell glyphs nothing."""
     hmtx = font["hmtx"]
     fw = feature_map(font, "fwid")
     out = {}
     for cp, old in replaced.items():
-        for g in (old, fw.get(old)):
+        for g in (fw.get(old), old):
             if g is not None and hmtx[g][0] == FULLWIDTH:
                 out[cp] = g
                 break
@@ -2476,7 +2483,7 @@ def write_face(font, out, hint_glyphs):
 def build_face(job):
     """Build one output face. Plain data in and out, so it can run in a
     pool worker (unfiltered builds) as well as in-process."""
-    suffix, term, weight, shs_file, italic, env, out_dir = job
+    suffix, term, weight, shs_file, italic, env, out_dir, steps = job
     face_label = f"{weight}{' Italic' if italic else ''}"
     latin_path = latin_face_path(env["LATIN_DIR"], weight, italic)
     if not latin_path.exists():
@@ -2496,8 +2503,6 @@ def build_face(job):
     # 500-advance alternates included (walked BEFORE dropping any
     # features that might touch it); pwid / palt have no meaning in a
     # fixed-cell font
-    steps = reference_steps(Path(env["SHS_DIR"]) / REFERENCE_SHS, CELL,
-                            Path(env["SHS_DIR"]) / INK_SHS)
     n_fit = fit_to_grid(base, CELL, steps=steps)
     # kern would pull Japanese pairs off the cell in any shaper that
     # lays out a run (VS Code, a browser); halt and palt are alternate
@@ -2578,6 +2583,10 @@ def main():
         if stale:
             print(f"removed {len(stale)} stale face(s) from {out_dir}")
 
+    # measured once here, not once per pool worker: two whole Source Han
+    # Sans faces, and every face of the family has to agree on the answer
+    steps = reference_steps(Path(env["SHS_DIR"]) / REFERENCE_SHS, CELL,
+                            Path(env["SHS_DIR"]) / INK_SHS)
     jobs = []
     for suffix, var in VARIANTS.items():
         for weight, shs_file in FACES:
@@ -2586,7 +2595,7 @@ def main():
                 if not face_matches(only, weight, face_label, suffix):
                     continue
                 jobs.append((suffix, var.term, weight, shs_file, italic,
-                             env, str(out_dir)))
+                             env, str(out_dir), steps))
     if not jobs:
         sys.exit(f"no face matches {only!r}")
     run_faces(jobs, build_face,

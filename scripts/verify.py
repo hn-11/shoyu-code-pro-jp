@@ -110,9 +110,9 @@ def main():
     exp_half, exp_full = expected_metrics(tf)
     print(f"family={fam!r} italic={italic} half={a_adv} full={cjk_adv} "
           f"ratio={cjk_adv/a_adv:.3f}")
-    assert (a_adv, cjk_adv) == (exp_half, exp_full), (
-        f"{FONT}: expected (half,full)=({exp_half},{exp_full}) for family "
-        f"{fam!r}, got ({a_adv},{cjk_adv})")
+    check((a_adv, cjk_adv) == (exp_half, exp_full),
+          f"(half, full) == ({exp_half}, {exp_full}) for family {fam!r}, "
+          f"got ({a_adv}, {cjk_adv})")
 
     # every codepoint Sumi Moji has is one cell in both families — the
     # ligature-paired arrows and operators, Greek, box drawing, SCP-only
@@ -186,8 +186,9 @@ def main():
     # overhangs by design (up to 138u in the Latin layer), a glyph put on
     # a step too small for its ink would not (grid_step)
     from build import glyph_bounds
+    bounds = glyph_bounds(tf)          # one draw pass, shared below
     spill = [(name, hmtx[name][0], round(box[2] - box[0]))
-             for name, box in glyph_bounds(tf).items()
+             for name, box in bounds.items()
              if hmtx[name][0] > 0 and (box[2] - box[0]) > hmtx[name][0] + exp_half]
     check(not spill, f"no glyph's ink spills a whole cell past its advance "
                      f"({len(spill)} do, e.g. {spill[:3]})")
@@ -209,6 +210,8 @@ def main():
     # -- and the left side bearing must be the outline's xMin (a CFF
     # font's lsb is nothing fontTools maintains: the Latin donors used to
     # carry SCP's default-master bearings at every weight)
+    # hmtx_mismatches draws the charstrings themselves (it compares the
+    # width encoded in each, which the bounds above do not carry)
     widths, bearings = hmtx_mismatches(tf)
     check(not widths, f"CFF charstring widths agree with hmtx "
                       f"({len(tf.getGlyphOrder())} glyphs, {len(widths)} off: {widths[:5]})")

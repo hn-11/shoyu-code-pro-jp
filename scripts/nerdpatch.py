@@ -236,15 +236,16 @@ def icon_checks(font, symbols=None):
     scm = symbols.getBestCmap() if symbols is not None else {}
     # every Powerline glyph the symbols font has must have reached the
     # face: a graft that added none of them would otherwise pass, having
-    # nothing to measure
-    want = sum(cp in scm for cp in POWERLINE) if sgs is not None else None
-    seen, short, spill, skew = 0, [], [], []
+    # nothing to measure. The face may carry more (a donor's own), never
+    # fewer
+    want = {cp for cp in POWERLINE if cp in scm} if sgs is not None else None
+    seen, short, spill, skew = set(), [], [], []
     for cp in POWERLINE:
         name = cmap.get(cp)
         ink = build._bounds(gs, name) if name else None
         if ink is None:
             continue
-        seen += 1
+        seen.add(cp)
         x0, y0, x1, y1 = ink
         if cp in SEPARATORS:
             if x1 - x0 < 0.9 * cell or y1 - y0 < 0.9 * (asc - desc):
@@ -257,12 +258,14 @@ def icon_checks(font, symbols=None):
             aspect = (src[2] - src[0]) / (src[3] - src[1])
             if abs((x1 - x0) / (y1 - y0) - aspect) > 0.01 * aspect:
                 skew.append(f"U+{cp:04X}")
+    missing = ("not checked, no NF_SYMBOLS" if want is None
+               else f"missing: {sorted(hex(c) for c in want - seen)}")
     return [
-        (want is None or seen == want,
+        (want is None or want <= seen,
          f"every Powerline glyph the symbols font has is in the face "
-         f"({seen}, want {'not checked, no NF_SYMBOLS' if want is None else want})"),
+         f"({len(seen)} present, {missing})"),
         (not short, f"every Powerline separator tiles the cell and the line "
-                    f"({seen} Powerline glyphs, off: {short})"),
+                    f"({len(seen)} Powerline glyphs, off: {short})"),
         (not spill, f"every other Powerline glyph fits the cell (off: {spill})"),
         (not skew, f"every other Powerline glyph keeps Nerd Fonts' aspect "
                    f"({'not checked, no NF_SYMBOLS' if sgs is None else f'off: {skew}'})"),
