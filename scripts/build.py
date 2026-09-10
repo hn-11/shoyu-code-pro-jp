@@ -1300,7 +1300,7 @@ def reference_steps(path, cell, ink_path=None):
     return _REFERENCE_STEPS[key]
 
 
-def fit_to_grid(font, cell, steps=None, glyph_names=None):
+def fit_to_grid(font, cell, steps=None):
     """Centre Source Han Sans's proportional leftovers on the grid: every
     glyph whose advance is neither 0 nor a whole number of cells nor of
     full widths — the half-width kana and symbols at 500 (half of the
@@ -1317,13 +1317,12 @@ def fit_to_grid(font, cell, steps=None, glyph_names=None):
 
     `steps` (when given) is reference_steps()' {glyph name: step}, so
     every weight of the family agrees on a glyph's width; a name it does
-    not have falls back to this face's own advance. `glyph_names`
-    replaces the whole-font scan. Returns the number of glyphs moved."""
+    not have falls back to this face's own advance. Returns the number
+    of glyphs moved."""
     cff = font["CFF "].cff
     td = cff[cff.fontNames[0]]
     gs = font.getGlyphSet()
     hmtx = font["hmtx"]
-    done = set()
     drawn, shifted = {}, {}
     moved = 0
     # a glyph this build appended carries a name alloc_glyph_name took
@@ -1331,10 +1330,7 @@ def fit_to_grid(font, cell, steps=None, glyph_names=None):
     # reference name that means something else entirely. Ours are on the
     # grid by construction and take the fallback path
     appended = getattr(font, "_appended", frozenset())
-    for name in (font.getGlyphOrder() if glyph_names is None else glyph_names):
-        if name is None or name in done:
-            continue
-        done.add(name)
+    for name in font.getGlyphOrder():
         adv, lsb = hmtx.metrics[name]
         if adv <= 0:
             continue
@@ -2056,7 +2052,8 @@ def narrow_halfwidth(font, cell):
     jamo they came from — one 920-unit glyph for U+3131 and U+FFA1
     alike — so putting that glyph on the grid puts both on a full width.
     Each halfwidth codepoint that shares a wider glyph gets a one-cell
-    copy of it, centred, and the wide codepoint keeps the original.
+    copy of it, condensed to the cell, and the wide codepoint keeps the
+    original.
 
     Runs after fit_to_grid (whose grid step the shared glyph took) and
     before widen_fullwidth, which must not widen the copies. Returns the
@@ -2077,9 +2074,14 @@ def narrow_halfwidth(font, cell):
             # with the grafted Latin and hint it against Latin blues
             fd = glyph_fd(font, td, name)
             private = glyph_private(font, td, name)
-            shift = (cell - hmtx[name][0]) // 2
+            # condensed into the cell, not just re-advanced: Source Han
+            # Sans's jamo carry 810u of ink in a 920 advance, and moving
+            # that into a 600 cell would spill 105u into each neighbour.
+            # Scaling by cell/advance keeps the design's own bearings in
+            # proportion, which is what a half-width form is
+            sx = cell / hmtx[name][0]
             pen = T2CharStringPen(pen_width(private, cell), gs)
-            gs[name].draw(TransformPen(pen, (1, 0, 0, 1, shift, 0)))
+            gs[name].draw(TransformPen(pen, (sx, 0, 0, 1, 0, 0)))
             made[name] = alloc_glyph_name(font)
             append_glyph(font, td, made[name], pen.getCharString(private=private),
                          fd, cell, None, vdon)
@@ -2664,10 +2666,10 @@ def build_face(job):
     alts = {}
     added = latin_ligatures(base, latin, latin_path, alts, LIGATURES)
     add_gsub(base, added, alts, LIGATURES, variant_maps, variant_names)
-    # Source Han Sans's proportional leftovers onto the grid, hwid's own
-    # 500-advance alternates included (walked BEFORE dropping any
-    # features that might touch it); pwid / palt have no meaning in a
-    # fixed-cell font
+    # Source Han Sans's proportional leftovers onto the grid — every
+    # glyph, so hwid's own 500-advance alternates and the locl forms no
+    # codepoint reaches come along. It reads no features, so nothing
+    # ties it to drop_features below
     n_fit = fit_to_grid(base, CELL, steps=steps)
     # kern would pull Japanese pairs off the cell in any shaper that
     # lays out a run (VS Code, a browser); halt and palt are alternate

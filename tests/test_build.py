@@ -918,12 +918,6 @@ def test_widen_fullwidth_redraws_a_charstring_shift_declines(monkeypatch):
     assert pen.bounds[0] == 100                      # centred in the new advance
 
 
-def test_fit_to_grid_takes_explicit_glyph_names():
-    font = _cff_font_with_widths({"a": 500, "b": 500})
-    assert build.fit_to_grid(font, 600, glyph_names=["a", "a", None]) == 1
-    assert font["hmtx"].metrics["a"][0] == 600 and font["hmtx"].metrics["b"][0] == 500
-
-
 def test_fit_to_grid_follows_the_reference_steps_over_this_face():
     """The family decides a glyph's width once, on one weight
     (reference_steps): a heavier face whose own advance would round the

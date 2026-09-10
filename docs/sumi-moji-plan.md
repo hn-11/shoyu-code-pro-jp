@@ -48,10 +48,15 @@ SHCJ は上流から外れた。
   `␣` を持っていたが、Source Code Pro には無い。1 セルに詰めるには縮小が
   要り（v5 で廃止した）、方針（「Source Han Sans にしかない文字は全角の
   まま」）とも衝突するので、要判断。
-- **`Sumi Moji JP Term Nerd Font Mono` は 32 文字**で、GDI の
-  `LOGFONT.lfFaceName`（31 文字）に収まらない。DirectWrite の
-  Windows Terminal や macOS / Linux では問題ないが、旧 conhost では
-  ファミリー名で引けない。Nerd Fonts 本家の命名を優先して現状維持。
+- **NF 版のファミリー名が GDI の 31 文字に収まらない**。
+  `Sumi Moji JP Term Nerd Font Mono` は 32 文字、非 RIBBI の
+  `... Nerd Font Mono SemiBold` は 41 文字で、JP の NF 20 面のうち 16 面、
+  欧文の 10 面のうち 2 面が `LOGFONT.lfFaceName`（31 文字）に入らない。
+  DirectWrite の Windows Terminal や macOS / Linux では問題ないが、
+  旧 conhost・メモ帳・Office の GDI 経路ではファミリー名で引けない。
+  nameID 1 だけ短い別名にする手はあるが（本家 font-patcher の
+  `--windows` 相当）、ピッカーによって別名で出るのと引き換え。
+  Nerd Fonts 本家の命名を優先して現状維持、要判断。
 - **`drop_features` は FeatureRecord を消すだけで、参照されなくなった
   Lookup を残す**。`kern` / `halt` / `palt` の Lookup が JP 各面に 36 KB
   ぶん残っている（GPOS 41,708 → 5,310 bytes 相当）。索引の張り替えを
