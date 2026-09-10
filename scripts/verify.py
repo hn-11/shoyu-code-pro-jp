@@ -117,18 +117,6 @@ def main():
           f"(half, full) == ({exp_half}, {exp_full}) for family {fam!r}, "
           f"got ({a_adv}, {cjk_adv})")
 
-    # the repertoire, not a handful of probes: nothing here counted what
-    # the face covers, so one that lost 25,000 cmap entries and rendered
-    # almost all Japanese as .notdef was a well-formed, correctly named,
-    # correctly sized asset that passed every gate. Source Han Sans JP
-    # gives 17,355 codepoints, 12,746 of them kanji; the floors are well
-    # under that, because a subset that shrank on purpose is a decision
-    # and a subset that shrank by accident is this
-    kanji = sum(1 for cp in cmap if 0x4E00 <= cp <= 0x9FFF)
-    kana = sum(1 for cp in cmap if 0x3040 <= cp <= 0x30FF)
-    check(len(cmap) >= 15000 and kanji >= 10000 and kana >= 150,
-          f"the Japanese repertoire is there ({len(cmap)} codepoints, "
-          f"{kanji} kanji, {kana} kana)")
 
     # every codepoint Sumi Moji has is one cell in both families — the
     # ligature-paired arrows and operators, Greek, box drawing, SCP-only
@@ -251,6 +239,25 @@ def main():
     check(not spill, f"every glyph's ink is inside its advance, give or "
                      f"take {lean}u of lean ({len(spill)} are not, "
                      f"e.g. {spill[:3]})")
+
+    # the repertoire, and DRAWN, not merely mapped: nothing here counted
+    # what the face covers, so one that lost 25,000 cmap entries — or
+    # kept every one of them and emptied the outlines — was a
+    # well-formed, correctly named, correctly sized asset that rendered
+    # all Japanese as whitespace and passed every gate. `bounds` holds
+    # the glyphs that draw (hmtx_mismatches skips a blank one), so this
+    # counts ink. Source Han Sans JP gives 17,355 codepoints, 12,746 of
+    # them kanji; the floors sit well under that, because a subset that
+    # shrank on purpose is a decision and one that shrank by accident is
+    # this
+    def drawn(lo, hi):
+        return sum(1 for cp, g in cmap.items() if lo <= cp <= hi and g in bounds)
+
+    kanji, kana = drawn(0x4E00, 0x9FFF), drawn(0x3040, 0x30FF)
+    latin = drawn(0x0041, 0x007A)
+    check(len(cmap) >= 15000 and kanji >= 10000 and kana >= 150 and latin >= 50,
+          f"the Japanese repertoire is there and draws ({len(cmap)} "
+          f"codepoints; {kanji} kanji, {kana} kana, {latin} Latin with ink)")
 
     # the vertical origin, stated twice: CFF gives it outright in VORG,
     # and vmtx gives it as a bearing DOWN from each glyph's own yMax.

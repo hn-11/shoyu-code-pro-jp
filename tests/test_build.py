@@ -946,20 +946,19 @@ def test_narrow_letters_puts_a_wide_cyrillic_on_the_cell():
     assert hmtx["zhe"][0] == hmtx["a"][0] == 600
     assert hmtx["kanji"][0] == 1000                  # not a letter
     gs = font.getGlyphSet()
-    # scaled by the cell over the donor's advance, so the bearings keep
-    # their proportion: nothing is pushed flush to a cell edge
-    assert width("zhe") == pytest.approx(100 * 600 / 918, abs=1)
-    assert width("a") == pytest.approx(100 * 600 / 602, abs=1)
+    # 100 units of ink fit the cell, so neither is scaled: condensing
+    # costs stroke weight, and only a letter that overflows should pay it
+    assert width("zhe") == pytest.approx(100, abs=1)
+    assert width("a") == pytest.approx(100, abs=1)
     # and fit_to_grid leaves them there, though the reference says 1000
     assert build.fit_to_grid(font, 600, steps={"zhe": 1000, "a": 1000}) == 0
     assert font["hmtx"].metrics["zhe"][0] == 600
 
 
-def test_narrow_letters_keeps_the_bearings_in_proportion():
-    """By the cell over the ADVANCE where that is wider: scaling by the
-    ink alone would push every condensed letter flush to both cell
-    edges, touching its neighbours (М is drawn 804 wide with exactly 600
-    of ink, so the ink alone would have said 'it fits')."""
+def test_narrow_letters_condenses_a_letter_to_the_cell_less_a_bearing():
+    """Only as far as it must: to the cell less the bearing the Latin
+    donor gives its own widest letters, so a condensed letter neither
+    abuts its neighbours nor loses more stroke weight than it has to."""
     font = _cff_font_with_widths({"wide": 918})
     cff = font["CFF "].cff
     td = cff[cff.fontNames[0]]
@@ -975,9 +974,20 @@ def test_narrow_letters_keeps_the_bearings_in_proportion():
     pen = BoundsPen(font.getGlyphSet())
     font.getGlyphSet()["wide"].draw(pen)
     x0, x1 = pen.bounds[0], pen.bounds[2]
-    assert x1 - x0 == pytest.approx(900 * 600 / 918, abs=1)
+    assert x1 - x0 == pytest.approx(600 - 2 * build.LETTER_BEARING, abs=1)
     assert x0 + x1 == pytest.approx(600, abs=1)        # centred in the cell
-    assert x0 > 5                                       # bearings kept
+    assert x0 == pytest.approx(build.LETTER_BEARING, abs=1)
+
+
+def test_narrow_letters_leaves_the_latin_donor_s_own_glyphs_alone():
+    """In the upright faces Greek and Cyrillic come from Source Code Pro
+    and are a cell wide already; two of them (Җ җ) overhang the advance
+    by design, and squeezing those would make the JP face disagree with
+    its own Latin sibling."""
+    font = _cff_font_with_widths({"grafted": 600})
+    font["cmap"].tables[0].cmap = {0x496: "grafted"}
+    font._built = {"grafted"}
+    assert build.narrow_letters(font, 600) == 0
 
 
 def test_narrow_letters_leaves_a_shared_glyph_alone():

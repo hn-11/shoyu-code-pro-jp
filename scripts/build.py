@@ -2137,6 +2137,11 @@ def add_gsub(font, added, alts, ligatures, variant_maps=None,
 # are in it. Source Code Pro Italic draws neither, so the italic faces
 # fall through to Source Han Sans's own proportional letters.
 LETTER_BLOCKS = ((0x0370, 0x04FF),)
+# the tightest side bearing the Latin donor gives a letter: Source Code
+# Pro's 'w' and 'W' carry 8 units either side of the 600 cell. A letter
+# condensed to fit the cell gets the same, rather than an ink-exact fit
+# that would leave it abutting its neighbours
+LETTER_BEARING = 8
 
 
 def narrow_letters(font, cell, blocks=LETTER_BLOCKS):
@@ -2149,8 +2154,13 @@ def narrow_letters(font, cell, blocks=LETTER_BLOCKS):
     (Cyrillic and Greek are East_Asian_Width A), so an italic МОСКВА
     painted its М over its О while the upright face of the same family
     was right. The advance goes to the cell for all of them; the outline
-    is scaled only where its ink does not fit, which is what a monospace
-    face does with a wide letter — Source Code Pro's own M is 600 too.
+    is scaled only where its ink does not fit the cell less a bearing at
+    each side, and then only as far as that — condensing costs stroke
+    weight, and a letter squeezed beside letters that were not reads as
+    thin and small inside its own alphabet. It is what a monospace face
+    does with a wide letter, Source Code Pro's own M included, but only
+    the letters that need it. A glyph the Latin donor supplied is left
+    alone: it is already a cell wide by construction.
 
     Runs before fit_to_grid, on Source Han Sans's own advance, and the
     names it touches are recorded so that pass leaves them alone.
@@ -2164,6 +2174,8 @@ def narrow_letters(font, cell, blocks=LETTER_BLOCKS):
     cff = font["CFF "].cff
     td = cff[cff.fontNames[0]]
     wanted = {cp for lo, hi in blocks for cp in range(lo, hi + 1)}
+    built = getattr(font, "_built", frozenset())
+    room = cell - 2 * LETTER_BEARING
     reached = {}
     for cp, name in cmap.items():
         reached.setdefault(name, set()).add(cp)
@@ -2171,25 +2183,24 @@ def narrow_letters(font, cell, blocks=LETTER_BLOCKS):
     for cp in sorted(wanted & set(cmap)):
         name = cmap[cp]
         adv = hmtx[name][0]
-        if adv <= 0 or name in drawn:
-            continue
+        if adv <= 0 or name in drawn or name in built:
+            continue                      # the Latin donor's, already a cell
         box = _bounds(gs, name)
         ink = (box[2] - box[0]) if box else 0
-        if adv == cell and ink <= cell:
+        if adv == cell and ink <= room:
             continue
         if not reached[name] <= wanted:
             print(f"  skip U+{cp:04X}: its glyph also draws "
                   f"{sorted(hex(c) for c in reached[name] - wanted)}")
             continue
         private = glyph_private(font, td, name)
-        # by the cell over the wider of advance and ink, as
-        # narrow_halfwidth condenses the Hangul jamo: the design's own
-        # side bearings stay in proportion. Scaling by the ink alone
-        # would push every condensed letter flush to both cell edges —
-        # М is drawn 804 wide with exactly 600 of ink, and would have
-        # touched its neighbours on each side. Most of these two
-        # alphabets are 602 wide and lose 0.3%, which is the rounding
-        sx = min(1.0, cell / max(adv, ink))
+        # scaled ONLY where the ink does not fit, and then just enough:
+        # condensing costs stroke weight, and a letter squeezed beside
+        # letters that were not stands out as thin and small in its own
+        # alphabet. Scaling everything by cell/advance did that to 61 of
+        # these 115, taking Ж's stem from 83 units to 54 while Г kept
+        # 83. Twenty-eight of them are genuinely wider than the cell
+        sx = 1.0 if ink <= room else room / ink
         dx = (cell - (box[2] - box[0]) * sx) / 2 - box[0] * sx if box else 0
         pen = T2CharStringPen(pen_width(private, cell), gs)
         gs[name].draw(TransformPen(pen, (sx, 0, 0, 1, dx, 0)))
